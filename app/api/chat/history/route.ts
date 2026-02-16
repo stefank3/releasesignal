@@ -32,8 +32,7 @@ export async function GET(req: Request) {
   const page = hasMore ? sessions.slice(0, limit) : sessions;
   const sessionIds = page.map((s) => s.id);
 
-  // 2) Fetch latest message per session WITHOUT distinct (safe on all Prisma/PG combos)
-  // We do N small queries in a transaction. For limit=25 this is fine and very stable.
+  // 2) Fetch latest message per session (portable, stable)
   const lastMessages = await prisma.$transaction(
     sessionIds.map((sid) =>
       prisma.chatMessage.findFirst({
@@ -51,14 +50,20 @@ export async function GET(req: Request) {
   return NextResponse.json({
     items: page.map((s) => {
       const last = lastBySessionId.get(s.id) ?? null;
+      const lastActivity = last?.createdAt ?? s.createdAt;
+
       return {
         id: s.id,
         title: s.title ?? null,
         mode: s.mode,
-        createdAt: s.createdAt,
-        lastActivityAt: last?.createdAt ?? s.createdAt,
+        createdAt: s.createdAt.toISOString(),
+        lastActivityAt: lastActivity.toISOString(),
         lastMessage: last
-          ? { role: last.role, content: last.content, createdAt: last.createdAt }
+          ? {
+              role: last.role,
+              content: last.content,
+              createdAt: last.createdAt.toISOString(),
+            }
           : null,
       };
     }),

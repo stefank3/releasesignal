@@ -8,16 +8,17 @@ import { auth0 } from "@/lib/auth0";
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
-import { Prisma } from "@/generated/prisma/client";
+import type { Prisma } from "@prisma/client";
+
 
 function headers(requestId: string) {
   return { "X-Request-Id": requestId };
 }
 
 type Body = {
-  amount: number;              // required, positive integer
-  organizationId?: string;     // optional, defaults to admin’s org
-  note?: string;               // optional, stored in reason suffix
+  amount: number; // required, positive integer
+  organizationId?: string; // optional, defaults to admin’s org
+  note?: string; // optional, stored in reason suffix
 };
 
 export async function POST(req: Request) {
@@ -27,12 +28,18 @@ export async function POST(req: Request) {
   try {
     const session = await auth0.getSession();
     if (!session?.user?.sub) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: headers(requestId) });
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401, headers: headers(requestId) }
+      );
     }
 
     const isAdmin = await isAdminFromAccessToken();
     if (!isAdmin) {
-      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403, headers: headers(requestId) });
+      return NextResponse.json(
+        { ok: false, error: "Forbidden" },
+        { status: 403, headers: headers(requestId) }
+      );
     }
 
     const auth0Sub = session.user.sub as string;
@@ -72,19 +79,29 @@ export async function POST(req: Request) {
       organizationId = member.organizationId;
     }
 
+    // ✅ Hard narrow to string (so TS doesn't keep string | undefined)
+    const orgId = organizationId;
+    if (!orgId) {
+      return NextResponse.json(
+        { ok: false, error: "Missing organizationId" },
+        { status: 400, headers: headers(requestId) }
+      );
+    }
+
     const reason = body?.note?.trim()
       ? `admin_adjust:${body.note.trim().slice(0, 60)}`
       : "admin_adjust";
 
-const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // ✅ Let Prisma infer tx type (avoids overload/type mismatch issues)
+    const result = await prisma.$transaction(async (tx) => {
       // Ensure wallet exists
       const wallet =
         (await tx.creditWallet.findUnique({
-          where: { organizationId_currency: { organizationId, currency: "credits" } },
+          where: { organizationId_currency: { organizationId: orgId, currency: "credits" } },
           select: { id: true, balance: true },
         })) ??
         (await tx.creditWallet.create({
-          data: { organizationId, currency: "credits", balance: 0 },
+          data: { organizationId: orgId, currency: "credits", balance: 0 },
           select: { id: true, balance: true },
         }));
 
@@ -108,7 +125,7 @@ const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) =>
     });
 
     return NextResponse.json(
-      { ok: true, organizationId, amount, balance: result.balance },
+      { ok: true, organizationId: orgId, amount, balance: result.balance },
       { status: 200, headers: headers(requestId) }
     );
   } catch (e: unknown) {
