@@ -5,20 +5,17 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
-  output   = "../lib/generated/prisma/client"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
 }
 
-
 model Organization {
   id        String   @id @default(uuid())
   name      String
   createdAt DateTime @default(now())
-
   members   OrgMember[]
   plans     Subscription[]
   wallets   CreditWallet[]
