@@ -2,11 +2,7 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
 import { randomUUID } from "crypto";
-
-import OpenAI from "openai";
 import { NextResponse } from "next/server";
 
 import { auth0 } from "@/lib/auth0";
@@ -20,22 +16,9 @@ import { prisma } from "@/lib/prisma";
 import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
 import { chargeCredits, InsufficientCreditsError } from "@/lib/billing/chargeCredits";
 
-const redis = Redis.fromEnv();
-
-const RATE_LIMIT = {
-  limit: 20,
-  window: "60 s" as const,
-  prefix: "stefans-mvp:chat",
-} as const;
-
-const ratelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(RATE_LIMIT.limit, RATE_LIMIT.window),
-  analytics: true,
-  prefix: RATE_LIMIT.prefix,
-});
-
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// ✅ Step 2 infra imports (centralized)
+import { openai } from "@/lib/openai";
+import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
 type Mode = "coach" | "review";
 
@@ -48,8 +31,8 @@ type RateMeta = {
 type ChatBody = {
   message?: string;
   mode?: Mode;
-  sessionId?: string; // NEW: reuse session
-  title?: string;     // optional (UI can set)
+  sessionId?: string; // reuse session
+  title?: string; // optional
 };
 
 function getIpIdentifier(req: Request): string {
@@ -76,7 +59,7 @@ function responseHeaders(requestId: string, meta?: RateMeta, retryAfterSec?: num
   return headers;
 }
 
-// Simple credit model: 1 credit per 1000 tokens (rounded up)
+// 1 credit per 1000 tokens (rounded up)
 function tokensToCredits(totalTokens: number) {
   if (!Number.isFinite(totalTokens) || totalTokens <= 0) return 0;
   return Math.max(1, Math.ceil(totalTokens / 1000));
@@ -128,24 +111,7 @@ export async function POST(req: Request) {
       meta: { messageChars: typeof message === "string" ? message.length : 0 },
     });
 
-    // 2) Ensure OpenAI key exists
-    if (!process.env.OPENAI_API_KEY) {
-      log("error", { requestId, event: "chat_error", userId, mode, error: "OPENAI_API_KEY is not set" });
-
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode,
-        status: 500,
-        latencyMs: Date.now() - startTime,
-      });
-
-      return NextResponse.json(
-        { ok: false, error: "OPENAI_API_KEY is not set (check env vars)" },
-        { status: 500, headers: responseHeaders(requestId) }
-      );
-    }
-
-    // 3) Validate input
+    // 2) Validate input
     if (!message || typeof message !== "string") {
       await recordChatMetric({
         nowMs: Date.now(),
@@ -174,7 +140,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4) RBAC: review is admin-only
+    // 3) RBAC: review is admin-only
     if (mode === "review") {
       const isAdmin = await isAdminFromAccessToken();
       if (!isAdmin) {
@@ -194,7 +160,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4.5) Ensure org + wallet exist; optionally enforce "must have credits to chat"
+    // 4) Ensure org + wallet exist
     const orgState = await ensureOrgForUser({
       auth0Sub: userId,
       name: (session.user.name as string | undefined) ?? null,
@@ -202,8 +168,6 @@ export async function POST(req: Request) {
     });
 
     if (!orgState.wallet || orgState.wallet.balance <= 0) {
-      // MVP behavior: block if no credits.
-      // Later: allow free tier or admin topup.
       await recordChatMetric({
         nowMs: Date.now(),
         mode,
@@ -222,14 +186,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // 5) Rate limit (Upstash)
-    const { success, remaining, reset } = await ratelimit.limit(identifier);
+    // 5) Rate limit (centralized)
+    const { success, remaining, reset } = await chatRatelimit.limit(identifier);
 
     const resetSeconds =
       typeof reset === "number" ? Math.max(1, Math.ceil((reset - Date.now()) / 1000)) : 60;
 
     rateMeta = {
-      limit: RATE_LIMIT.limit,
+      limit: CHAT_RATE_LIMIT.limit,
       remaining: typeof remaining === "number" ? remaining : 0,
       resetSeconds,
     };
@@ -322,8 +286,8 @@ export async function POST(req: Request) {
             "Prefer unit/API over UI when appropriate.",
           ].join("\n");
 
-    // 7) Call model
-    const completion = await client.chat.completions.create({
+    // 7) Call model (central client)
+    const completion = await openai.chat.completions.create({
       model: "gpt-4.1-mini",
       temperature: 0.2,
       max_tokens: mode === "review" ? 500 : 700,
@@ -342,7 +306,7 @@ export async function POST(req: Request) {
     const totalTokens = completion.usage?.total_tokens ?? promptTokens + completionTokens;
     const creditsCharged = tokensToCredits(totalTokens);
 
-    // Store assistant message (raw text; review JSON is stored as text too)
+    // Store assistant message
     await prisma.chatMessage.create({
       data: {
         sessionId,
@@ -355,7 +319,7 @@ export async function POST(req: Request) {
       },
     });
 
-    // Charge credits (transactional)
+    // Charge credits
     let creditsRemaining: number | null = null;
     try {
       creditsRemaining = await chargeCredits({
@@ -389,7 +353,7 @@ export async function POST(req: Request) {
       throw e;
     }
 
-    // 8) REVIEW: parse JSON
+    // REVIEW: parse JSON
     if (mode === "review") {
       const raw = reply.trim();
       const start = raw.indexOf("{");
@@ -488,7 +452,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 9) COACH: return text
+    // COACH: return text
     log("info", { requestId, event: "chat_completed", userId, mode, latencyMs: Date.now() - startTime });
 
     await recordChatMetric({
