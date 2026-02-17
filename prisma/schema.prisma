@@ -10,6 +10,8 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url = env("postgresql://postgres.dkvipfttlvldgzjkuygm:!E9sRP&Nk!!dxE3@aws-1-us-east-1.pooler.supabase.com:5432/postgres")
+  directUrl = env("postgresql://postgres:!E9sRP&Nk!!dxE3@db.dkvipfttlvldgzjkuygm.supabase.co:5432/postgres")
 }
 
 model Organization {

@@ -3,13 +3,11 @@
  * Redis-backed chat metrics.
  * We write small counters to 5-minute buckets and keep TTL for easy rollups.
  */
-
-import { Redis } from "@upstash/redis";
+import "server-only";
+import { redis } from "@/lib/redis";
 
 export type ChatMetricMode = "coach" | "review" | "unknown";
 export type ChatMetricStatus = 200 | 400 | 401 | 402 | 403 | 429 | 500;
-
-const redis = Redis.fromEnv();
 
 function bucketKey(nowMs: number) {
   const bucketSeconds = Math.floor(nowMs / 1000 / 300) * 300; // 5-minute buckets
