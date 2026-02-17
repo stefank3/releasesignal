@@ -27,21 +27,21 @@ function optionalEnv(name: string): string | undefined {
 
 export const env = Object.freeze({
   // Runtime DB (Pooler)
-  DATABASE_URL: requireEnv("postgresql://postgres.dkvipfttlvldgzjkuygm:!E9sRP&Nk!!dxE3@aws-1-us-east-1.pooler.supabase.com:5432/postgres"),
+  DATABASE_URL: requireEnv("DATABASE_URL"),
 
   // Direct DB (migrations / maintenance)
-  DIRECT_URL: requireEnv("postgresql://postgres:!E9sRP&Nk!!dxE3@db.dkvipfttlvldgzjkuygm.supabase.co:5432/postgres"),
+  DIRECT_URL: requireEnv("DIRECT_URL"),
 
   // Auth0
-  AUTH0_DOMAIN: requireEnv("https://dev-bejn5bhf8q0zguqw.us.auth0.com"),
-  AUTH0_CLIENT_ID: requireEnv("YmFNMxpAUOaK7fdM1A3AQOsH2iRcdLFb"),
-  AUTH0_CLIENT_SECRET: requireEnv("4Pcm0gg_KgIY6cu5b37_B5TEEQuzO2LtJ41itYxk6bPlwA5fPXZ2mjUzFpmGWNbJ"),
-  AUTH0_SECRET: requireEnv("0bf0888aec1fca829adf602aad060633c368e7e633e2d2e68e01cf7cba0800ae"),
-  APP_BASE_URL: requireEnv("http://localhost:3000"),
+  AUTH0_DOMAIN: requireEnv("AUTH0_DOMAIN"),
+  AUTH0_CLIENT_ID: requireEnv("AUTH0_CLIENT_ID"),
+  AUTH0_CLIENT_SECRET: requireEnv("AUTH0_CLIENT_SECRET"),
+  AUTH0_SECRET: requireEnv("AUTH0_SECRET"),
+  APP_BASE_URL: requireEnv("APP_BASE_URL"),
 
   // Upstash
-  UPSTASH_REDIS_REST_URL: requireEnv("https://cute-urchin-35895.upstash.io"),
-  UPSTASH_REDIS_REST_TOKEN: requireEnv("AYw3AAIncDI3Zjc2MmEwNzJmYTM0NjFmODA1NDdjZDdjYWFmODYxMHAyMzU4OTU"),
+  UPSTASH_REDIS_REST_URL: requireEnv("UPSTASH_REDIS_REST_URL"),
+  UPSTASH_REDIS_REST_TOKEN: requireEnv("UPSTASH_REDIS_REST_TOKEN"),
 
   // OpenAI (server only)
   OPENAI_API_KEY: requireEnv("OPENAI_API_KEY"),
