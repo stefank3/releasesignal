@@ -69,14 +69,16 @@ model CreditLedger {
   walletId  String
   auth0Sub  String?
   delta     Int
-  reason    String   // "monthly_topup" | "chat_usage" | "admin_adjust"
-  requestId String?
+  reason    String
+  requestId String?   // we’ll fix this too
   createdAt DateTime @default(now())
 
   wallet CreditWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([walletId, createdAt])
   @@index([requestId])
+
+  @@unique([walletId, reason, requestId]) // ✅ add this
 }
 
 model ChatSession {
@@ -106,4 +108,9 @@ model ChatMessage {
 
   @@index([sessionId, createdAt])
   @@index([requestId])
+
+// ✅ Idempotency: prevent duplicate messages for the same request within a session
+// ✅ Allow one user + one assistant message per requestId within the same session
+@@unique([sessionId, requestId, role])
+
 }
