@@ -69,9 +69,8 @@ function tokensToCredits(totalTokens: number) {
 
 /**
  * Prisma helper:
- * If a request is retried with the same (sessionId, requestId),
- * ChatMessage has a unique constraint and create() will throw P2002.
- * In that case, we treat it as an idempotent replay and continue.
+ * If a request is retried with the same unique key, ChatMessage create() can throw P2002.
+ * We treat that as an idempotent replay and continue.
  */
 function isUniqueViolation(e: unknown) {
   return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
@@ -132,8 +131,8 @@ export async function POST(req: Request) {
 
     userId = auth0Sub;
 
-    // Identifier used for rate limiting (prefer user-based; fall back to IP just in case)
-    const identifier = `user:${auth0Sub}` || getIpIdentifier(req);
+    // Prefer user-based rate limiting; fallback to IP only if missing (shouldn't happen)
+    const identifier = auth0Sub ? `user:${auth0Sub}` : getIpIdentifier(req);
 
     // ------------------------------------------------------------
     // 1) Parse request
@@ -293,7 +292,78 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------
-    // Store user message (idempotent under retries via @@unique([sessionId, requestId]))
+    // ✅ Replay protection (cost safety):
+    // If this requestId already produced an assistant message for this session,
+    // return it immediately and DO NOT call OpenAI again.
+    // ------------------------------------------------------------
+    const existingAssistant = await prisma.chatMessage.findFirst({
+      where: {
+        sessionId,
+        requestId,
+        role: "assistant",
+        auth0Sub: auth0Sub,
+      },
+      select: {
+        content: true,
+        tokensIn: true,
+        tokensOut: true,
+      },
+    });
+
+    if (existingAssistant) {
+      // Return billing numbers from ledger + wallet for consistent UI
+      const charged = await prisma.creditLedger.findFirst({
+        where: {
+          requestId,
+          reason: "chat_usage",
+        },
+        select: { delta: true, walletId: true },
+      });
+
+      const wallet = charged?.walletId
+        ? await prisma.creditWallet.findUnique({
+            where: { id: charged.walletId },
+            select: { balance: true },
+          })
+        : null;
+
+      log("info", {
+        requestId,
+        event: "chat_replay_served",
+        userId: auth0Sub,
+        mode,
+        meta: { sessionId },
+      });
+
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode,
+        status: 200,
+        latencyMs: Date.now() - startTime,
+      });
+
+      return NextResponse.json(
+        {
+          ok: true,
+          mode,
+          reply: existingAssistant.content,
+          sessionId,
+          creditsCharged: charged ? Math.abs(charged.delta) : null,
+          creditsRemaining: wallet?.balance ?? null,
+          usage: {
+            promptTokens: existingAssistant.tokensIn ?? 0,
+            completionTokens: existingAssistant.tokensOut ?? 0,
+            totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+          },
+          rate: rateMeta,
+          replay: true,
+        },
+        { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
+      );
+    }
+
+    // ------------------------------------------------------------
+    // Store user message (idempotent under retries via @@unique([sessionId, requestId, role]))
     // ------------------------------------------------------------
     await prisma.chatMessage
       .create({
@@ -366,80 +436,80 @@ export async function POST(req: Request) {
     const completionTokens = completion.usage?.completion_tokens ?? 0;
     const totalTokens = completion.usage?.total_tokens ?? promptTokens + completionTokens;
     const creditsCharged = tokensToCredits(totalTokens);
-    
-      /**
-       * Financial correctness (TRUE atomicity):
-       * Charge credits + persist assistant message in a single DB transaction.
-       *
-       * Idempotency:
-       * - ChatMessage create is protected by @@unique([sessionId, requestId]).
-       * - chargeCreditsTx() is idempotent by (walletId, reason, requestId).
-       * So retries won't double-write or double-charge.
-       */
-      let creditsRemaining: number | null = null;
 
-      try {
-        creditsRemaining = await prisma.$transaction(
-          async (tx) => {
-            // 1) Charge credits inside the same transaction as the assistant write
-            const remaining = await chargeCreditsTx(tx, {
-              auth0Sub: auth0Sub,
-              credits: creditsCharged,
-              requestId,
-            });
+    /**
+     * Financial correctness (TRUE atomicity):
+     * Charge credits + persist assistant message in a single DB transaction.
+     *
+     * Idempotency:
+     * - ChatMessage create is protected by @@unique([sessionId, requestId, role]).
+     * - chargeCreditsTx() is idempotent by (walletId, reason, requestId).
+     * So retries won't double-write or double-charge.
+     */
+    let creditsRemaining: number | null = null;
 
-            // 2) Store assistant message (idempotent under retries)
-            await tx.chatMessage
-              .create({
-                data: {
-                  sessionId,
-                  auth0Sub: auth0Sub,
-                  role: "assistant",
-                  content: reply,
-                  tokensIn: promptTokens,
-                  tokensOut: completionTokens,
-                  requestId,
-                },
-              })
-              .catch((e) => {
-                if (isUniqueViolation(e)) return null; // replay -> ignore
-                throw e;
-              });
-
-            return remaining;
-          },
-          {
-            // Keep isolation level consistent with billing correctness expectations
-            isolationLevel: "Serializable",
-            maxWait: 5000,
-            timeout: 10000,
-          }
-        );
-      } catch (e) {
-        if (e instanceof InsufficientCreditsError) {
-          await recordChatMetric({
-            nowMs: Date.now(),
-            mode,
-            status: 402,
-            latencyMs: Date.now() - startTime,
+    try {
+      creditsRemaining = await prisma.$transaction(
+        async (tx) => {
+          // 1) Charge credits inside the same transaction as the assistant write
+          const remaining = await chargeCreditsTx(tx, {
+            auth0Sub: auth0Sub,
+            credits: creditsCharged,
+            requestId,
           });
 
-          return NextResponse.json(
-            {
-              ok: false,
-              mode,
-              error: "Insufficient credits",
-              sessionId,
-              creditsCharged,
-              creditsRemaining: orgState.wallet?.balance ?? 0,
-              usage: { promptTokens, completionTokens, totalTokens },
-              rate: rateMeta,
-            },
-            { status: 402, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-          );
+          // 2) Store assistant message (idempotent under retries)
+          await tx.chatMessage
+            .create({
+              data: {
+                sessionId,
+                auth0Sub: auth0Sub,
+                role: "assistant",
+                content: reply,
+                tokensIn: promptTokens,
+                tokensOut: completionTokens,
+                requestId,
+              },
+            })
+            .catch((e) => {
+              if (isUniqueViolation(e)) return null; // replay -> ignore
+              throw e;
+            });
+
+          return remaining;
+        },
+        {
+          // Keep isolation level consistent with billing correctness expectations
+          isolationLevel: "Serializable",
+          maxWait: 5000,
+          timeout: 10000,
         }
-        throw e;
+      );
+    } catch (e) {
+      if (e instanceof InsufficientCreditsError) {
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode,
+          status: 402,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return NextResponse.json(
+          {
+            ok: false,
+            mode,
+            error: "Insufficient credits",
+            sessionId,
+            creditsCharged,
+            creditsRemaining: orgState.wallet?.balance ?? 0,
+            usage: { promptTokens, completionTokens, totalTokens },
+            rate: rateMeta,
+          },
+          { status: 402, headers: responseHeaders(requestId, rateMeta ?? undefined) }
+        );
       }
+      throw e;
+    }
 
     // ------------------------------------------------------------
     // REVIEW: parse JSON
