@@ -12,6 +12,7 @@ export type LogLevel = "info" | "warn" | "error";
 export type LogEvent =
   | "chat_request"
   | "chat_completed"
+  | "chat_replay_served" // ✅ NEW
   | "forbidden_review_access"
   | "rate_limit_exceeded"
   | "unauthorized"
