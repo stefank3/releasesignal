@@ -18,6 +18,7 @@ export type LogEvent =
   | "unauthorized"
   | "chat_error";
 
+  
 export type LogPayload = {
   requestId: string;
   event: LogEvent;
