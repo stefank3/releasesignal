@@ -58,6 +58,25 @@ type RateMeta = {
 };
 
 /**
+ * ✅ Chat API response type (kept flexible but avoids "any").
+ * Server may return replay=true when it served an idempotent replay.
+ */
+type ChatApiResponse = {
+  ok: boolean;
+  mode?: Mode;
+  reply?: string;
+  review?: ReviewResult;
+  raw?: string;
+  error?: string;
+  details?: string;
+  sessionId?: string;
+  creditsCharged?: number;
+  creditsRemaining?: number;
+  rate?: RateMeta;
+  replay?: boolean; // ✅ served from DB / idempotent path
+};
+
+/**
  * --- Chat History types (API: /api/chat/history) ---
  * Your backend returns:
  * - items[]: sessions list
@@ -89,6 +108,16 @@ const STORAGE_KEY = "stefans-mvp-chat-v1";
 /** Clamp helper to keep UI stable even if model returns values out of expected range. */
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+/**
+ * ✅ Scroll helper:
+ * Determine if user is already near the bottom of the chat window.
+ * We only auto-scroll when near bottom, to avoid “scroll yanking” while reading history.
+ */
+function isNearBottom(el: HTMLDivElement, thresholdPx = 140) {
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distance <= thresholdPx;
 }
 
 /** Minimal markdown safety for list items (Jira/Confluence paste). */
@@ -151,6 +180,17 @@ function createRequestId(): string {
 }
 
 /**
+ * IDP: generate a stable client-side id for new-session creation.
+ * This must remain stable across retries until server returns a real sessionId.
+ */
+function createSessionClientId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return (crypto as Crypto).randomUUID();
+  }
+  return `sid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+/**
  * Fetch helper:
  * - throws on non-2xx responses
  * - detects HTML early (Auth0 redirect / middleware / error pages)
@@ -165,15 +205,9 @@ async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
 
   const first = text.trimStart().slice(0, 200).replace(/\s+/g, " ");
   const looksHtml =
-    ct.includes("text/html") ||
-    first.startsWith("<!doctype") ||
-    first.startsWith("<html") ||
-    first.startsWith("<");
+    ct.includes("text/html") || first.startsWith("<!doctype") || first.startsWith("<html") || first.startsWith("<");
 
-  const looksJson =
-    ct.includes("application/json") ||
-    first.startsWith("{") ||
-    first.startsWith("[");
+  const looksJson = ct.includes("application/json") || first.startsWith("{") || first.startsWith("[");
 
   // ✅ HTML (usually auth redirect, Next error page, middleware, etc.)
   if (!looksJson) {
@@ -185,7 +219,7 @@ async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   const data = text ? (JSON.parse(text) as unknown) : ({} as unknown);
 
   if (!res.ok) {
-    throw new Error((data as any)?.error || `HTTP ${res.status}`);
+    throw new Error((data as { error?: string })?.error || `HTTP ${res.status}`);
   }
 
   return data as T;
@@ -487,12 +521,32 @@ export default function ChatPage() {
   /** Last correlation id returned by the server (header X-Request-Id). */
   const [lastRequestId, setLastRequestId] = useState<string | null>(null);
 
+  /**
+   * ✅ Replay support:
+   * Store the last attempted request payload so we can retry with the SAME requestId.
+   * This is critical for Milestone 2 idempotency + billing correctness.
+   *
+   * IDP: also store sessionClientId so retries for a NEW session cannot create duplicates.
+   */
+  const [lastPending, setLastPending] = useState<{
+    requestId: string;
+    text: string;
+    mode: Mode;
+    sessionId: string | null;
+    sessionClientId: string | null; // IDP: stable key when sessionId is not known yet
+  } | null>(null);
+
   // ---- Chat History (sessions + active session) -----------------------------
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [sessionsCursor, setSessionsCursor] = useState<string | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  // IDP: stable client-side key for "new chat" creation.
+  // Prevents duplicate sessions from double-click / retries before sessionId is known.
+  const [pendingSessionClientId, setPendingSessionClientId] = useState<string | null>(null);
+
   const [messagesCursor, setMessagesCursor] = useState<string | null>(null);
   const [messagesLoading, setMessagesLoading] = useState(false);
 
@@ -501,9 +555,16 @@ export default function ChatPage() {
   const [renameValue, setRenameValue] = useState<string>("");
   const [renameSaving, setRenameSaving] = useState(false);
 
-  // ✅ Scroll-to-bottom
+  // ✅ Scroll-to-bottom mechanics
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false);
+
+  /**
+   * ✅ Autoscroll guard:
+   * We only autoscroll if the user is already near the bottom.
+   * This prevents “snap to bottom” while reading older history.
+   */
+  const shouldAutoScrollRef = useRef(true);
 
   // ---- Local persistence (demo-friendly) ------------------------------------
   useEffect(() => {
@@ -533,13 +594,36 @@ export default function ChatPage() {
     return () => clearTimeout(t);
   }, [rateLimitMsg]);
 
-  // Scroll-to-bottom when flagged
+  /**
+   * ✅ Track user scroll:
+   * Updates shouldAutoScrollRef so we know whether it is safe to auto-scroll later.
+   */
   useEffect(() => {
-    if (!shouldScrollToBottom) return;
     const el = chatBoxRef.current;
     if (!el) return;
 
-    el.scrollTop = el.scrollHeight;
+    const onScroll = () => {
+      shouldAutoScrollRef.current = isNearBottom(el);
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  /**
+   * ✅ Scroll-to-bottom when flagged (guarded):
+   * Only scroll when user is near bottom.
+   */
+  useEffect(() => {
+    if (!shouldScrollToBottom) return;
+
+    const el = chatBoxRef.current;
+    if (!el) return;
+
+    if (shouldAutoScrollRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+
     setShouldScrollToBottom(false);
   }, [items, shouldScrollToBottom]);
 
@@ -634,6 +718,15 @@ Expected: export stops, no file downloaded, status resets`;
       url.searchParams.set("limit", "120");
       if (!reset && messagesCursor) url.searchParams.set("cursor", messagesCursor);
 
+      /**
+       * ✅ Scroll anchor preservation:
+       * When loading older messages (prepend), we capture current scroll metrics
+       * and restore scrollTop after render so viewport doesn’t jump.
+       */
+      const el = chatBoxRef.current;
+      const prevScrollHeight = el?.scrollHeight ?? 0;
+      const prevScrollTop = el?.scrollTop ?? 0;
+
       const data = await fetchJSON<{ items: HistoryMessage[]; nextCursor: string | null }>(url.toString());
 
       const mapped: ChatItem[] = data.items
@@ -651,6 +744,21 @@ Expected: export stops, no file downloaded, status resets`;
 
       setItems((prev) => (reset ? mapped : [...mapped, ...prev]));
       setMessagesCursor(data.nextCursor);
+
+      requestAnimationFrame(() => {
+        const el2 = chatBoxRef.current;
+        if (!el2) return;
+
+        if (!reset) {
+          // Older messages were prepended → keep viewport anchored.
+          const nextScrollHeight = el2.scrollHeight;
+          el2.scrollTop = prevScrollTop + (nextScrollHeight - prevScrollHeight);
+        } else {
+          // New session selection → jump to bottom once.
+          el2.scrollTop = el2.scrollHeight;
+          shouldAutoScrollRef.current = true;
+        }
+      });
     } catch (e) {
       console.error("Failed to load messages", e);
     } finally {
@@ -660,6 +768,7 @@ Expected: export stops, no file downloaded, status resets`;
 
   const selectSession = async (sessionId: string) => {
     setActiveSessionId(sessionId);
+    setPendingSessionClientId(null); // IDP: switching to an existing session (no pending key)
     setMessagesCursor(null);
 
     setItems([]);
@@ -669,12 +778,16 @@ Expected: export stops, no file downloaded, status resets`;
     setRateLimitMsg(null);
     setLastRequestId(null);
 
+    // ✅ Clear pending replay when switching sessions
+    setLastPending(null);
+
     await loadSessionMessages(sessionId, true);
     setShouldScrollToBottom(true);
   };
 
   const newChat = () => {
     setActiveSessionId(null);
+    setPendingSessionClientId(createSessionClientId()); // IDP: reserve stable key for next send
     setMessagesCursor(null);
 
     setItems([]);
@@ -686,80 +799,182 @@ Expected: export stops, no file downloaded, status resets`;
 
     setRenamingId(null);
     setRenameValue("");
+
+    // ✅ Clear pending replay when starting a new chat
+    setLastPending(null);
+
+    // ✅ For a new chat we want “live chat” behavior by default.
+    shouldAutoScrollRef.current = true;
   };
 
-  // ✅ Rename API call
+  // ✅ Rename API call (optimistic UI: no flicker, no full reload)
   const renameSession = async (sessionId: string, title: string) => {
+    const nextTitle = title.trim();
+
+    // Basic validation mirrors server-side rules (keeps UI deterministic)
+    if (!nextTitle || nextTitle.length > 80) return;
+
+    // Optimistic update: apply immediately in sidebar state
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
+
     try {
+      setRenameSaving(true);
+
       await fetchJSON(`/api/chat/history/${sessionId}/title`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ title }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: nextTitle }),
       });
 
-      // 🔥 After successful rename → refresh sessions
-      await loadSessions(true);
-
+      // Optional: keep the active session highlighted and stable.
+      // We do NOT call loadSessions(true) to avoid reordering/flicker.
     } catch (err) {
       console.error("Rename failed", err);
+
+      // If rename fails, revert by reloading once (rare path)
+      await loadSessions(true);
+    } finally {
+      setRenameSaving(false);
+      setRenamingId(null);
     }
   };
 
   // ---- API interaction ------------------------------------------------------
-  const send = async () => {
-    const text = input.trim();
+  /**
+   * Send a chat request.
+   *
+   * ✅ Idempotency & replay:
+   * - Each send gets a client-generated requestId sent as x-request-id.
+   * - If the request fails, we keep the lastPending payload so user can retry.
+   * - Retry uses the SAME requestId to prevent:
+   *   - double charging
+   *   - duplicate ChatMessage rows (server enforces unique constraints)
+   *
+   * ✅ Session IDP:
+   * - If sessionId is not yet known (new chat), include sessionClientId.
+   * - sessionClientId MUST remain stable across retries until server returns sessionId.
+   */
+  const send = async (opts?: { replay?: boolean }) => {
+    const replay = opts?.replay ?? false;
+
+    // Replay uses the last pending payload; normal send uses current input.
+    const text = replay ? lastPending?.text ?? "" : input.trim();
     if (!text || isSending) return;
 
-    const clientRequestId = createRequestId();
+    const requestId = replay ? lastPending?.requestId ?? "" : createRequestId();
+    if (!requestId) return;
 
-    setItems((prev) => [...prev, { kind: "text", role: "user", text, requestId: clientRequestId }]);
-    setInput("");
+    const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
+
+    // Session to send with:
+    // - normal path: activeSessionId (may be null if new chat)
+    // - replay path: use lastPending.sessionId first; fallback to activeSessionId
+    const sessionIdForRequest = replay ? lastPending?.sessionId ?? activeSessionId : activeSessionId;
+
+    // IDP: If there is no sessionId yet, reuse a stable sessionClientId.
+    // Order of preference:
+    // - replay: lastPending.sessionClientId (the one used in the failed attempt)
+    // - otherwise: current pendingSessionClientId (reserved by "New chat")
+    // - fallback: generate one and persist it
+    const sessionClientIdForRequest =
+      sessionIdForRequest
+        ? null
+        : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ?? createSessionClientId();
+
+    // Persist generated sessionClientId if we didn’t have one yet (normal send path).
+    if (!sessionIdForRequest && !pendingSessionClientId && !replay) {
+      setPendingSessionClientId(sessionClientIdForRequest);
+    }
+
+    // On replay: if pendingSessionClientId is missing but lastPending has one, restore it (keeps UI consistent).
+    if (!sessionIdForRequest && replay && !pendingSessionClientId && lastPending?.sessionClientId) {
+      setPendingSessionClientId(lastPending.sessionClientId);
+    }
+
+    // On normal send we optimistically add the user message.
+    // On replay we DO NOT add another user message (prevents UI duplication).
+    if (!replay) {
+      setItems((prev) => [...prev, { kind: "text", role: "user", text, requestId }]);
+      setInput("");
+
+      /**
+       * ✅ UX rule:
+       * When the user sends a message, we want live behavior.
+       * This makes the next bot reply scroll down if user was chatting “normally”.
+       */
+      shouldAutoScrollRef.current = true;
+    }
+
     setIsSending(true);
+
+    // Store pending request for possible replay (retry)
+    setLastPending({
+      requestId,
+      text,
+      mode: effectiveMode,
+      sessionId: sessionIdForRequest ?? null,
+      sessionClientId: sessionIdForRequest ? null : sessionClientIdForRequest,
+    });
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-request-id": clientRequestId,
+          "x-request-id": requestId,
         },
-        body: JSON.stringify({ message: text, mode, sessionId: activeSessionId }),
+        body: JSON.stringify({
+          message: text,
+          mode: effectiveMode,
+          sessionId: sessionIdForRequest ?? undefined,
+          sessionClientId: sessionClientIdForRequest ?? undefined, // IDP: only for new sessions
+        }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as ChatApiResponse;
 
-      const serverRequestId = res.headers.get("x-request-id") || clientRequestId;
+      const serverRequestId = res.headers.get("x-request-id") || requestId;
       setLastRequestId(serverRequestId);
 
-      if (data?.rate) setRate(data.rate as RateMeta);
+      if (data?.rate) setRate(data.rate);
 
+      // If server created/confirmed a sessionId, persist it (important for continuity)
       if (res.ok && data?.sessionId && typeof data.sessionId === "string") {
         setActiveSessionId(data.sessionId);
+
+        // IDP: once sessionId exists, we no longer need the pending client id
+        setPendingSessionClientId(null);
+
         await loadSessions(true); // refresh sidebar immediately
       }
 
+      // 429: keep pending so user can retry after reset
       if (res.status === 429) {
         setRateLimitMsg(
           `${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`
         );
-        setItems((prev) => prev.slice(0, -1));
+        setShouldScrollToBottom(true);
         return;
       }
 
       setRateLimitMsg(null);
 
+      // REVIEW success
       if (res.ok && data?.mode === "review" && data?.review) {
         setItems((prev) => [
           ...prev,
           { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId },
         ]);
+
         setShouldScrollToBottom(true);
         void loadSessions(true);
+
+        // ✅ Completed: clear pending (server responded successfully)
+        setLastPending(null);
         return;
       }
 
+      // REVIEW parse issue (server returned raw)
       if (data?.mode === "review" && data?.raw) {
         setItems((prev) => [
           ...prev,
@@ -771,21 +986,31 @@ Expected: export stops, no file downloaded, status resets`;
             requestId: serverRequestId,
           },
         ]);
+
         setShouldScrollToBottom(true);
         void loadSessions(true);
+
+        // ✅ Completed: clear pending (server responded)
+        setLastPending(null);
         return;
       }
 
+      // COACH success
       if (res.ok) {
         setItems((prev) => [
           ...prev,
           { kind: "text", role: "bot", text: data?.reply ?? "No reply returned", requestId: serverRequestId },
         ]);
+
         setShouldScrollToBottom(true);
         void loadSessions(true);
+
+        // ✅ Completed: clear pending (server responded successfully)
+        setLastPending(null);
         return;
       }
 
+      // Non-2xx error response: keep pending so user can replay (retry)
       setItems((prev) => [
         ...prev,
         {
@@ -798,9 +1023,10 @@ Expected: export stops, no file downloaded, status resets`;
       ]);
       setShouldScrollToBottom(true);
     } catch (e: unknown) {
+      // Network/client error: keep pending so user can replay (retry)
       const message = e instanceof Error ? e.message : String(e);
 
-      setLastRequestId(clientRequestId);
+      setLastRequestId(requestId);
 
       setItems((prev) => [
         ...prev,
@@ -809,7 +1035,7 @@ Expected: export stops, no file downloaded, status resets`;
           role: "bot",
           title: "Network/Client error",
           details: message,
-          requestId: clientRequestId,
+          requestId,
         },
       ]);
       setShouldScrollToBottom(true);
@@ -977,7 +1203,8 @@ Expected: export stops, no file downloaded, status resets`;
                       onClick={(e) => {
                         e.stopPropagation();
                         setRenamingId(s.id);
-                        setRenameValue(s.title ?? "");
+                        const computedTitle = s.title ?? (s.lastMessage?.content?.slice(0, 40) || "Untitled chat");
+                        setRenameValue(computedTitle);
                       }}
                       style={{
                         padding: "6px 10px",
@@ -1046,6 +1273,9 @@ Expected: export stops, no file downloaded, status resets`;
           {rateChipText && <Chip>{rateChipText}</Chip>}
           {lastRequestId && <Chip>requestId: {lastRequestId.slice(0, 8)}…</Chip>}
 
+          {/* ✅ Replay button appears only when there is a failed/pending request */}
+          {lastPending && !isSending && <HeaderButton onClick={() => void send({ replay: true })}>Retry last</HeaderButton>}
+
           <HeaderButton active={mode === "coach"} onClick={() => setMode("coach")} disabled={isSending}>
             Coach
           </HeaderButton>
@@ -1064,6 +1294,11 @@ Expected: export stops, no file downloaded, status resets`;
                 setRate(null);
                 setRateLimitMsg(null);
                 setLastRequestId(null);
+
+                // ✅ Clear replay state too
+                setLastPending(null);
+
+                // IDP: keep "pendingSessionClientId" as-is; Clear is not New Chat
                 localStorage.removeItem(STORAGE_KEY);
               }}
               disabled={isSending}
@@ -1142,7 +1377,9 @@ Expected: export stops, no file downloaded, status resets`;
                   return (
                     <div key={idx} style={{ display: "grid", gap: 8 }}>
                       <ReviewCard review={it.review} />
-                      {it.requestId && <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>}
+                      {it.requestId && (
+                        <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>
+                      )}
                     </div>
                   );
                 }

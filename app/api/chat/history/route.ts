@@ -11,20 +11,27 @@ export async function GET(req: Request) {
   if (!sub) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(req.url);
-  const limit = Math.min(Number(url.searchParams.get("limit") ?? 20), 50);
+
+  // WHY: Keep limit bounded to avoid abuse + accidental huge reads
+  const limitRaw = Number(url.searchParams.get("limit") ?? 20);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 20;
+
   const cursor = url.searchParams.get("cursor");
 
-  // 1) Pull sessions first (cursor pagination)
+  // CURSOR: Stable ordering is REQUIRED for correct cursor pagination.
+  // If we sort only by updatedAt and two rows share the same updatedAt, pages can drift → duplicates/missing.
+  // Fix: add a unique tie-breaker (id) as the 2nd orderBy.
   const sessions = await prisma.chatSession.findMany({
     where: { auth0Sub: sub },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }], // ✅ deterministic order
     take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // CURSOR: cursor uses unique id (safe)
     select: {
       id: true,
       title: true,
       mode: true,
       createdAt: true,
+      updatedAt: true, // ✅ used for lastActivityAt + matches sort order
     },
   });
 
@@ -33,11 +40,12 @@ export async function GET(req: Request) {
   const sessionIds = page.map((s) => s.id);
 
   // 2) Fetch latest message per session (portable, stable)
+  // NOTE: This is N queries but OK for beta scale. We'll optimize later if needed.
   const lastMessages = await prisma.$transaction(
     sessionIds.map((sid) =>
       prisma.chatMessage.findFirst({
         where: { sessionId: sid, auth0Sub: sub },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }], // ✅ deterministic tie-break
         select: { sessionId: true, role: true, content: true, createdAt: true },
       })
     )
@@ -50,13 +58,17 @@ export async function GET(req: Request) {
   return NextResponse.json({
     items: page.map((s) => {
       const last = lastBySessionId.get(s.id) ?? null;
-      const lastActivity = last?.createdAt ?? s.createdAt;
+
+      // ✅ Single source of truth:
+      // Ordering is based on updatedAt, so lastActivityAt must reflect updatedAt too.
+      const lastActivity = s.updatedAt;
 
       return {
         id: s.id,
         title: s.title ?? null,
         mode: s.mode,
         createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(), // ✅ useful for debugging + future UX
         lastActivityAt: lastActivity.toISOString(),
         lastMessage: last
           ? {
@@ -67,6 +79,10 @@ export async function GET(req: Request) {
           : null,
       };
     }),
+
+    // CURSOR: nextCursor must reference the last item in THIS returned page.
+    // Client sends it back to get the next page.
     nextCursor: hasMore ? page[page.length - 1].id : null,
+    hasMore, // ✅ explicit contract (helps UI + debugging)
   });
 }

@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,9 +10,9 @@ datasource db {
 }
 
 model Organization {
-  id        String   @id @default(uuid())
+  id        String      @id @default(uuid())
   name      String
-  createdAt DateTime @default(now())
+  createdAt DateTime    @default(now())
   members   OrgMember[]
   plans     Subscription[]
   wallets   CreditWallet[]
@@ -36,7 +33,7 @@ model OrgMember {
 
 model Subscription {
   id                 String   @id @default(uuid())
-  organizationId      String
+  organizationId     String
   status             String   // "active" | "past_due" | "canceled"
   planCode           String   // "office_50"
   seats              Int
@@ -70,7 +67,7 @@ model CreditLedger {
   auth0Sub  String?
   delta     Int
   reason    String
-  requestId String?   // we’ll fix this too
+  requestId String?   // IDP: used for idempotency of credit operations
   createdAt DateTime @default(now())
 
   wallet CreditWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
@@ -78,26 +75,35 @@ model CreditLedger {
   @@index([walletId, createdAt])
   @@index([requestId])
 
-  @@unique([walletId, reason, requestId]) // ✅ add this
+  // IDP: prevent duplicate ledger rows for the same operation
+  @@unique([walletId, reason, requestId])
 }
 
 model ChatSession {
-  id        String   @id @default(uuid())
-  auth0Sub  String
-  mode      String   // "coach" | "review"
-  title     String?
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  auth0Sub       String
+  mode           String
+  title          String?
+  clientSessionId String?   // IDP: client-generated id to prevent duplicate sessions
+  titleUpdatedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  messages  ChatMessage[]
+  messages       ChatMessage[]
 
-  @@index([auth0Sub, createdAt])
+  @@index([auth0Sub, updatedAt, id])
+
+  // IDP: ensures one session per (user, clientSessionId).
+  // NOTE: Postgres allows multiple NULLs, so this only enforces uniqueness when clientSessionId is set.
+  @@unique([auth0Sub, clientSessionId])
 }
+
 
 model ChatMessage {
   id        String   @id @default(uuid())
   sessionId String
   auth0Sub  String
-  role      String   // user|assistant|system
+  role      String   // user | assistant | system
   content   String
   tokensIn  Int?
   tokensOut Int?
@@ -106,11 +112,12 @@ model ChatMessage {
 
   session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  @@index([sessionId, createdAt])
+  // CURSOR: matches where { auth0Sub, sessionId } and ORDER BY createdAt DESC, id DESC
+  @@index([auth0Sub, sessionId, createdAt, id])
+
   @@index([requestId])
 
-// ✅ Idempotency: prevent duplicate messages for the same request within a session
-// ✅ Allow one user + one assistant message per requestId within the same session
-@@unique([sessionId, requestId, role])
-
+  // IDP: prevent duplicate messages for the same request within a session
+  // Allow one user + one assistant message per requestId within the same session
+  @@unique([sessionId, requestId, role])
 }
