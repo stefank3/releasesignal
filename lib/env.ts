@@ -18,11 +18,60 @@ function requireEnv(name: string): string {
   return v.trim();
 }
 
-// If you truly want DIRECT_URL optional at runtime, change to optionalEnv()
-// But given your stated contract (pooler + direct everywhere), keep it required.
 function optionalEnv(name: string): string | undefined {
   const v = process.env[name];
   return v && v.trim() ? v.trim() : undefined;
+}
+
+function normalizeRedisPrefix(prefix: string): string {
+  const p = prefix.trim();
+
+  // Ensure it ends with ":" so concatenations are stable and readable.
+  return p.endsWith(":") ? p : `${p}:`;
+}
+
+function inferRedisStage(): "prod" | "preview" | "dev" {
+  // Vercel sets VERCEL_ENV = "production" | "preview" | "development"
+  const ve = (process.env.VERCEL_ENV ?? "").toLowerCase().trim();
+
+  if (ve === "production") return "prod";
+  if (ve === "preview") return "preview";
+
+  // Local + anything else
+  return "dev";
+}
+
+/**
+ * WHY:
+ * We must isolate Redis keys between:
+ * - production
+ * - preview deployments
+ * - local development
+ *
+ * Vercel sets:
+ *   VERCEL_ENV = "production" | "preview" | "development"
+ *
+ * We derive a stable runtime tag from that.
+ */
+function resolveRuntimeStage(): "prod" | "preview" | "dev" {
+  const vercelEnv = process.env.VERCEL_ENV;
+
+  if (vercelEnv === "production") return "prod";
+  if (vercelEnv === "preview") return "preview";
+
+  // Local or anything else defaults to dev
+  return "dev";
+}
+
+const runtimeStage = resolveRuntimeStage();
+
+/**
+ * WHY:
+ * Every Redis key must be namespaced.
+ * This guarantees zero cross-environment contamination.
+ */
+function resolveRedisPrefix(): string {
+  return `${runtimeStage}:stefans-mvp:`;
 }
 
 export const env = Object.freeze({
@@ -43,9 +92,24 @@ export const env = Object.freeze({
   UPSTASH_REDIS_REST_URL: requireEnv("UPSTASH_REDIS_REST_URL"),
   UPSTASH_REDIS_REST_TOKEN: requireEnv("UPSTASH_REDIS_REST_TOKEN"),
 
-  // OpenAI (server only)
+  // OpenAI
   OPENAI_API_KEY: requireEnv("OPENAI_API_KEY"),
 
-  // Optional (handy for diagnostics)
+  // Diagnostics
   NODE_ENV: optionalEnv("NODE_ENV") ?? "development",
+  VERCEL_ENV: optionalEnv("VERCEL_ENV"),
+
+  // Observability / isolation
+  RUNTIME_STAGE: runtimeStage,
+    /**
+   * WHY (M4):
+   * Redis keys must be isolated per environment to prevent cross-contamination
+   * between prod, preview deployments, and local dev.
+   *
+   * Output examples:
+   * - "prod:stefans-mvp:"
+   * - "preview:stefans-mvp:"
+   * - "dev:stefans-mvp:"
+   */
+  REDIS_PREFIX: normalizeRedisPrefix(`${inferRedisStage()}:stefans-mvp:`),
 });

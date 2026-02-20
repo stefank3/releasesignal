@@ -1,82 +1,124 @@
 // lib/logger.ts
+import "server-only";
 
 export type LogLevel = "info" | "warn" | "error";
 
 /**
- * WHY:
- * We keep your existing event taxonomy,
- * but add new structured events required for M4 observability.
+ * WHY (M4-B):
+ * Keep event taxonomy explicit (union), so TypeScript prevents typos
+ * and you can reliably filter logs in Vercel.
  */
 export type LogEvent =
+  // Chat lifecycle
   | "chat_start"
+  | "chat_replay_served"
   | "chat_completed"
   | "chat_error"
-  | "chat_replay_served"
+  | "unauthorized"
   | "forbidden_review_access"
   | "rate_limit_exceeded"
-  | "unauthorized"
-  | "billing_failure"
+  // OpenAI
+  | "openai_call"
+  | "openai_error"
+  // Billing (admin)
+  | "billing_overview_start"
   | "billing_overview_error"
+  | "billing_topup_start"
   | "billing_topup_error"
-  | "openai_call";
+  // Billing (chat usage)
+  | "billing_charge_success"
+  | "billing_failure"
+  // Metrics/admin
+  | "admin_metrics_error";
+
+export type TokenUsage = {
+  prompt: number;
+  completion: number;
+  total: number;
+};
 
 /**
- * WHY:
- * Standardized observability shape.
- * All chat requests MUST log start + end (success or failure).
- *
- * Keep fields flat for Vercel log filtering.
+ * WHY (M4-B):
+ * Standard fields are top-level (fast to filter).
+ * 'meta' stays small and optional for rare extra context.
  */
 export type LogPayload = {
-  requestId: string;
   event: LogEvent;
+  requestId: string;
 
-  // Identity
+  // Correlation
   auth0Sub?: string;
   orgId?: string;
   sessionId?: string;
-
-  // Execution context
   mode?: "coach" | "review";
-  durationMs?: number;
 
-  // OpenAI tracing
+  // Timing / outcome
+  durationMs?: number;
+  statusCode?: number;
+
+  // OpenAI trace (no prompts/content)
   model?: string;
   openaiLatencyMs?: number;
   openaiErrorCode?: string;
   retryCount?: number;
 
-  // Billing tracing
-  tokenUsage?: {
-    prompt?: number;
-    completion?: number;
-    total?: number;
-  };
+  // Usage/cost (internal only; not used for billing)
+  tokenUsage?: TokenUsage;
   eurCost?: number;
   reviewUnits?: number;
 
-  walletBalance?: number;
-
-  // Error classification
+  // Error shape (consistent)
   errorType?: string;
   errorMessage?: string;
 
-  // Optional lightweight metadata (never raw prompts or PII)
+  // Extra (keep tiny; never dump PII or full payloads)
   meta?: Record<string, unknown>;
 };
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function parseNumberEnv(name: string, fallback: number) {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 /**
- * WHY:
- * Every log line is one JSON object.
- * Vercel parses this cleanly.
- * No multi-line logs.
+ * WHY (M4-B):
+ * - warn/error: always emit (debuggability)
+ * - info: emit in dev, and sampled in prod to avoid log flooding
+ *
+ * Controls:
+ * - ENABLE_VERBOSE_LOGS=true   -> emits all info logs in prod
+ * - LOG_INFO_SAMPLE_RATE=0.10 -> emits ~10% info logs in prod (default 0.20)
  */
+function shouldEmit(level: LogLevel): boolean {
+  if (level === "warn" || level === "error") return true;
+
+  const isProd = process.env.NODE_ENV === "production";
+  if (!isProd) return true;
+
+  if (process.env.ENABLE_VERBOSE_LOGS === "true") return true;
+
+  const rate = parseNumberEnv("LOG_INFO_SAMPLE_RATE", 0.2);
+  if (rate >= 1) return true;
+  if (rate <= 0) return false;
+
+  return Math.random() < rate;
+}
+
 export function log(level: LogLevel, payload: LogPayload) {
+  if (!shouldEmit(level)) return;
+
   const entry = {
     level,
-    ts: new Date().toISOString(),
+    ts: nowIso(),
     ...payload,
   };
 
+  // Emit JSON per line (Vercel structured logs)
   console[level](JSON.stringify(entry));
 }
