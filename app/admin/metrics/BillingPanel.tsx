@@ -9,6 +9,7 @@ type Overview = {
   subscription: { status: string; planCode: string; seats: number; monthlyCredits: number } | null;
   membersCount: number;
   ledger: { id: string; delta: number; reason: string; requestId: string | null; createdAt: string }[];
+  error?: string;
 };
 
 export default function BillingPanel() {
@@ -25,9 +26,13 @@ export default function BillingPanel() {
     try {
       const res = await fetch("/api/admin/billing/overview", { cache: "no-store" });
       const data = (await res.json()) as Overview;
+
       setOverview(data);
-      if (!res.ok) setError((data as any)?.error ?? "Failed to load overview");
-    } catch (e) {
+
+      if (!res.ok) {
+        setError(data?.error ?? "Failed to load overview");
+      }
+    } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load overview");
     } finally {
       setLoading(false);
@@ -43,14 +48,16 @@ export default function BillingPanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amount: topupAmount, note }),
       });
-      const data = await res.json();
+
+      const data = (await res.json()) as { error?: string };
+
       if (!res.ok) {
         setError(data?.error ?? "Top-up failed");
       } else {
         setNote("");
         await load();
       }
-    } catch (e) {
+    } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Top-up failed");
     } finally {
       setBusy(false);
@@ -64,8 +71,7 @@ export default function BillingPanel() {
   }, [overview]);
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void load();
   }, []);
 
   return (
@@ -78,7 +84,9 @@ export default function BillingPanel() {
       </div>
 
       {error ? (
-        <p style={{ marginTop: 12 }}><b>Error:</b> {error}</p>
+        <p style={{ marginTop: 12 }}>
+          <b>Error:</b> {error}
+        </p>
       ) : null}
 
       {loading ? (
@@ -86,10 +94,18 @@ export default function BillingPanel() {
       ) : (
         <>
           <div style={{ marginTop: 12, lineHeight: 1.6 }}>
-            <div><b>Org:</b> {overview?.organization?.name ?? "—"}</div>
-            <div><b>Plan:</b> {overview?.subscription?.planCode ?? "—"} ({overview?.subscription?.status ?? "—"})</div>
-            <div><b>Seats:</b> {seatsText}</div>
-            <div><b>Credits:</b> {overview?.wallet?.balance ?? 0}</div>
+            <div>
+              <b>Org:</b> {overview?.organization?.name ?? "—"}
+            </div>
+            <div>
+              <b>Plan:</b> {overview?.subscription?.planCode ?? "—"} ({overview?.subscription?.status ?? "—"})
+            </div>
+            <div>
+              <b>Seats:</b> {seatsText}
+            </div>
+            <div>
+              <b>Credits:</b> {overview?.wallet?.balance ?? 0}
+            </div>
           </div>
 
           <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -138,7 +154,9 @@ export default function BillingPanel() {
                 ))}
                 {(overview?.ledger?.length ?? 0) === 0 ? (
                   <tr>
-                    <td colSpan={4} style={{ padding: 8 }}>No ledger entries yet.</td>
+                    <td colSpan={4} style={{ padding: 8 }}>
+                      No ledger entries yet.
+                    </td>
                   </tr>
                 ) : null}
               </tbody>

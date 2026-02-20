@@ -39,7 +39,6 @@ export default function UserBar() {
           Metrics
         </a>
       )}
-
       <a href="/auth/logout" className="rounded-lg border px-3 py-2 hover:bg-white/10">
         Logout
       </a>

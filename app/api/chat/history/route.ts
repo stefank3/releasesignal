@@ -4,6 +4,16 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
+function sanitizeTitle(s: string): string {
+  const t = s.replace(/\s+/g, " ").trim();
+
+  // Prevent JSON blobs from becoming titles
+  if (t.startsWith("{") || t.startsWith("[")) return "New chat";
+
+  // Keep titles short and readable
+  return t.length > 60 ? `${t.slice(0, 57)}…` : t;
+}
+
 // GET /api/chat/history?cursor=...&limit=20
 export async function GET(req: Request) {
   const authSession = await auth0.getSession();
@@ -12,26 +22,22 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
 
-  // WHY: Keep limit bounded to avoid abuse + accidental huge reads
   const limitRaw = Number(url.searchParams.get("limit") ?? 20);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 20;
 
   const cursor = url.searchParams.get("cursor");
 
-  // CURSOR: Stable ordering is REQUIRED for correct cursor pagination.
-  // If we sort only by updatedAt and two rows share the same updatedAt, pages can drift → duplicates/missing.
-  // Fix: add a unique tie-breaker (id) as the 2nd orderBy.
   const sessions = await prisma.chatSession.findMany({
     where: { auth0Sub: sub },
-    orderBy: [{ updatedAt: "desc" }, { id: "desc" }], // ✅ deterministic order
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // CURSOR: cursor uses unique id (safe)
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: {
       id: true,
       title: true,
       mode: true,
       createdAt: true,
-      updatedAt: true, // ✅ used for lastActivityAt + matches sort order
+      updatedAt: true,
     },
   });
 
@@ -39,13 +45,12 @@ export async function GET(req: Request) {
   const page = hasMore ? sessions.slice(0, limit) : sessions;
   const sessionIds = page.map((s) => s.id);
 
-  // 2) Fetch latest message per session (portable, stable)
-  // NOTE: This is N queries but OK for beta scale. We'll optimize later if needed.
+  // Latest message per session (for preview)
   const lastMessages = await prisma.$transaction(
     sessionIds.map((sid) =>
       prisma.chatMessage.findFirst({
         where: { sessionId: sid, auth0Sub: sub },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }], // ✅ deterministic tie-break
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         select: { sessionId: true, role: true, content: true, createdAt: true },
       })
     )
@@ -55,21 +60,40 @@ export async function GET(req: Request) {
     lastMessages.filter(Boolean).map((m) => [m!.sessionId, m!])
   );
 
+  // Title fallback: last USER message only (never assistant)
+  const lastUserMessages = await prisma.$transaction(
+    sessionIds.map((sid) =>
+      prisma.chatMessage.findFirst({
+        where: { sessionId: sid, auth0Sub: sub, role: "user" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { sessionId: true, content: true },
+      })
+    )
+  );
+
+  const lastUserBySessionId = new Map(
+    lastUserMessages.filter(Boolean).map((m) => [m!.sessionId, m!])
+  );
+
   return NextResponse.json({
     items: page.map((s) => {
       const last = lastBySessionId.get(s.id) ?? null;
+      const lastUser = lastUserBySessionId.get(s.id) ?? null;
 
-      // ✅ Single source of truth:
-      // Ordering is based on updatedAt, so lastActivityAt must reflect updatedAt too.
-      const lastActivity = s.updatedAt;
+      const computedTitle =
+        s.title?.trim()
+          ? sanitizeTitle(s.title)
+          : lastUser?.content?.trim()
+            ? sanitizeTitle(lastUser.content)
+            : "New chat";
 
       return {
         id: s.id,
-        title: s.title ?? null,
+        title: computedTitle,
         mode: s.mode,
         createdAt: s.createdAt.toISOString(),
-        updatedAt: s.updatedAt.toISOString(), // ✅ useful for debugging + future UX
-        lastActivityAt: lastActivity.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+        lastActivityAt: s.updatedAt.toISOString(),
         lastMessage: last
           ? {
               role: last.role,
@@ -79,10 +103,7 @@ export async function GET(req: Request) {
           : null,
       };
     }),
-
-    // CURSOR: nextCursor must reference the last item in THIS returned page.
-    // Client sends it back to get the next page.
     nextCursor: hasMore ? page[page.length - 1].id : null,
-    hasMore, // ✅ explicit contract (helps UI + debugging)
+    hasMore,
   });
 }

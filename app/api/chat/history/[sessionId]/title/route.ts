@@ -10,22 +10,28 @@ type Ctx =
 
 const MAX_TITLE_LEN = 80;
 
+async function getSessionId(ctx: Ctx): Promise<string | undefined> {
+  // WHY: params may be a Promise depending on runtime/build output.
+  const p = (ctx as { params: { sessionId: string } | Promise<{ sessionId: string }> }).params;
+  const resolved = await Promise.resolve(p);
+  return resolved?.sessionId;
+}
+
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const authSession = await auth0.getSession();
   const sub = authSession?.user?.sub;
   if (!sub) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // WHY: params may be a Promise depending on runtime/build output.
-  const { sessionId } = await (ctx as any).params;
+  const sessionId = await getSessionId(ctx);
 
   if (!sessionId) {
     return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
   }
 
   // Safe JSON parsing (don’t throw 500 on bad JSON)
-  let body: any = null;
+  let body: { title?: unknown } | null = null;
   try {
-    body = await req.json();
+    body = (await req.json()) as { title?: unknown };
   } catch {
     body = null;
   }
@@ -39,10 +45,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   const normalizedTitle = trimmed.length === 0 ? null : trimmed;
 
   if (normalizedTitle && normalizedTitle.length > MAX_TITLE_LEN) {
-    return NextResponse.json(
-      { error: `Invalid title (max ${MAX_TITLE_LEN} chars)` },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: `Invalid title (max ${MAX_TITLE_LEN} chars)` }, { status: 400 });
   }
 
   try {
@@ -53,9 +56,6 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       data: {
         title: normalizedTitle,
         titleUpdatedAt: new Date(), // UX: deterministic rename ordering
-
-        // If you have a titleUpdatedAt field, update it here as well.
-        // titleUpdatedAt: new Date(),
       },
     });
 
@@ -82,10 +82,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
           }
         : null,
     });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: "Internal error" },
-      { status: 500 }
-    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    // Keep response non-leaky; msg is only for debugging if you later log it.
+    return NextResponse.json({ error: "Internal error", details: msg }, { status: 500 });
   }
 }
