@@ -96,12 +96,15 @@ export async function GET(req: Request) {
     );
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : "Unknown error";
-log("error", {
-  event: "billing_overview_error",
-  requestId,
-  errorType: "admin_billing_overview_failed",
-  errorMessage: errMsg,
-});    return NextResponse.json(
+
+    log("error", {
+      event: "billing_overview_error",
+      requestId,
+      errorType: "admin_billing_overview_failed",
+      errorMessage: errMsg,
+    });
+
+    return NextResponse.json(
       { ok: false, error: "Server error", details: errMsg },
       { status: 500, headers: headers(requestId) }
     );
