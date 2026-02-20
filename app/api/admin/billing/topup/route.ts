@@ -129,8 +129,12 @@ export async function POST(req: Request) {
     );
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : "Unknown error";
-    log("error", { requestId, event: "chat_error", error: errMsg });
-    return NextResponse.json(
+  log("error", {
+  event: "billing_topup_error",
+  requestId,
+  errorType: "admin_billing_topup_failed",
+  errorMessage: errMsg,
+});    return NextResponse.json(
       { ok: false, error: "Server error", details: errMsg },
       { status: 500, headers: headers(requestId) }
     );
