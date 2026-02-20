@@ -128,10 +128,24 @@ export default function BillingPanel() {
             </button>
           </div>
 
-          <h3 style={{ marginTop: 16 }}>Recent ledger</h3>
-          <div style={{ overflowX: "auto" }}>
+          <h3 style={{ marginTop: 16 }}>Recent ledger (last 50)</h3>
+
+          {/* WHY: Prevent the ledger list from expanding the entire page height as activity grows. */}
+          <div
+            style={{
+              maxHeight: 420, // tweak: 320–600; keeps metrics visible on typical screens
+              overflowY: "auto",
+              overflowX: "auto",
+              border: "1px solid #222",
+              borderRadius: 10,
+              marginTop: 8,
+            }}
+          >
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
+              <thead
+                // WHY: Sticky header keeps column labels visible while scrolling.
+                style={{ position: "sticky", top: 0, zIndex: 1 }}
+              >
                 <tr>
                   <th style={{ textAlign: "left", borderBottom: "1px solid #333", padding: 8 }}>Time</th>
                   <th style={{ textAlign: "left", borderBottom: "1px solid #333", padding: 8 }}>Delta</th>
@@ -152,6 +166,7 @@ export default function BillingPanel() {
                     </td>
                   </tr>
                 ))}
+
                 {(overview?.ledger?.length ?? 0) === 0 ? (
                   <tr>
                     <td colSpan={4} style={{ padding: 8 }}>
