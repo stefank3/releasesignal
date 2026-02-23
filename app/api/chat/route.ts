@@ -31,6 +31,7 @@ import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
 import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
 type Mode = "coach" | "review";
+type ClientMode = Mode | "cases";
 
 type RateMeta = {
   limit: number;
@@ -40,7 +41,7 @@ type RateMeta = {
 
 type ChatBody = {
   message?: string;
-  mode?: Mode;
+  mode?: ClientMode;
   sessionId?: string; // Reuse existing session
   title?: string; // Optional (new session only)
   sessionClientId?: string; // IDP: prevents duplicate sessions during creation
@@ -197,10 +198,13 @@ function coachToText(coach: CoachResult): string {
 /**
  * One-pass repair:
  * Ask the model to output ONLY valid JSON matching the mode schema.
+ *
+ * NOTE: "cases" is handled via wantCases flag, not persisted as a DB mode.
  */
 async function repairJsonOnce(args: {
   mode: Mode;
   raw: string;
+  wantCases?: boolean;
 }): Promise<string> {
   const schemaInstruction =
     args.mode === "review"
@@ -220,6 +224,34 @@ async function repairJsonOnce(args: {
           '  "antiPatterns": string[],',
           '  "improvements": string[]',
           "}",
+        ].join("\n")
+      : args.wantCases
+      ? [
+          "You must output ONLY valid JSON matching this schema (no markdown, no prose):",
+          "{",
+          '  "assumptions": string[],',
+          '  "riskMatrix": [',
+          '    { "risk": string, "likelihood": "Low"|"Med"|"High", "impact": "Low"|"Med"|"High", "mitigation": string }',
+          "  ],",
+          '  "testCases": [',
+          "    {",
+          '      "id": string,',
+          '      "title": string,',
+          '      "priority": "P0"|"P1"|"P2",',
+          '      "level": "UI"|"API"|"E2E"|"Integration"|"Unit",',
+          '      "preconditions": string[],',
+          '      "steps": string[],',
+          '      "expectedResults": string[],',
+          '      "tags": string[]',
+          "    }",
+          "  ],",
+          '  "optionalClarifications": string[] (max 3)',
+          "}",
+          "Rules:",
+          "- Provide immediate value; do NOT start by asking questions.",
+          "- Keep testCases length 5–10 (high-signal).",
+          "- steps/expectedResults must be crisp and verifiable.",
+          "- optionalClarifications must be <= 3 and placed last.",
         ].join("\n")
       : [
           "You must output ONLY valid JSON matching this schema (no markdown, no prose):",
@@ -243,7 +275,7 @@ async function repairJsonOnce(args: {
   const repaired = await openai.chat.completions.create({
     model: "gpt-4.1-mini",
     temperature: 0,
-    max_tokens: 500,
+    max_tokens: 650,
     messages: [
       { role: "system", content: "You are a strict JSON reformatter." },
       { role: "system", content: schemaInstruction },
@@ -349,8 +381,18 @@ export async function POST(req: Request) {
     }
 
     const message = body?.message;
-    const mode: Mode = body?.mode === "review" ? "review" : "coach";
+
+    // ✅ "cases" is a client-requested behavior, stored/persisted as "coach".
+    const clientMode: ClientMode =
+      body?.mode === "review" || body?.mode === "cases" ? body.mode : "coach";
+    const wantCases = clientMode === "cases";
+
+    // Persisted + billed modes remain: coach | review
+    const mode: Mode = clientMode === "review" ? "review" : "coach";
     modeForLog = mode;
+
+    // Logger payload only supports coach|review -> map for safety
+    const logMode: "coach" | "review" = mode;
 
     // 2) Validate input
     if (!message || typeof message !== "string") {
@@ -389,7 +431,7 @@ export async function POST(req: Request) {
           event: "forbidden_review_access",
           requestId,
           auth0Sub,
-          mode,
+          mode: logMode,
           durationMs: Date.now() - startTime,
         });
 
@@ -424,13 +466,12 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      // ✅ FIX: walletBalance must live in meta (LogPayload has no top-level walletBalance)
       log("warn", {
         event: "billing_failure",
         requestId,
         auth0Sub,
         orgId,
-        mode,
+        mode: logMode,
         errorType: "insufficient_credits_precheck",
         errorMessage: "Wallet balance <= 0 before OpenAI call",
         durationMs: Date.now() - startTime,
@@ -468,7 +509,7 @@ export async function POST(req: Request) {
         requestId,
         auth0Sub,
         orgId,
-        mode,
+        mode: logMode,
         durationMs: Date.now() - startTime,
         meta: { resetSeconds },
       });
@@ -526,7 +567,7 @@ export async function POST(req: Request) {
         },
         create: {
           auth0Sub,
-          mode,
+          mode, // IMPORTANT: persist coach|review only (DB-safe)
           title: body?.title ?? null,
           clientSessionId,
         },
@@ -547,8 +588,8 @@ export async function POST(req: Request) {
       auth0Sub,
       orgId,
       sessionId: sessionIdForLog,
-      mode,
-      meta: { messageChars: message.length },
+      mode: logMode,
+      meta: { messageChars: message.length, wantCases },
     });
 
     const existingAssistant = await prisma.chatMessage.findFirst({
@@ -575,7 +616,7 @@ export async function POST(req: Request) {
         auth0Sub,
         orgId,
         sessionId: sessionIdForLog,
-        mode,
+        mode: logMode,
         durationMs: Date.now() - startTime,
       });
 
@@ -638,6 +679,7 @@ export async function POST(req: Request) {
         );
       }
 
+      // For coach/cases, just return stored content (UI can format JSON if it contains testCases)
       return NextResponse.json(
         {
           ok: true,
@@ -694,6 +736,42 @@ export async function POST(req: Request) {
             "- riskGaps and improvements must be actionable and specific.",
             "- Keep each list <= 6 items.",
           ].join("\n")
+        : wantCases
+        ? [
+            "MODE: CASES (GENERATE TEST CASES, LOW-FRICTION)",
+            "Return ONLY valid JSON. No markdown. No prose outside JSON.",
+            `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
+            "Primary rule: Do NOT start by asking questions.",
+            "If input is weak: make reasonable assumptions and proceed.",
+            "Always provide: assumptions + riskMatrix + testCases.",
+            "Clarifications are OPTIONAL and MUST be last (max 3).",
+            "Schema:",
+            "{",
+            '  "assumptions": string[],',
+            '  "riskMatrix": [',
+            '    { "risk": string, "likelihood": "Low"|"Med"|"High", "impact": "Low"|"Med"|"High", "mitigation": string }',
+            "  ],",
+            '  "testCases": [',
+            "    {",
+            '      "id": string,',
+            '      "title": string,',
+            '      "priority": "P0"|"P1"|"P2",',
+            '      "level": "UI"|"API"|"E2E"|"Integration"|"Unit",',
+            '      "preconditions": string[],',
+            '      "steps": string[],',
+            '      "expectedResults": string[],',
+            '      "tags": string[]',
+            "    }",
+            "  ],",
+            '  "optionalClarifications": string[]',
+            "}",
+            "Rules:",
+            "- assumptions: 3-6 items.",
+            "- riskMatrix: 3-6 items, concrete failure modes.",
+            "- testCases: 5-10 high-signal tests max.",
+            "- steps + expectedResults must be verifiable.",
+            "- optionalClarifications: 0-3 items ONLY, and ONLY for deeper tests.",
+          ].join("\n")
         : [
             "MODE: COACH (TESTS-FIRST, LOW-FRICTION)",
             "Return ONLY valid JSON. No markdown. No prose outside JSON.",
@@ -732,7 +810,7 @@ export async function POST(req: Request) {
         openai.chat.completions.create({
           model,
           temperature: 0.2,
-          max_tokens: mode === "review" ? 500 : 700,
+          max_tokens: mode === "review" ? 500 : wantCases ? 900 : 700,
           messages: [
             { role: "system", content: QA_SYSTEM_PROMPT },
             { role: "system", content: modeInstruction },
@@ -750,10 +828,11 @@ export async function POST(req: Request) {
       auth0Sub,
       orgId,
       sessionId: sessionIdForLog,
-      mode,
+      mode: logMode,
       model: trace.model,
       openaiLatencyMs: trace.latencyMs,
       retryCount: trace.retryCount,
+      meta: { wantCases },
     });
 
     const rawReply =
@@ -771,7 +850,7 @@ export async function POST(req: Request) {
     let coachParsed: CoachResult | null = null;
     let coachText: string | null = null;
 
-    if (mode === "coach") {
+    if (mode === "coach" && !wantCases) {
       try {
         const obj = JSON.parse(extractJsonObject(rawReply));
         if (isCoachResult(obj)) coachParsed = obj;
@@ -797,6 +876,15 @@ export async function POST(req: Request) {
         coachText =
           "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
       }
+    }
+
+    // For "cases", we intentionally keep reply as JSON (UI can format it).
+    if (wantCases) {
+      let fixed = rawReply;
+      // Best-effort repair into strict JSON (no schema validation in MVP).
+      fixed = await repairJsonOnce({ mode: "coach", raw: rawReply, wantCases: true });
+      coachText = extractJsonObject(fixed);
+      coachParsed = null;
     }
 
     let creditsRemaining: number | null = null;
@@ -862,14 +950,13 @@ export async function POST(req: Request) {
         : [null, null];
 
       if (e instanceof InsufficientCreditsError) {
-        // ✅ FIX: walletBalance moved into meta
         log("warn", {
           event: "billing_failure",
           requestId,
           auth0Sub,
           orgId,
           sessionId: sessionIdForLog,
-          mode,
+          mode: logMode,
           errorType: "insufficient_credits",
           errorMessage: e.message,
           durationMs: Date.now() - startTime,
@@ -912,14 +999,13 @@ export async function POST(req: Request) {
         );
       }
 
-      // ✅ FIX: walletBalance moved into meta
       log("error", {
         event: "billing_failure",
         requestId,
         auth0Sub,
         orgId,
         sessionId: sessionIdForLog,
-        mode,
+        mode: logMode,
         errorType: "billing_tx_failed",
         errorMessage: e instanceof Error ? e.message : String(e),
         durationMs: Date.now() - startTime,
@@ -957,7 +1043,7 @@ export async function POST(req: Request) {
               auth0Sub,
               orgId,
               sessionId: sessionIdForLog,
-              mode,
+              mode: logMode,
               durationMs: Date.now() - startTime,
               tokenUsage: {
                 prompt: promptTokens,
@@ -966,7 +1052,10 @@ export async function POST(req: Request) {
               },
               eurCost: costEur ?? undefined,
               reviewUnits: 1,
-              meta: { reviewParse: "invalid_shape_after_repair", costUsd: costUsd ?? undefined },
+              meta: {
+                reviewParse: "invalid_shape_after_repair",
+                costUsd: costUsd ?? undefined,
+              },
             });
 
             await recordChatMetric({
@@ -998,7 +1087,7 @@ export async function POST(req: Request) {
             auth0Sub,
             orgId,
             sessionId: sessionIdForLog,
-            mode,
+            mode: logMode,
             durationMs: Date.now() - startTime,
             model,
             openaiLatencyMs,
@@ -1043,7 +1132,7 @@ export async function POST(req: Request) {
           auth0Sub,
           orgId,
           sessionId: sessionIdForLog,
-          mode,
+          mode: logMode,
           durationMs: Date.now() - startTime,
           model,
           openaiLatencyMs,
@@ -1092,7 +1181,7 @@ export async function POST(req: Request) {
               auth0Sub,
               orgId,
               sessionId: sessionIdForLog,
-              mode,
+              mode: logMode,
               durationMs: Date.now() - startTime,
               tokenUsage: {
                 prompt: promptTokens,
@@ -1101,7 +1190,10 @@ export async function POST(req: Request) {
               },
               eurCost: costEur ?? undefined,
               reviewUnits: 1,
-              meta: { reviewParse: "json_parse_failed_after_repair", costUsd: costUsd ?? undefined },
+              meta: {
+                reviewParse: "json_parse_failed_after_repair",
+                costUsd: costUsd ?? undefined,
+              },
             });
 
             await recordChatMetric({
@@ -1133,7 +1225,7 @@ export async function POST(req: Request) {
             auth0Sub,
             orgId,
             sessionId: sessionIdForLog,
-            mode,
+            mode: logMode,
             durationMs: Date.now() - startTime,
             model,
             openaiLatencyMs,
@@ -1177,7 +1269,7 @@ export async function POST(req: Request) {
             auth0Sub,
             orgId,
             sessionId: sessionIdForLog,
-            mode,
+            mode: logMode,
             durationMs: Date.now() - startTime,
             tokenUsage: {
               prompt: promptTokens,
@@ -1214,7 +1306,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // COACH response
+    // COACH (and CASES) response
     {
       log("info", {
         event: "chat_completed",
@@ -1222,7 +1314,7 @@ export async function POST(req: Request) {
         auth0Sub,
         orgId,
         sessionId: sessionIdForLog,
-        mode,
+        mode: logMode,
         durationMs: Date.now() - startTime,
         model,
         openaiLatencyMs,
@@ -1235,7 +1327,7 @@ export async function POST(req: Request) {
         },
         eurCost: costEur ?? undefined,
         reviewUnits: 0,
-        meta: { costUsd: costUsd ?? undefined },
+        meta: { costUsd: costUsd ?? undefined, wantCases },
       });
 
       await recordChatMetric({
