@@ -21,10 +21,13 @@ import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics
 
 import { prisma } from "@/lib/prisma";
 import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
-import { chargeCreditsTx, InsufficientCreditsError } from "@/lib/billing/chargeCredits";
+import {
+  chargeCreditsTx,
+  InsufficientCreditsError,
+} from "@/lib/billing/chargeCredits";
 
 // Centralized infra imports
-import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
+import { openai } from "@/lib/openai";
 import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
 type Mode = "coach" | "review";
@@ -53,7 +56,11 @@ function getIpIdentifier(req: Request): string {
   return "ip:unknown";
 }
 
-function responseHeaders(requestId: string, meta?: RateMeta, retryAfterSec?: number) {
+function responseHeaders(
+  requestId: string,
+  meta?: RateMeta,
+  retryAfterSec?: number
+) {
   const headers: Record<string, string> = { "X-Request-Id": requestId };
 
   if (meta) {
@@ -62,7 +69,8 @@ function responseHeaders(requestId: string, meta?: RateMeta, retryAfterSec?: num
     headers["X-RateLimit-Reset"] = String(meta.resetSeconds);
   }
 
-  if (retryAfterSec && retryAfterSec > 0) headers["Retry-After"] = String(retryAfterSec);
+  if (retryAfterSec && retryAfterSec > 0)
+    headers["Retry-After"] = String(retryAfterSec);
 
   return headers;
 }
@@ -78,13 +86,19 @@ function tokensToCredits(totalTokens: number) {
  * Internal-only cost estimate. Not used for billing, only for logs.
  * EUR conversion only happens if USD_TO_EUR is provided to avoid stale FX values.
  */
-function estimateCostUsd(args: { model: string; promptTokens: number; completionTokens: number }): number | null {
+function estimateCostUsd(args: {
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+}): number | null {
   if (args.model !== "gpt-4.1-mini") return null;
 
-  const inCostPerToken = 0.40 / 1_000_000;
-  const outCostPerToken = 1.60 / 1_000_000;
+  const inCostPerToken = 0.4 / 1_000_000;
+  const outCostPerToken = 1.6 / 1_000_000;
 
-  const cost = args.promptTokens * inCostPerToken + args.completionTokens * outCostPerToken;
+  const cost =
+    args.promptTokens * inCostPerToken +
+    args.completionTokens * outCostPerToken;
 
   return Number(cost.toFixed(8));
 }
@@ -157,14 +171,17 @@ function coachToText(coach: CoachResult): string {
   lines.push("");
   lines.push("High-signal test approach:");
   lines.push("Goals:");
-  for (const g of coach.highSignalApproach.goals.slice(0, 6)) lines.push(`- ${g}`);
+  for (const g of coach.highSignalApproach.goals.slice(0, 6))
+    lines.push(`- ${g}`);
 
   lines.push("Test ideas:");
-  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${t}`);
+  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12))
+    lines.push(`- ${t}`);
 
   if (coach.highSignalApproach.minimalRepro?.length) {
     lines.push("Minimal repro (optional):");
-    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
+    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8))
+      lines.push(`- ${s}`);
   }
 
   const clarifications = coach.optionalClarifications.slice(0, 3);
@@ -304,12 +321,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // ✅ Narrowing (fixes TS): after this line auth0Sub is guaranteed string for Prisma + billing.
+    // ✅ Narrowing: from here, auth0Sub is guaranteed string for Prisma + billing.
     auth0SubForLog = sub;
     const auth0Sub: string = sub;
 
     // Prefer user-based rate limiting; fallback to IP only if missing
-    const identifier = `user:${auth0Sub}`;
+    const identifier = auth0Sub ? `user:${auth0Sub}` : getIpIdentifier(req);
 
     // 1) Parse request body safely
     let body: ChatBody = {};
@@ -412,8 +429,8 @@ export async function POST(req: Request) {
         mode,
         errorType: "insufficient_credits_precheck",
         errorMessage: "Wallet balance <= 0 before OpenAI call",
-        walletBalance: orgState.wallet?.balance ?? 0,
         durationMs: Date.now() - startTime,
+        meta: { walletBalance: orgState.wallet?.balance ?? 0 },
       });
 
       return NextResponse.json(
@@ -431,7 +448,9 @@ export async function POST(req: Request) {
     const { success, remaining, reset } = await chatRatelimit.limit(identifier);
 
     const resetSeconds =
-      typeof reset === "number" ? Math.max(1, Math.ceil((reset - Date.now()) / 1000)) : 60;
+      typeof reset === "number"
+        ? Math.max(1, Math.ceil((reset - Date.now()) / 1000))
+        : 60;
 
     rateMeta = {
       limit: CHAT_RATE_LIMIT.limit,
@@ -465,7 +484,14 @@ export async function POST(req: Request) {
           details: `Too many requests. Try again in ~${resetSeconds}s.`,
           rate: { ...rateMeta, remaining: 0 },
         },
-        { status: 429, headers: responseHeaders(requestId, { ...rateMeta, remaining: 0 }, resetSeconds) }
+        {
+          status: 429,
+          headers: responseHeaders(
+            requestId,
+            { ...rateMeta, remaining: 0 },
+            resetSeconds
+          ),
+        }
       );
     }
 
@@ -481,7 +507,10 @@ export async function POST(req: Request) {
     }
 
     if (!sessionId) {
-      const rawClientId = typeof body?.sessionClientId === "string" ? body.sessionClientId.trim() : "";
+      const rawClientId =
+        typeof body?.sessionClientId === "string"
+          ? body.sessionClientId.trim()
+          : "";
       const clientSessionId = rawClientId.length > 0 ? rawClientId : requestId;
 
       const sessionRow = await prisma.chatSession.upsert({
@@ -498,6 +527,7 @@ export async function POST(req: Request) {
           clientSessionId,
         },
         update: {
+          // Keep stable; do not overwrite titles on replay
           title: undefined,
         },
         select: { id: true },
@@ -519,6 +549,7 @@ export async function POST(req: Request) {
       meta: { messageChars: message.length },
     });
 
+    // Replay protection (cost safety)
     const existingAssistant = await prisma.chatMessage.findFirst({
       where: { sessionId, requestId, role: "assistant", auth0Sub },
       select: { content: true, tokensIn: true, tokensOut: true },
@@ -531,7 +562,10 @@ export async function POST(req: Request) {
       });
 
       const wallet = charged?.walletId
-        ? await prisma.creditWallet.findUnique({ where: { id: charged.walletId }, select: { balance: true } })
+        ? await prisma.creditWallet.findUnique({
+            where: { id: charged.walletId },
+            select: { balance: true },
+          })
         : null;
 
       log("info", {
@@ -544,7 +578,12 @@ export async function POST(req: Request) {
         durationMs: Date.now() - startTime,
       });
 
-      await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode,
+        status: 200,
+        latencyMs: Date.now() - startTime,
+      });
 
       if (mode === "review") {
         const raw = existingAssistant.content ?? "";
@@ -562,7 +601,9 @@ export async function POST(req: Request) {
                 usage: {
                   promptTokens: existingAssistant.tokensIn ?? 0,
                   completionTokens: existingAssistant.tokensOut ?? 0,
-                  totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+                  totalTokens:
+                    (existingAssistant.tokensIn ?? 0) +
+                    (existingAssistant.tokensOut ?? 0),
                 },
                 rate: rateMeta,
                 replay: true,
@@ -585,7 +626,9 @@ export async function POST(req: Request) {
             usage: {
               promptTokens: existingAssistant.tokensIn ?? 0,
               completionTokens: existingAssistant.tokensOut ?? 0,
-              totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+              totalTokens:
+                (existingAssistant.tokensIn ?? 0) +
+                (existingAssistant.tokensOut ?? 0),
             },
             rate: rateMeta,
             replay: true,
@@ -605,7 +648,9 @@ export async function POST(req: Request) {
           usage: {
             promptTokens: existingAssistant.tokensIn ?? 0,
             completionTokens: existingAssistant.tokensOut ?? 0,
-            totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+            totalTokens:
+              (existingAssistant.tokensIn ?? 0) +
+              (existingAssistant.tokensOut ?? 0),
           },
           rate: rateMeta,
           replay: true,
@@ -614,6 +659,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // Store user message (idempotent under retries)
     await prisma.chatMessage
       .create({
         data: { sessionId, auth0Sub, role: "user", content: message, requestId },
@@ -681,41 +727,62 @@ export async function POST(req: Request) {
     const model = "gpt-4.1-mini";
     openaiModel = model;
 
-    const { result: completion, trace } = await withOpenAITrace(
-      () =>
-        openai.chat.completions.create({
-          model,
-          temperature: 0.2,
-          max_tokens: mode === "review" ? 500 : 700,
-          messages: [
-            { role: "system", content: QA_SYSTEM_PROMPT },
-            { role: "system", content: modeInstruction },
-            { role: "user", content: message },
-          ],
-        }),
-      model
-    );
+    // --- OpenAI call: manual trace (no dependency on missing exports) ---
+    const openaiStart = Date.now();
+    let completion;
+    try {
+      completion = await openai.chat.completions.create({
+        model,
+        temperature: 0.2,
+        max_tokens: mode === "review" ? 500 : 700,
+        messages: [
+          { role: "system", content: QA_SYSTEM_PROMPT },
+          { role: "system", content: modeInstruction },
+          { role: "user", content: message },
+        ],
+      });
 
-    openaiLatencyMs = trace.latencyMs;
+      openaiLatencyMs = Date.now() - openaiStart;
 
-    // WHY (M4): trace latency + model + error code without logging prompt/content.
-    log("info", {
-      event: "openai_call",
-      requestId,
-      auth0Sub,
-      orgId,
-      sessionId: sessionIdForLog,
-      mode,
-      model: trace.model,
-      openaiLatencyMs: trace.latencyMs,
-      retryCount: trace.retryCount,
-    });
+      log("info", {
+        event: "openai_call",
+        requestId,
+        auth0Sub,
+        orgId,
+        sessionId: sessionIdForLog,
+        mode,
+        model,
+        openaiLatencyMs,
+        retryCount,
+      });
+    } catch (err) {
+      openaiLatencyMs = Date.now() - openaiStart;
+      openaiErrorCode = err instanceof Error ? err.name : "openai_error";
+
+      log("error", {
+        event: "openai_error",
+        requestId,
+        auth0Sub,
+        orgId,
+        sessionId: sessionIdForLog,
+        mode,
+        model,
+        openaiLatencyMs,
+        openaiErrorCode,
+        retryCount,
+        errorType: "openai_error",
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+
+      throw err;
+    }
 
     const rawReply = completion.choices[0]?.message?.content ?? "No reply returned";
 
     const promptTokens = completion.usage?.prompt_tokens ?? 0;
     const completionTokens = completion.usage?.completion_tokens ?? 0;
-    const totalTokens = completion.usage?.total_tokens ?? promptTokens + completionTokens;
+    const totalTokens =
+      completion.usage?.total_tokens ?? promptTokens + completionTokens;
     const creditsCharged = tokensToCredits(totalTokens);
 
     const costUsd = estimateCostUsd({ model, promptTokens, completionTokens });
@@ -743,7 +810,8 @@ export async function POST(req: Request) {
       }
 
       if (coachParsed) {
-        coachParsed.optionalClarifications = coachParsed.optionalClarifications.slice(0, 3);
+        coachParsed.optionalClarifications =
+          coachParsed.optionalClarifications.slice(0, 3);
         coachText = coachToText(coachParsed);
       } else {
         coachText =
@@ -751,12 +819,17 @@ export async function POST(req: Request) {
       }
     }
 
+    // Financial correctness: charge credits + persist assistant message in one DB tx
     let creditsRemaining: number | null = null;
 
     try {
       creditsRemaining = await prisma.$transaction(
         async (tx) => {
-          const remainingBal = await chargeCreditsTx(tx, { auth0Sub, credits: creditsCharged, requestId });
+          const remainingBal = await chargeCreditsTx(tx, {
+            auth0Sub,
+            credits: creditsCharged,
+            requestId,
+          });
 
           await tx.chatMessage
             .create({
@@ -784,7 +857,7 @@ export async function POST(req: Request) {
         }
       );
     } catch (e) {
-      // WHY (M4): billing traces only on failure to avoid noise + PII risk.
+      // WHY (M4): billing traces only on failure (avoid noise + keep logs tight).
       const walletId = (orgState.wallet as any)?.id as string | undefined;
 
       const [walletSnap, ledgerSnap] = walletId
@@ -796,7 +869,13 @@ export async function POST(req: Request) {
             prisma.creditLedger.findFirst({
               where: { walletId },
               orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-              select: { id: true, delta: true, reason: true, requestId: true, createdAt: true },
+              select: {
+                id: true,
+                delta: true,
+                reason: true,
+                requestId: true,
+                createdAt: true,
+              },
             }),
           ])
         : [null, null];
@@ -811,9 +890,9 @@ export async function POST(req: Request) {
           mode,
           errorType: "insufficient_credits",
           errorMessage: e.message,
-          walletBalance: walletSnap?.balance ?? orgState.wallet?.balance ?? 0,
           durationMs: Date.now() - startTime,
           meta: {
+            walletBalance: walletSnap?.balance ?? orgState.wallet?.balance ?? 0,
             ledger: ledgerSnap
               ? {
                   id: ledgerSnap.id,
@@ -826,7 +905,12 @@ export async function POST(req: Request) {
           },
         });
 
-        await recordChatMetric({ nowMs: Date.now(), mode, status: 402, latencyMs: Date.now() - startTime });
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode,
+          status: 402,
+          latencyMs: Date.now() - startTime,
+        });
 
         return NextResponse.json(
           {
@@ -852,9 +936,9 @@ export async function POST(req: Request) {
         mode,
         errorType: "billing_tx_failed",
         errorMessage: e instanceof Error ? e.message : String(e),
-        walletBalance: walletSnap?.balance ?? orgState.wallet?.balance ?? 0,
         durationMs: Date.now() - startTime,
         meta: {
+          walletBalance: walletSnap?.balance ?? orgState.wallet?.balance ?? 0,
           ledger: ledgerSnap
             ? {
                 id: ledgerSnap.id,
@@ -870,6 +954,7 @@ export async function POST(req: Request) {
       throw e;
     }
 
+    // REVIEW: parse JSON (with 1 repair pass)
     if (mode === "review") {
       const jsonText = extractJsonObject(rawReply);
 
@@ -889,13 +974,25 @@ export async function POST(req: Request) {
               sessionId: sessionIdForLog,
               mode,
               durationMs: Date.now() - startTime,
-              tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+              tokenUsage: {
+                prompt: promptTokens,
+                completion: completionTokens,
+                total: totalTokens,
+              },
               eurCost: costEur ?? undefined,
               reviewUnits: 1,
-              meta: { reviewParse: "invalid_shape_after_repair", costUsd: costUsd ?? undefined },
+              meta: {
+                reviewParse: "invalid_shape_after_repair",
+                costUsd: costUsd ?? undefined,
+              },
             });
 
-            await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+            await recordChatMetric({
+              nowMs: Date.now(),
+              mode,
+              status: 200,
+              latencyMs: Date.now() - startTime,
+            });
 
             return NextResponse.json(
               {
@@ -925,13 +1022,22 @@ export async function POST(req: Request) {
             openaiLatencyMs,
             openaiErrorCode,
             retryCount,
-            tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+            tokenUsage: {
+              prompt: promptTokens,
+              completion: completionTokens,
+              total: totalTokens,
+            },
             eurCost: costEur ?? undefined,
             reviewUnits: 1,
             meta: { repaired: true, costUsd: costUsd ?? undefined },
           });
 
-          await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+          await recordChatMetric({
+            nowMs: Date.now(),
+            mode,
+            status: 200,
+            latencyMs: Date.now() - startTime,
+          });
 
           return NextResponse.json(
             {
@@ -961,13 +1067,22 @@ export async function POST(req: Request) {
           openaiLatencyMs,
           openaiErrorCode,
           retryCount,
-          tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+          tokenUsage: {
+            prompt: promptTokens,
+            completion: completionTokens,
+            total: totalTokens,
+          },
           eurCost: costEur ?? undefined,
           reviewUnits: 1,
           meta: { costUsd: costUsd ?? undefined },
         });
 
-        await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode,
+          status: 200,
+          latencyMs: Date.now() - startTime,
+        });
 
         return NextResponse.json(
           {
@@ -997,13 +1112,25 @@ export async function POST(req: Request) {
               sessionId: sessionIdForLog,
               mode,
               durationMs: Date.now() - startTime,
-              tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+              tokenUsage: {
+                prompt: promptTokens,
+                completion: completionTokens,
+                total: totalTokens,
+              },
               eurCost: costEur ?? undefined,
               reviewUnits: 1,
-              meta: { reviewParse: "json_parse_failed_after_repair", costUsd: costUsd ?? undefined },
+              meta: {
+                reviewParse: "json_parse_failed_after_repair",
+                costUsd: costUsd ?? undefined,
+              },
             });
 
-            await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+            await recordChatMetric({
+              nowMs: Date.now(),
+              mode,
+              status: 200,
+              latencyMs: Date.now() - startTime,
+            });
 
             return NextResponse.json(
               {
@@ -1033,13 +1160,22 @@ export async function POST(req: Request) {
             openaiLatencyMs,
             openaiErrorCode,
             retryCount,
-            tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+            tokenUsage: {
+              prompt: promptTokens,
+              completion: completionTokens,
+              total: totalTokens,
+            },
             eurCost: costEur ?? undefined,
             reviewUnits: 1,
             meta: { repaired: true, costUsd: costUsd ?? undefined },
           });
 
-          await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+          await recordChatMetric({
+            nowMs: Date.now(),
+            mode,
+            status: 200,
+            latencyMs: Date.now() - startTime,
+          });
 
           return NextResponse.json(
             {
@@ -1064,13 +1200,22 @@ export async function POST(req: Request) {
             sessionId: sessionIdForLog,
             mode,
             durationMs: Date.now() - startTime,
-            tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+            tokenUsage: {
+              prompt: promptTokens,
+              completion: completionTokens,
+              total: totalTokens,
+            },
             eurCost: costEur ?? undefined,
             reviewUnits: 1,
             meta: { reviewParse: "json_parse_failed", costUsd: costUsd ?? undefined },
           });
 
-          await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+          await recordChatMetric({
+            nowMs: Date.now(),
+            mode,
+            status: 200,
+            latencyMs: Date.now() - startTime,
+          });
 
           return NextResponse.json(
             {
@@ -1090,6 +1235,7 @@ export async function POST(req: Request) {
       }
     }
 
+    // COACH response
     {
       log("info", {
         event: "chat_completed",
@@ -1103,13 +1249,22 @@ export async function POST(req: Request) {
         openaiLatencyMs,
         openaiErrorCode,
         retryCount,
-        tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+        tokenUsage: {
+          prompt: promptTokens,
+          completion: completionTokens,
+          total: totalTokens,
+        },
         eurCost: costEur ?? undefined,
         reviewUnits: 0,
         meta: { costUsd: costUsd ?? undefined },
       });
 
-      await recordChatMetric({ nowMs: Date.now(), mode, status: 200, latencyMs: Date.now() - startTime });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode,
+        status: 200,
+        latencyMs: Date.now() - startTime,
+      });
 
       return NextResponse.json(
         {
@@ -1128,13 +1283,6 @@ export async function POST(req: Request) {
     }
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : "Unknown server error";
-
-    const t = getOpenAITraceFromError(e);
-    if (t) {
-      openaiLatencyMs = t.latencyMs;
-      openaiErrorCode = t.errorCode;
-      openaiModel = t.model;
-    }
 
     log("error", {
       event: "chat_error",
@@ -1160,7 +1308,12 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(
-      { ok: false, error: "Server error", details: errMsg, ...(rateMeta ? { rate: rateMeta } : {}) },
+      {
+        ok: false,
+        error: "Server error",
+        details: errMsg,
+        ...(rateMeta ? { rate: rateMeta } : {}),
+      },
       { status: 500, headers: responseHeaders(requestId, rateMeta ?? undefined) }
     );
   }
