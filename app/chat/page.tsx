@@ -5,10 +5,11 @@ import UserBar from "./UserBar";
 
 /**
  * Chat modes:
- * - coach: model asks clarifying questions + proposes a small, high-signal test approach
+ * - coach: model returns structured JSON with risk-based test approach
  * - review: model returns structured JSON with score/breakdown/gaps/improvements
+ * - cases: model returns structured JSON test cases (steps + expected results)
  */
-type Mode = "coach" | "review";
+type Mode = "coach" | "review" | "cases";
 
 /** Review breakdown component scores (max caps are part of the scoring model). */
 type ReviewBreakdown = {
@@ -29,10 +30,33 @@ type ReviewResult = {
   improvements: string[];
 };
 
+type TestCasePriority = "P0" | "P1" | "P2";
+type TestCaseType = "UI" | "API" | "Integration" | "E2E";
+
+type GeneratedTestCase = {
+  id: string; // "TC-001"
+  title: string;
+  priority: TestCasePriority;
+  type: TestCaseType;
+  preconditions: string[];
+  steps: string[];
+  expectedResults: string[];
+  testData?: Record<string, unknown>;
+  tags?: string[];
+};
+
+type CasesResult = {
+  suiteTitle: string;
+  assumptions: string[];
+  testCases: GeneratedTestCase[];
+  optionalClarifications?: string[];
+};
+
 /**
  * UI message model:
  * - text: normal user/bot chat messages
  * - review: structured scorecard output
+ * - cases: structured test case suite output
  * - error: API/runtime errors shown to the user
  *
  * requestId is optional metadata used for debugging & correlation with server logs.
@@ -40,6 +64,7 @@ type ReviewResult = {
 type ChatItem =
   | { kind: "text"; role: "user" | "bot"; text: string; requestId?: string }
   | { kind: "review"; role: "bot"; review: ReviewResult; requestId?: string }
+  | { kind: "cases"; role: "bot"; cases: CasesResult; requestId?: string }
   | { kind: "error"; role: "bot"; title: string; details: string; requestId?: string };
 
 type PersistedState = {
@@ -65,13 +90,18 @@ type ChatApiResponse = {
   ok: boolean;
   mode?: Mode;
   reply?: string;
+
   review?: ReviewResult;
+  cases?: CasesResult;
+
   raw?: string;
   error?: string;
   details?: string;
+
   sessionId?: string;
   creditsCharged?: number;
   creditsRemaining?: number;
+
   rate?: RateMeta;
   replay?: boolean; // ✅ served from DB / idempotent path
 };
@@ -169,6 +199,77 @@ function reviewToJson(r: ReviewResult) {
 }
 
 /**
+ * Convert cases suite to Markdown (Jira/Confluence paste).
+ */
+function casesToMarkdown(c: CasesResult) {
+  const lines: string[] = [];
+
+  lines.push(`# ${mdSafe(c.suiteTitle)}`);
+  lines.push("");
+
+  if (c.assumptions?.length) {
+    lines.push("## Assumptions");
+    for (const a of c.assumptions.slice(0, 10)) lines.push(`- ${mdSafe(a)}`);
+    lines.push("");
+  }
+
+  lines.push("## Test Cases");
+  lines.push("");
+
+  for (const tc of (c.testCases ?? []).slice(0, 50)) {
+    lines.push(`### ${mdSafe(tc.id)} — ${mdSafe(tc.title)}`);
+    lines.push(`- Priority: ${tc.priority}`);
+    lines.push(`- Type: ${tc.type}`);
+
+    if (tc.tags?.length) {
+      lines.push(`- Tags: ${tc.tags.map(mdSafe).join(", ")}`);
+    }
+
+    lines.push("");
+    lines.push("**Preconditions**");
+    if (!tc.preconditions?.length) lines.push("- None");
+    else for (const p of tc.preconditions) lines.push(`- ${mdSafe(p)}`);
+
+    lines.push("");
+    lines.push("**Steps**");
+    if (!tc.steps?.length) lines.push("1. (missing steps)");
+    else {
+      tc.steps.forEach((s, i) => lines.push(`${i + 1}. ${mdSafe(s)}`));
+    }
+
+    lines.push("");
+    lines.push("**Expected Results**");
+    if (!tc.expectedResults?.length) lines.push("- (missing expected results)");
+    else for (const e of tc.expectedResults) lines.push(`- ${mdSafe(e)}`);
+
+    if (tc.testData && Object.keys(tc.testData).length) {
+      lines.push("");
+      lines.push("**Test Data**");
+      lines.push("```json");
+      lines.push(JSON.stringify(tc.testData, null, 2));
+      lines.push("```");
+    }
+
+    lines.push("");
+  }
+
+  if (c.optionalClarifications?.length) {
+    lines.push("## Optional clarifications");
+    for (const q of c.optionalClarifications.slice(0, 3)) lines.push(`- ${mdSafe(q)}`);
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Convert cases suite to JSON.
+ */
+function casesToJson(c: CasesResult) {
+  return JSON.stringify(c, null, 2);
+}
+
+/**
  * Generate a client-side request id for correlation.
  * Uses crypto.randomUUID() when available, else a small fallback.
  */
@@ -242,6 +343,27 @@ function tryParseReview(text: string): ReviewResult | null {
     }
   } catch {
     // ignore parse errors
+  }
+  return null;
+}
+
+/**
+ * Attempt to parse a bot message content as a CasesResult JSON.
+ * Enables history replay rendering.
+ */
+function tryParseCases(text: string): CasesResult | null {
+  try {
+    const obj = JSON.parse(text);
+    if (
+      obj &&
+      typeof obj.suiteTitle === "string" &&
+      Array.isArray(obj.assumptions) &&
+      Array.isArray(obj.testCases)
+    ) {
+      return obj as CasesResult;
+    }
+  } catch {
+    // ignore
   }
   return null;
 }
@@ -355,7 +477,7 @@ function Chip({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Header button style for Coach/Review/Clear and demo actions.
+ * Header button style for Coach/Review/Cases/Clear and demo actions.
  * - active gives a stronger background to show selection.
  */
 function HeaderButton({
@@ -390,7 +512,7 @@ function HeaderButton({
   );
 }
 
-/** Small button used inside review cards (Copy MD / Copy JSON). */
+/** Small button used inside cards (Copy MD / Copy JSON). */
 function SmallButton({
   children,
   onClick,
@@ -563,6 +685,189 @@ function ReviewCard({ review }: { review: ReviewResult }) {
   );
 }
 
+/**
+ * Cases UI card for generated test case suite.
+ * Includes Copy MD + Copy JSON.
+ */
+function CasesCard({ cases }: { cases: CasesResult }) {
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 1200);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast(`${label} copied ✓`);
+    } catch {
+      setToast("Copy failed (clipboard blocked)");
+    }
+  };
+
+  return (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 16,
+        padding: 16,
+        background: "#fff",
+        boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
+        color: "#111",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 14, fontWeight: 900 }}>{cases.suiteTitle}</div>
+          <div style={{ fontSize: 12, color: "#666" }}>
+            {cases.testCases?.length ?? 0} test case(s)
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <SmallButton onClick={() => copyText(casesToMarkdown(cases), "Markdown")}>Copy MD</SmallButton>
+          <SmallButton onClick={() => copyText(casesToJson(cases), "JSON")} variant="dark">
+            Copy JSON
+          </SmallButton>
+        </div>
+      </div>
+
+      {toast && (
+        <div
+          style={{
+            marginTop: 10,
+            display: "inline-block",
+            padding: "6px 10px",
+            borderRadius: 999,
+            border: "1px solid #ddd",
+            background: "#fff",
+            color: "#111",
+            fontSize: 12,
+            fontWeight: 800,
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
+      {cases.assumptions?.length ? (
+        <div style={{ marginTop: 14, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fafafa" }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#333", marginBottom: 8 }}>Assumptions</div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {cases.assumptions.slice(0, 10).map((a, i) => (
+              <li key={i} style={{ fontSize: 13, marginBottom: 6, lineHeight: 1.35 }}>
+                {a}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+        {(cases.testCases ?? []).slice(0, 30).map((tc) => (
+          <div key={tc.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontWeight: 900, fontSize: 13 }}>
+                {tc.id} — {tc.title}
+              </div>
+              <div style={{ fontSize: 12, color: "#666" }}>
+                {tc.priority} · {tc.type}
+              </div>
+            </div>
+
+            {tc.tags?.length ? (
+              <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>
+                Tags: {tc.tags.join(", ")}
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>Preconditions</div>
+                {tc.preconditions?.length ? (
+                  <ul style={{ margin: "6px 0 0 0", paddingLeft: 18 }}>
+                    {tc.preconditions.slice(0, 8).map((p, i) => (
+                      <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>
+                        {p}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>None.</div>
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>Steps</div>
+                {tc.steps?.length ? (
+                  <ol style={{ margin: "6px 0 0 18px" }}>
+                    {tc.steps.slice(0, 12).map((s, i) => (
+                      <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>
+                        {s}
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>(missing steps)</div>
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>Expected Results</div>
+                {tc.expectedResults?.length ? (
+                  <ul style={{ margin: "6px 0 0 0", paddingLeft: 18 }}>
+                    {tc.expectedResults.slice(0, 10).map((e, i) => (
+                      <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>
+                        {e}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>(missing expected results)</div>
+                )}
+              </div>
+
+              {tc.testData && Object.keys(tc.testData).length ? (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>Test Data</div>
+                  <pre
+                    style={{
+                      marginTop: 6,
+                      background: "#fafafa",
+                      border: "1px solid #eee",
+                      borderRadius: 12,
+                      padding: 10,
+                      fontSize: 12,
+                      overflowX: "auto",
+                    }}
+                  >
+                    {JSON.stringify(tc.testData, null, 2)}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {cases.optionalClarifications?.length ? (
+        <div style={{ marginTop: 14, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fafafa" }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#333", marginBottom: 8 }}>Optional clarifications</div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {cases.optionalClarifications.slice(0, 3).map((q, i) => (
+              <li key={i} style={{ fontSize: 13, marginBottom: 6, lineHeight: 1.35 }}>
+                {q}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ChatPage() {
   const [mode, setMode] = useState<Mode>("coach");
   const [input, setInput] = useState("");
@@ -706,6 +1011,22 @@ TC3: Cancel export
 Steps: Start export, click Cancel
 Expected: export stops, no file downloaded, status resets`;
 
+  const DEMO_CASES_LOGIN = `Generate test cases for this feature:
+
+Feature: Login with Auth0, optional MFA
+
+Context:
+- Username/password login via Auth0 Universal Login
+- MFA optional based on user policy
+- Lockout policy: 5 failed attempts -> 15 minutes
+- Sessions stored in HttpOnly cookies
+
+Acceptance criteria:
+- Valid credentials redirect to dashboard
+- Invalid credentials show error and do not redirect
+- If MFA required, user must complete challenge to login
+- After 5 failed attempts, account is locked for 15 minutes`;
+
   const loadDemo = (demoMode: Mode, text: string) => {
     setMode(demoMode);
     setInput(text);
@@ -754,6 +1075,9 @@ Expected: export stops, no file downloaded, status resets`;
           if (!isUser) {
             const maybeReview = tryParseReview(m.content);
             if (maybeReview) return { kind: "review", role: "bot", review: maybeReview };
+
+            const maybeCases = tryParseCases(m.content);
+            if (maybeCases) return { kind: "cases", role: "bot", cases: maybeCases };
           }
 
           return { kind: "text", role: isUser ? "user" : "bot", text: m.content };
@@ -857,7 +1181,9 @@ Expected: export stops, no file downloaded, status resets`;
     const sessionIdForRequest = replay ? lastPending?.sessionId ?? activeSessionId : activeSessionId;
 
     const sessionClientIdForRequest =
-      sessionIdForRequest ? null : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ?? createSessionClientId();
+      sessionIdForRequest
+        ? null
+        : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ?? createSessionClientId();
 
     if (!sessionIdForRequest && !pendingSessionClientId && !replay) {
       setPendingSessionClientId(sessionClientIdForRequest);
@@ -919,14 +1245,31 @@ Expected: export stops, no file downloaded, status resets`;
 
       setRateLimitMsg(null);
 
+      // REVIEW success
       if (res.ok && data?.mode === "review" && data?.review) {
-        setItems((prev) => [...prev, { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId }]);
+        setItems((prev) => [
+          ...prev,
+          { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId },
+        ]);
         setShouldScrollToBottom(true);
         void loadSessions(true);
         setLastPending(null);
         return;
       }
 
+      // CASES success
+      if (res.ok && data?.mode === "cases" && data?.cases) {
+        setItems((prev) => [
+          ...prev,
+          { kind: "cases", role: "bot", cases: data.cases as CasesResult, requestId: serverRequestId },
+        ]);
+        setShouldScrollToBottom(true);
+        void loadSessions(true);
+        setLastPending(null);
+        return;
+      }
+
+      // REVIEW parsing issue fallback
       if (data?.mode === "review" && data?.raw) {
         setItems((prev) => [
           ...prev,
@@ -945,8 +1288,40 @@ Expected: export stops, no file downloaded, status resets`;
         return;
       }
 
+      // CASES parsing issue fallback
+      if (data?.mode === "cases" && data?.raw) {
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "error",
+            role: "bot",
+            title: data?.error ?? "Cases parsing issue",
+            details: String(data.raw),
+            requestId: serverRequestId,
+          },
+        ]);
+
+        setShouldScrollToBottom(true);
+        void loadSessions(true);
+        setLastPending(null);
+        return;
+      }
+
+      // Generic success -> text
       if (res.ok) {
-        setItems((prev) => [...prev, { kind: "text", role: "bot", text: data?.reply ?? "No reply returned", requestId: serverRequestId }]);
+        const textToShow =
+          !data?.reply && typeof (data as any)?.raw === "string"
+            ? String((data as any).raw)
+            : data?.reply ?? "No reply returned";
+
+        // If bot returned JSON in coach mode, try to format it.
+        const finalText =
+          effectiveMode === "coach" && looksLikeJson(textToShow) ? tryFormatCoachJson(textToShow) ?? textToShow : textToShow;
+
+        setItems((prev) => [
+          ...prev,
+          { kind: "text", role: "bot", text: finalText, requestId: serverRequestId },
+        ]);
         setShouldScrollToBottom(true);
         void loadSessions(true);
         setLastPending(null);
@@ -1006,6 +1381,8 @@ Expected: export stops, no file downloaded, status resets`;
     overflow: "auto",
     background: "#fafafa",
   };
+
+  const modeLabel = mode === "coach" ? "Coach" : mode === "review" ? "Review" : "Cases";
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
@@ -1205,10 +1582,13 @@ Expected: export stops, no file downloaded, status resets`;
           <HeaderButton onClick={() => loadDemo("review", DEMO_REVIEW_EXPORT)} disabled={isSending}>
             Review: Export CSV
           </HeaderButton>
+          <HeaderButton onClick={() => loadDemo("cases", DEMO_CASES_LOGIN)} disabled={isSending}>
+            Cases: Login + MFA
+          </HeaderButton>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-          <Chip>Mode: {mode === "coach" ? "Coach" : "Review"}</Chip>
+          <Chip>Mode: {modeLabel}</Chip>
           {rateChipText && <Chip>{rateChipText}</Chip>}
           {lastRequestId && <Chip>requestId: {lastRequestId.slice(0, 8)}…</Chip>}
 
@@ -1220,6 +1600,10 @@ Expected: export stops, no file downloaded, status resets`;
 
           <HeaderButton active={mode === "review"} onClick={() => setMode("review")} disabled={isSending}>
             Review
+          </HeaderButton>
+
+          <HeaderButton active={mode === "cases"} onClick={() => setMode("cases")} disabled={isSending}>
+            Cases
           </HeaderButton>
 
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
@@ -1273,8 +1657,10 @@ Expected: export stops, no file downloaded, status resets`;
           {items.length === 0 ? (
             <div style={{ color: "#666", fontSize: 13 }}>
               {mode === "coach"
-                ? "Describe a feature. I’ll draft test cases immediately (assumptions included), then ask up to 3 optional clarifications."
-                : "Paste test cases or a test plan. I’ll return a score + breakdown + improvements."}
+                ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately (assumptions included), then ask up to 3 optional clarifications."
+                : mode === "review"
+                ? "Paste test cases or a test plan. I’ll return a score + breakdown + improvements."
+                : "Describe the feature + acceptance criteria. I’ll generate structured test cases (steps + expected results) as JSON."}
             </div>
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
@@ -1321,6 +1707,17 @@ Expected: export stops, no file downloaded, status resets`;
                   );
                 }
 
+                if (it.kind === "cases") {
+                  return (
+                    <div key={idx} style={{ display: "grid", gap: 8 }}>
+                      <CasesCard cases={it.cases} />
+                      {it.requestId && (
+                        <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>
+                      )}
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={idx}
@@ -1350,7 +1747,13 @@ Expected: export stops, no file downloaded, status resets`;
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={mode === "review" ? "Paste test cases / test plan…" : "Describe the feature / workflow…"}
+            placeholder={
+              mode === "review"
+                ? "Paste test cases / test plan…"
+                : mode === "cases"
+                ? "Describe feature + acceptance criteria (or user story)…"
+                : "Describe the feature / workflow…"
+            }
             style={{
               flex: 1,
               padding: "10px 12px",

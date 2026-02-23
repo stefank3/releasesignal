@@ -46,6 +46,32 @@ export type CoachResult = {
 };
 
 /**
+ * ✅ Cases mode output contract (Milestone 4.1 sub-milestone).
+ * Strict “generated test cases” format.
+ */
+export type TestCasePriority = "P0" | "P1" | "P2";
+export type TestCaseType = "UI" | "API" | "Integration" | "E2E";
+
+export type GeneratedTestCase = {
+  id: string; // e.g. "TC-001"
+  title: string;
+  priority: TestCasePriority;
+  type: TestCaseType;
+  preconditions: string[];
+  steps: string[]; // numbered steps as strings (server/UI can render with numbering)
+  expectedResults: string[];
+  testData?: Record<string, unknown>;
+  tags?: string[];
+};
+
+export type CasesResult = {
+  suiteTitle: string;
+  assumptions: string[];
+  testCases: GeneratedTestCase[];
+  optionalClarifications?: string[]; // optional, max 3
+};
+
+/**
  * Minimal runtime validation to protect UI rendering.
  * (We keep it simple for MVP; later we can add zod.)
  */
@@ -102,6 +128,48 @@ export function isCoachResult(x: unknown): x is CoachResult {
 
   // minimalRepro optional
   if (hs.minimalRepro !== undefined && !Array.isArray(hs.minimalRepro)) return false;
+
+  return true;
+}
+
+/**
+ * ✅ Cases runtime validation (shallow but protective).
+ */
+function isPriority(x: unknown): x is TestCasePriority {
+  return x === "P0" || x === "P1" || x === "P2";
+}
+
+function isCaseType(x: unknown): x is TestCaseType {
+  return x === "UI" || x === "API" || x === "Integration" || x === "E2E";
+}
+
+export function isCasesResult(x: unknown): x is CasesResult {
+  if (typeof x !== "object" || x === null) return false;
+
+  const r = x as Record<string, unknown>;
+
+  if (typeof r.suiteTitle !== "string") return false;
+  if (!Array.isArray(r.assumptions)) return false;
+  if (!Array.isArray(r.testCases)) return false;
+
+  for (const tc of r.testCases) {
+    if (typeof tc !== "object" || tc === null) return false;
+    const t = tc as Record<string, unknown>;
+
+    if (typeof t.id !== "string") return false;
+    if (typeof t.title !== "string") return false;
+    if (!isPriority(t.priority)) return false;
+    if (!isCaseType(t.type)) return false;
+
+    if (!Array.isArray(t.preconditions)) return false;
+    if (!Array.isArray(t.steps)) return false;
+    if (!Array.isArray(t.expectedResults)) return false;
+
+    if (t.testData !== undefined && (typeof t.testData !== "object" || t.testData === null)) return false;
+    if (t.tags !== undefined && !Array.isArray(t.tags)) return false;
+  }
+
+  if (r.optionalClarifications !== undefined && !Array.isArray(r.optionalClarifications)) return false;
 
   return true;
 }
