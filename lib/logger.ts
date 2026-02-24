@@ -50,8 +50,10 @@ export type LogPayload = {
   auth0Sub?: string;
   orgId?: string;
   sessionId?: string;
-  mode?: "coach" | "review";
-
+  // WHY (M5.1):
+  // "cases" is a first-class user-visible mode and must be observable in logs.
+  // Billing/storage can still map it internally, but logs must reflect real intent.
+  mode?: "coach" | "review" | "cases";
   // Timing / outcome
   durationMs?: number;
   statusCode?: number;

@@ -9,7 +9,7 @@ import { Prisma } from "@prisma/client"; // Prisma error types (P2002)
 
 import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
-import { QA_SYSTEM_PROMPT } from "@/lib/framework/systemPrompt";
+import { QA_SYSTEM_PROMPT, CASES_SYSTEM_PROMPT } from "@/lib/framework/systemPrompt";
 import {
   isCoachResult,
   isReviewResult,
@@ -21,17 +21,25 @@ import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics
 
 import { prisma } from "@/lib/prisma";
 import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
-import {
-  chargeCreditsTx,
-  InsufficientCreditsError,
-} from "@/lib/billing/chargeCredits";
+import { chargeCreditsTx, InsufficientCreditsError } from "@/lib/billing/chargeCredits";
 
 // Centralized infra imports
 import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
 import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
-type Mode = "coach" | "review";
-type ClientMode = Mode | "cases";
+/**
+ * Persisted/billed modes (DB-safe).
+ *
+ * WHY: We intentionally do NOT persist "cases" as a DB mode to avoid schema/data migration.
+ */
+type PersistedMode = "coach" | "review";
+
+/**
+ * Client-facing modes (UI toggle).
+ *
+ * WHY: "cases" is a client behavior (plain-text contract); persistence stays coach|review.
+ */
+type ClientMode = "coach" | "review" | "cases";
 
 type RateMeta = {
   limit: number;
@@ -47,21 +55,7 @@ type ChatBody = {
   sessionClientId?: string; // IDP: prevents duplicate sessions during creation
 };
 
-function getIpIdentifier(req: Request): string {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return `ip:${xff.split(",")[0].trim()}`;
-
-  const xrip = req.headers.get("x-real-ip");
-  if (xrip) return `ip:${xrip.trim()}`;
-
-  return "ip:unknown";
-}
-
-function responseHeaders(
-  requestId: string,
-  meta?: RateMeta,
-  retryAfterSec?: number
-) {
+function responseHeaders(requestId: string, meta?: RateMeta, retryAfterSec?: number) {
   const headers: Record<string, string> = { "X-Request-Id": requestId };
 
   if (meta) {
@@ -70,8 +64,7 @@ function responseHeaders(
     headers["X-RateLimit-Reset"] = String(meta.resetSeconds);
   }
 
-  if (retryAfterSec && retryAfterSec > 0)
-    headers["Retry-After"] = String(retryAfterSec);
+  if (retryAfterSec && retryAfterSec > 0) headers["Retry-After"] = String(retryAfterSec);
 
   return headers;
 }
@@ -87,20 +80,13 @@ function tokensToCredits(totalTokens: number) {
  * Internal-only cost estimate. Not used for billing, only for logs.
  * EUR conversion only happens if USD_TO_EUR is provided to avoid stale FX values.
  */
-function estimateCostUsd(args: {
-  model: string;
-  promptTokens: number;
-  completionTokens: number;
-}): number | null {
+function estimateCostUsd(args: { model: string; promptTokens: number; completionTokens: number }): number | null {
   if (args.model !== "gpt-4.1-mini") return null;
 
   const inCostPerToken = 0.4 / 1_000_000;
   const outCostPerToken = 1.6 / 1_000_000;
 
-  const cost =
-    args.promptTokens * inCostPerToken +
-    args.completionTokens * outCostPerToken;
-
+  const cost = args.promptTokens * inCostPerToken + args.completionTokens * outCostPerToken;
   return Number(cost.toFixed(8));
 }
 
@@ -125,7 +111,7 @@ function isUniqueViolation(e: unknown) {
 
 /**
  * Extract first {...} JSON block from a mixed response.
- * This helps if the model leaks prose around JSON.
+ * This helps if the model leaks prose around JSON (coach/review only).
  */
 function extractJsonObject(raw: string): string {
   const t = raw.trim();
@@ -154,6 +140,8 @@ function isWeakInput(message: string): boolean {
 
 /**
  * Convert a CoachResult to UI-friendly plain text.
+ *
+ * WHY: UI is chat-like, and coach mode should be human-readable even though we store JSON.
  */
 function coachToText(coach: CoachResult): string {
   const lines: string[] = [];
@@ -164,25 +152,20 @@ function coachToText(coach: CoachResult): string {
   lines.push("");
   lines.push("Risk matrix:");
   for (const r of coach.riskMatrix.slice(0, 6)) {
-    lines.push(
-      `- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact}) — Mitigation: ${r.mitigation}`
-    );
+    lines.push(`- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact}) — Mitigation: ${r.mitigation}`);
   }
 
   lines.push("");
   lines.push("High-signal test approach:");
   lines.push("Goals:");
-  for (const g of coach.highSignalApproach.goals.slice(0, 6))
-    lines.push(`- ${g}`);
+  for (const g of coach.highSignalApproach.goals.slice(0, 6)) lines.push(`- ${g}`);
 
   lines.push("Test ideas:");
-  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12))
-    lines.push(`- ${t}`);
+  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${t}`);
 
   if (coach.highSignalApproach.minimalRepro?.length) {
     lines.push("Minimal repro (optional):");
-    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8))
-      lines.push(`- ${s}`);
+    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
   }
 
   const clarifications = coach.optionalClarifications.slice(0, 3);
@@ -199,13 +182,11 @@ function coachToText(coach: CoachResult): string {
  * One-pass repair:
  * Ask the model to output ONLY valid JSON matching the mode schema.
  *
- * NOTE: "cases" is handled via wantCases flag, not persisted as a DB mode.
+ * IMPORTANT:
+ * - Used only for coach/review (JSON contracts).
+ * - NOT used for cases mode because cases contract is plain-text test cases only.
  */
-async function repairJsonOnce(args: {
-  mode: Mode;
-  raw: string;
-  wantCases?: boolean;
-}): Promise<string> {
+async function repairJsonOnce(args: { mode: PersistedMode; raw: string }): Promise<string> {
   const schemaInstruction =
     args.mode === "review"
       ? [
@@ -224,34 +205,6 @@ async function repairJsonOnce(args: {
           '  "antiPatterns": string[],',
           '  "improvements": string[]',
           "}",
-        ].join("\n")
-      : args.wantCases
-      ? [
-          "You must output ONLY valid JSON matching this schema (no markdown, no prose):",
-          "{",
-          '  "assumptions": string[],',
-          '  "riskMatrix": [',
-          '    { "risk": string, "likelihood": "Low"|"Med"|"High", "impact": "Low"|"Med"|"High", "mitigation": string }',
-          "  ],",
-          '  "testCases": [',
-          "    {",
-          '      "id": string,',
-          '      "title": string,',
-          '      "priority": "P0"|"P1"|"P2",',
-          '      "level": "UI"|"API"|"E2E"|"Integration"|"Unit",',
-          '      "preconditions": string[],',
-          '      "steps": string[],',
-          '      "expectedResults": string[],',
-          '      "tags": string[]',
-          "    }",
-          "  ],",
-          '  "optionalClarifications": string[] (max 3)',
-          "}",
-          "Rules:",
-          "- Provide immediate value; do NOT start by asking questions.",
-          "- Keep testCases length 5–10 (high-signal).",
-          "- steps/expectedResults must be crisp and verifiable.",
-          "- optionalClarifications must be <= 3 and placed last.",
         ].join("\n")
       : [
           "You must output ONLY valid JSON matching this schema (no markdown, no prose):",
@@ -296,14 +249,14 @@ export async function POST(req: Request) {
   let auth0SubForLog: string | undefined;
   let orgId: string | undefined;
   let sessionIdForLog: string | undefined;
-  let modeForLog: ChatMetricMode = "unknown";
+  let modeForMetric: ChatMetricMode = "unknown";
   let rateMeta: RateMeta | null = null;
 
   // OpenAI trace captured for end/error logs
   let openaiModel: string | undefined;
   let openaiLatencyMs: number | undefined;
   let openaiErrorCode: string | undefined;
-  const retryCount = 0; // WHY (M4): we do not introduce retries in this milestone.
+  const retryCount = 0; // WHY (M4): no retries in this milestone.
 
   try {
     // 0) Require Auth0 session
@@ -320,19 +273,19 @@ export async function POST(req: Request) {
 
       await recordChatMetric({
         nowMs: Date.now(),
-        mode: modeForLog,
+        mode: modeForMetric,
         status: 401,
         latencyMs: Date.now() - startTime,
       });
 
-      return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
-        { status: 401, headers: responseHeaders(requestId) }
-      );
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: responseHeaders(requestId) });
     }
 
+    // ✅ WHY: TS narrowing — after the guard above, `user` is guaranteed non-null
+    const user = session.user;
+
     // Auth0 subject is our stable user id
-    const sub = session.user.sub as string | undefined;
+    const sub = user.sub as string | undefined;
     if (!sub) {
       log("warn", {
         event: "unauthorized",
@@ -345,22 +298,18 @@ export async function POST(req: Request) {
 
       await recordChatMetric({
         nowMs: Date.now(),
-        mode: modeForLog,
+        mode: modeForMetric,
         status: 401,
         latencyMs: Date.now() - startTime,
       });
 
-      return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
-        { status: 401, headers: responseHeaders(requestId) }
-      );
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: responseHeaders(requestId) });
     }
 
-    // ✅ Narrowing (fixes TS): after this line auth0Sub is guaranteed string for Prisma + billing.
     auth0SubForLog = sub;
     const auth0Sub: string = sub;
 
-    // Prefer user-based rate limiting; fallback to IP only if missing
+    // Prefer user-based rate limiting
     const identifier = `user:${auth0Sub}`;
 
     // 1) Parse request body safely
@@ -370,35 +319,20 @@ export async function POST(req: Request) {
     } catch {
       await recordChatMetric({
         nowMs: Date.now(),
-        mode: modeForLog,
+        mode: modeForMetric,
         status: 400,
         latencyMs: Date.now() - startTime,
       });
-      return NextResponse.json(
-        { ok: false, error: "Invalid JSON body" },
-        { status: 400, headers: responseHeaders(requestId) }
-      );
+      return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400, headers: responseHeaders(requestId) });
     }
 
     const message = body?.message;
-
-    // ✅ "cases" is a client-requested behavior, stored/persisted as "coach".
-    const clientMode: ClientMode =
-      body?.mode === "review" || body?.mode === "cases" ? body.mode : "coach";
-    const wantCases = clientMode === "cases";
-
-    // Persisted + billed modes remain: coach | review
-    const mode: Mode = clientMode === "review" ? "review" : "coach";
-    modeForLog = mode;
-
-    // Logger payload only supports coach|review -> map for safety
-    const logMode: "coach" | "review" = mode;
 
     // 2) Validate input
     if (!message || typeof message !== "string") {
       await recordChatMetric({
         nowMs: Date.now(),
-        mode,
+        mode: modeForMetric,
         status: 400,
         latencyMs: Date.now() - startTime,
       });
@@ -411,7 +345,7 @@ export async function POST(req: Request) {
     if (message.length > 8000) {
       await recordChatMetric({
         nowMs: Date.now(),
-        mode,
+        mode: modeForMetric,
         status: 400,
         latencyMs: Date.now() - startTime,
       });
@@ -421,10 +355,27 @@ export async function POST(req: Request) {
       );
     }
 
+    // 3) Client mode selection (defaults to coach)
+    const clientMode: ClientMode = body?.mode === "review" || body?.mode === "cases" ? body.mode : "coach";
+
+    const wantCases = clientMode === "cases";
+    const wantReview = clientMode === "review";
+
+    // Persisted + billed modes remain: coach | review
+    const persistedMode: PersistedMode = wantReview ? "review" : "coach";
+
+    /**
+     * WHY (M5.1):
+     * - Metrics/logs should reflect requested behavior ("cases") for observability.
+     * - DB persistence + billing remain on coach|review to avoid schema changes.
+     */
+    modeForMetric = clientMode;
+    const logMode: "coach" | "review" | "cases" = clientMode;
+
     const weakInput = isWeakInput(message);
 
-    // 3) RBAC: review is admin-only
-    if (mode === "review") {
+    // 4) RBAC: review is admin-only (cases is allowed for non-admin by design)
+    if (persistedMode === "review") {
       const isAdmin = await isAdminFromAccessToken();
       if (!isAdmin) {
         log("warn", {
@@ -437,31 +388,35 @@ export async function POST(req: Request) {
 
         await recordChatMetric({
           nowMs: Date.now(),
-          mode,
+          mode: modeForMetric,
           status: 403,
           latencyMs: Date.now() - startTime,
         });
 
-        return NextResponse.json(
-          { ok: false, mode, error: "Forbidden" },
-          { status: 403, headers: responseHeaders(requestId) }
-        );
+        return NextResponse.json({ ok: false, mode: clientMode, error: "Forbidden" }, { status: 403, headers: responseHeaders(requestId) });
       }
     }
 
-    // 4) Ensure org + wallet exist (billing preconditions)
+    // 5) Ensure org + wallet exist (billing preconditions)
     const orgState = await ensureOrgForUser({
       auth0Sub,
-      name: (session.user.name as string | undefined) ?? null,
-      email: (session.user.email as string | undefined) ?? null,
+      name: (user.name as string | undefined) ?? null,
+      email: (user.email as string | undefined) ?? null,
     });
 
-    orgId = (orgState as any)?.org?.id ?? undefined;
+    // ✅ Typed extraction (no any)
+    const orgIdFromState =
+      typeof orgState.organizationId === "string" ? orgState.organizationId : undefined;
+
+    const walletIdForOrg =
+      orgState.wallet && typeof orgState.wallet.id === "string" ? orgState.wallet.id : undefined;
+
+    orgId = orgIdFromState;
 
     if (!orgState.wallet || orgState.wallet.balance <= 0) {
       await recordChatMetric({
         nowMs: Date.now(),
-        mode,
+        mode: modeForMetric,
         status: 402,
         latencyMs: Date.now() - startTime,
       });
@@ -479,23 +434,15 @@ export async function POST(req: Request) {
       });
 
       return NextResponse.json(
-        {
-          ok: false,
-          mode,
-          error: "Insufficient credits",
-          creditsRemaining: orgState.wallet?.balance ?? 0,
-        },
+        { ok: false, mode: clientMode, error: "Insufficient credits", creditsRemaining: orgState.wallet?.balance ?? 0 },
         { status: 402, headers: responseHeaders(requestId) }
       );
     }
 
-    // 5) Rate limit (centralized)
+    // 6) Rate limit (centralized)
     const { success, remaining, reset } = await chatRatelimit.limit(identifier);
 
-    const resetSeconds =
-      typeof reset === "number"
-        ? Math.max(1, Math.ceil((reset - Date.now()) / 1000))
-        : 60;
+    const resetSeconds = typeof reset === "number" ? Math.max(1, Math.ceil((reset - Date.now()) / 1000)) : 60;
 
     rateMeta = {
       limit: CHAT_RATE_LIMIT.limit,
@@ -516,7 +463,7 @@ export async function POST(req: Request) {
 
       await recordChatMetric({
         nowMs: Date.now(),
-        mode,
+        mode: modeForMetric,
         status: 429,
         latencyMs: Date.now() - startTime,
         rateLimited: true,
@@ -531,16 +478,12 @@ export async function POST(req: Request) {
         },
         {
           status: 429,
-          headers: responseHeaders(
-            requestId,
-            { ...rateMeta, remaining: 0 },
-            resetSeconds
-          ),
+          headers: responseHeaders(requestId, { ...rateMeta, remaining: 0 }, resetSeconds),
         }
       );
     }
 
-    // 5.5) Create or reuse ChatSession (IDP-safe)
+    // 7) Create or reuse ChatSession (IDP-safe)
     let sessionId = body?.sessionId;
 
     if (sessionId) {
@@ -552,26 +495,19 @@ export async function POST(req: Request) {
     }
 
     if (!sessionId) {
-      const rawClientId =
-        typeof body?.sessionClientId === "string"
-          ? body.sessionClientId.trim()
-          : "";
+      const rawClientId = typeof body?.sessionClientId === "string" ? body.sessionClientId.trim() : "";
       const clientSessionId = rawClientId.length > 0 ? rawClientId : requestId;
 
       const sessionRow = await prisma.chatSession.upsert({
-        where: {
-          auth0Sub_clientSessionId: {
-            auth0Sub,
-            clientSessionId,
-          },
-        },
+        where: { auth0Sub_clientSessionId: { auth0Sub, clientSessionId } },
         create: {
           auth0Sub,
-          mode, // IMPORTANT: persist coach|review only (DB-safe)
+          mode: persistedMode, // DB-safe: coach|review only
           title: body?.title ?? null,
           clientSessionId,
         },
         update: {
+          // DO NOT overwrite title on reuse
           title: undefined,
         },
         select: { id: true },
@@ -589,25 +525,33 @@ export async function POST(req: Request) {
       orgId,
       sessionId: sessionIdForLog,
       mode: logMode,
-      meta: { messageChars: message.length, wantCases },
+      meta: { messageChars: message.length, weakInput, clientMode },
     });
 
+    // 8) Idempotent replay (serve stored assistant message)
     const existingAssistant = await prisma.chatMessage.findFirst({
       where: { sessionId, requestId, role: "assistant", auth0Sub },
       select: { content: true, tokensIn: true, tokensOut: true },
     });
 
     if (existingAssistant) {
-      const charged = await prisma.creditLedger.findFirst({
-        where: { requestId, reason: "chat_usage" },
-        select: { delta: true, walletId: true },
-      });
+      /**
+       * ✅ IMPORTANT:
+       * When looking up the ledger for this request, constrain by walletId too.
+       * Otherwise, requestId collisions across wallets (rare but possible) could misreport credits.
+       */
+      const charged = walletIdForOrg
+        ? await prisma.creditLedger.findFirst({
+            where: { walletId: walletIdForOrg, requestId, reason: "chat_usage" },
+            select: { delta: true, walletId: true },
+          })
+        : await prisma.creditLedger.findFirst({
+            where: { requestId, reason: "chat_usage" },
+            select: { delta: true, walletId: true },
+          });
 
       const wallet = charged?.walletId
-        ? await prisma.creditWallet.findUnique({
-            where: { id: charged.walletId },
-            select: { balance: true },
-          })
+        ? await prisma.creditWallet.findUnique({ where: { id: charged.walletId }, select: { balance: true } })
         : null;
 
       log("info", {
@@ -622,12 +566,13 @@ export async function POST(req: Request) {
 
       await recordChatMetric({
         nowMs: Date.now(),
-        mode,
+        mode: modeForMetric,
         status: 200,
         latencyMs: Date.now() - startTime,
       });
 
-      if (mode === "review") {
+      // Review replay can be returned as structured JSON if parseable
+      if (persistedMode === "review") {
         const raw = existingAssistant.content ?? "";
         try {
           const parsed = JSON.parse(extractJsonObject(raw)) as unknown;
@@ -635,7 +580,7 @@ export async function POST(req: Request) {
             return NextResponse.json(
               {
                 ok: true,
-                mode,
+                mode: clientMode,
                 review: parsed as ReviewResult,
                 sessionId,
                 creditsCharged: charged ? Math.abs(charged.delta) : null,
@@ -643,9 +588,7 @@ export async function POST(req: Request) {
                 usage: {
                   promptTokens: existingAssistant.tokensIn ?? 0,
                   completionTokens: existingAssistant.tokensOut ?? 0,
-                  totalTokens:
-                    (existingAssistant.tokensIn ?? 0) +
-                    (existingAssistant.tokensOut ?? 0),
+                  totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
                 },
                 rate: rateMeta,
                 replay: true,
@@ -660,7 +603,7 @@ export async function POST(req: Request) {
         return NextResponse.json(
           {
             ok: true,
-            mode,
+            mode: clientMode,
             raw,
             sessionId,
             creditsCharged: charged ? Math.abs(charged.delta) : null,
@@ -668,9 +611,7 @@ export async function POST(req: Request) {
             usage: {
               promptTokens: existingAssistant.tokensIn ?? 0,
               completionTokens: existingAssistant.tokensOut ?? 0,
-              totalTokens:
-                (existingAssistant.tokensIn ?? 0) +
-                (existingAssistant.tokensOut ?? 0),
+              totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
             },
             rate: rateMeta,
             replay: true,
@@ -679,11 +620,11 @@ export async function POST(req: Request) {
         );
       }
 
-      // For coach/cases, just return stored content (UI can format JSON if it contains testCases)
+      // Coach/Cases replay is stored as plain reply content.
       return NextResponse.json(
         {
           ok: true,
-          mode,
+          mode: clientMode,
           reply: existingAssistant.content,
           sessionId,
           creditsCharged: charged ? Math.abs(charged.delta) : null,
@@ -691,9 +632,7 @@ export async function POST(req: Request) {
           usage: {
             promptTokens: existingAssistant.tokensIn ?? 0,
             completionTokens: existingAssistant.tokensOut ?? 0,
-            totalTokens:
-              (existingAssistant.tokensIn ?? 0) +
-              (existingAssistant.tokensOut ?? 0),
+            totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
           },
           rate: rateMeta,
           replay: true,
@@ -702,6 +641,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // 9) Persist user message (idempotent-safe)
     await prisma.chatMessage
       .create({
         data: { sessionId, auth0Sub, role: "user", content: message, requestId },
@@ -711,108 +651,86 @@ export async function POST(req: Request) {
         throw e;
       });
 
-    const modeInstruction =
-      mode === "review"
-        ? [
-            "MODE: REVIEW & SCORING",
-            "Return ONLY valid JSON. No markdown. No prose outside JSON.",
-            "Schema:",
-            "{",
-            '  "score": number (0-100),',
-            '  "verdict": string,',
-            '  "breakdown": {',
-            '    "businessRelevance": number (0-25),',
-            '    "riskCoverage": number (0-25),',
-            '    "designQuality": number (0-20),',
-            '    "levelAndScope": number (0-15),',
-            '    "diagnosticValue": number (0-15)',
-            "  },",
-            '  "riskGaps": string[],',
-            '  "antiPatterns": string[],',
-            '  "improvements": string[]',
-            "}",
-            "Rules:",
-            "- Ensure breakdown sums to score OR is consistent with score.",
-            "- riskGaps and improvements must be actionable and specific.",
-            "- Keep each list <= 6 items.",
-          ].join("\n")
-        : wantCases
-        ? [
-            "MODE: CASES (GENERATE TEST CASES, LOW-FRICTION)",
-            "Return ONLY valid JSON. No markdown. No prose outside JSON.",
-            `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
-            "Primary rule: Do NOT start by asking questions.",
-            "If input is weak: make reasonable assumptions and proceed.",
-            "Always provide: assumptions + riskMatrix + testCases.",
-            "Clarifications are OPTIONAL and MUST be last (max 3).",
-            "Schema:",
-            "{",
-            '  "assumptions": string[],',
-            '  "riskMatrix": [',
-            '    { "risk": string, "likelihood": "Low"|"Med"|"High", "impact": "Low"|"Med"|"High", "mitigation": string }',
-            "  ],",
-            '  "testCases": [',
-            "    {",
-            '      "id": string,',
-            '      "title": string,',
-            '      "priority": "P0"|"P1"|"P2",',
-            '      "level": "UI"|"API"|"E2E"|"Integration"|"Unit",',
-            '      "preconditions": string[],',
-            '      "steps": string[],',
-            '      "expectedResults": string[],',
-            '      "tags": string[]',
-            "    }",
-            "  ],",
-            '  "optionalClarifications": string[]',
-            "}",
-            "Rules:",
-            "- assumptions: 3-6 items.",
-            "- riskMatrix: 3-6 items, concrete failure modes.",
-            "- testCases: 5-10 high-signal tests max.",
-            "- steps + expectedResults must be verifiable.",
-            "- optionalClarifications: 0-3 items ONLY, and ONLY for deeper tests.",
-          ].join("\n")
-        : [
-            "MODE: COACH (TESTS-FIRST, LOW-FRICTION)",
-            "Return ONLY valid JSON. No markdown. No prose outside JSON.",
-            `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
-            "Primary rule: Do NOT start by asking questions.",
-            "If input is weak: make reasonable assumptions and proceed.",
-            "Always provide: assumptions + riskMatrix + highSignalApproach + testIdeas.",
-            "Clarifications are OPTIONAL and MUST be last (max 3).",
-            "If you include clarifications, they must be phrased as an opt-in for deeper tests.",
-            "Schema:",
-            "{",
-            '  "assumptions": string[],',
-            '  "riskMatrix": [',
-            '    { "risk": string, "likelihood": "Low"|"Med"|"High", "impact": "Low"|"Med"|"High", "mitigation": string }',
-            "  ],",
-            '  "highSignalApproach": {',
-            '    "goals": string[],',
-            '    "testIdeas": string[],',
-            '    "minimalRepro"?: string[]',
-            "  },",
-            '  "optionalClarifications": string[]',
-            "}",
-            "Rules:",
-            "- assumptions: 3-6 items.",
-            "- riskMatrix: 3-6 items, concrete failure modes.",
-            "- goals: 3-6 items.",
-            "- testIdeas: 6-12 items max, specific and verifiable.",
-            "- optionalClarifications: 0-3 items ONLY, and ONLY for more detailed tests.",
-          ].join("\n");
-
+    // 10) Build mode instruction + system prompt
     const model = "gpt-4.1-mini";
     openaiModel = model;
+
+    /**
+     * IMPORTANT:
+     * - coach/review are JSON contracts (existing behavior).
+     * - cases is a plain-text contract (LOCKED).
+     */
+    const systemPrompt = wantCases ? CASES_SYSTEM_PROMPT : QA_SYSTEM_PROMPT;
+
+    const modeInstruction = wantCases
+      ? [
+          // ✅ Keep this minimal so we don't tempt the model into meta text.
+          `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
+          "Generate the test cases for the user's feature. Follow the OUTPUT CONTRACT exactly.",
+        ].join("\n")
+      : persistedMode === "review"
+      ? [
+          "MODE: REVIEW & SCORING",
+          "Return ONLY valid JSON. No markdown. No prose outside JSON.",
+          "Schema:",
+          "{",
+          '  "score": number (0-100),',
+          '  "verdict": string,',
+          '  "breakdown": {',
+          '    "businessRelevance": number (0-25),',
+          '    "riskCoverage": number (0-25),',
+          '    "designQuality": number (0-20),',
+          '    "levelAndScope": number (0-15),',
+          '    "diagnosticValue": number (0-15)',
+          "  },",
+          '  "riskGaps": string[],',
+          '  "antiPatterns": string[],',
+          '  "improvements": string[]',
+          "}",
+          "Rules:",
+          "- Ensure breakdown sums to score OR is consistent with score.",
+          "- riskGaps and improvements must be actionable and specific.",
+          "- Keep each list <= 6 items.",
+        ].join("\n")
+      : [
+          "MODE: COACH (TESTS-FIRST, LOW-FRICTION)",
+          "Return ONLY valid JSON. No markdown. No prose outside JSON.",
+          `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
+          "Primary rule: Do NOT start by asking questions.",
+          "If input is weak: make reasonable assumptions and proceed.",
+          "Always provide: assumptions + riskMatrix + highSignalApproach + testIdeas.",
+          "Clarifications are OPTIONAL and MUST be last (max 3).",
+          "If you include clarifications, they must be phrased as an opt-in for deeper tests.",
+          "Schema:",
+          "{",
+          '  "assumptions": string[],',
+          '  "riskMatrix": [',
+          '    { "risk": string, "likelihood": "Low"|"Med"|"High", "impact": "Low"|"Med"|"High", "mitigation": string }',
+          "  ],",
+          '  "highSignalApproach": {',
+          '    "goals": string[],',
+          '    "testIdeas": string[],',
+          '    "minimalRepro"?: string[]',
+          "  },",
+          '  "optionalClarifications": string[]',
+          "}",
+          "Rules:",
+          "- assumptions: 3-6 items.",
+          "- riskMatrix: 3-6 items, concrete failure modes.",
+          "- goals: 3-6 items.",
+          "- testIdeas: 6-12 items max, specific and verifiable.",
+          "- optionalClarifications: 0-3 items ONLY, and ONLY for more detailed tests.",
+        ].join("\n");
 
     const { result: completion, trace } = await withOpenAITrace(
       () =>
         openai.chat.completions.create({
           model,
           temperature: 0.2,
-          max_tokens: mode === "review" ? 500 : wantCases ? 900 : 700,
+          // ✅ WHY: cases needs room for 8–12 full test cases.
+          max_tokens: persistedMode === "review" ? 500 : wantCases ? 1400 : 700,
           messages: [
-            { role: "system", content: QA_SYSTEM_PROMPT },
+            { role: "system", content: systemPrompt },
             { role: "system", content: modeInstruction },
             { role: "user", content: message },
           ],
@@ -832,25 +750,28 @@ export async function POST(req: Request) {
       model: trace.model,
       openaiLatencyMs: trace.latencyMs,
       retryCount: trace.retryCount,
-      meta: { wantCases },
+      meta: { clientMode },
     });
 
-    const rawReply =
-      completion.choices[0]?.message?.content ?? "No reply returned";
+    const rawReply = completion.choices[0]?.message?.content ?? "No reply returned";
 
     const promptTokens = completion.usage?.prompt_tokens ?? 0;
     const completionTokens = completion.usage?.completion_tokens ?? 0;
-    const totalTokens =
-      completion.usage?.total_tokens ?? promptTokens + completionTokens;
+    const totalTokens = completion.usage?.total_tokens ?? promptTokens + completionTokens;
+
     const creditsCharged = tokensToCredits(totalTokens);
 
     const costUsd = estimateCostUsd({ model, promptTokens, completionTokens });
     const costEur = costUsd != null ? maybeConvertUsdToEur(costUsd) : null;
 
+    /**
+     * Coach JSON parsing/repair (existing behavior).
+     * Cases mode is plain-text — we do NOT parse/repair into JSON.
+     */
     let coachParsed: CoachResult | null = null;
-    let coachText: string | null = null;
+    let replyTextForUser: string | null = null;
 
-    if (mode === "coach" && !wantCases) {
+    if (persistedMode === "coach" && !wantCases) {
       try {
         const obj = JSON.parse(extractJsonObject(rawReply));
         if (isCoachResult(obj)) coachParsed = obj;
@@ -869,26 +790,23 @@ export async function POST(req: Request) {
       }
 
       if (coachParsed) {
-        coachParsed.optionalClarifications =
-          coachParsed.optionalClarifications.slice(0, 3);
-        coachText = coachToText(coachParsed);
+        coachParsed.optionalClarifications = coachParsed.optionalClarifications.slice(0, 3);
+        replyTextForUser = coachToText(coachParsed);
       } else {
-        coachText =
+        replyTextForUser =
           "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
       }
     }
 
-    // For "cases", we intentionally keep reply as JSON (UI can format it).
+    // ✅ Cases mode: reply is the raw plain-text test case suite (contract locked).
     if (wantCases) {
-      let fixed = rawReply;
-      // Best-effort repair into strict JSON (no schema validation in MVP).
-      fixed = await repairJsonOnce({ mode: "coach", raw: rawReply, wantCases: true });
-      coachText = extractJsonObject(fixed);
+      replyTextForUser = rawReply.trim();
       coachParsed = null;
     }
 
     let creditsRemaining: number | null = null;
 
+    // 11) Billing + assistant message persistence (financially correct, serializable)
     try {
       creditsRemaining = await prisma.$transaction(
         async (tx) => {
@@ -904,17 +822,14 @@ export async function POST(req: Request) {
                 sessionId,
                 auth0Sub,
                 role: "assistant",
-                content:
-                  mode === "coach"
-                    ? coachText ?? "No reply returned"
-                    : rawReply,
+                content: persistedMode === "review" ? rawReply : replyTextForUser ?? "No reply returned",
                 tokensIn: promptTokens,
                 tokensOut: completionTokens,
                 requestId,
               },
             })
             .catch((e) => {
-              if (isUniqueViolation(e)) return null;
+              if (isUniqueViolation(e)) return null; // idempotent replay
               throw e;
             });
 
@@ -927,24 +842,15 @@ export async function POST(req: Request) {
         }
       );
     } catch (e) {
-      const walletId = (orgState.wallet as any)?.id as string | undefined;
+      const walletId = walletIdForOrg;
 
       const [walletSnap, ledgerSnap] = walletId
         ? await Promise.all([
-            prisma.creditWallet.findUnique({
-              where: { id: walletId },
-              select: { balance: true },
-            }),
+            prisma.creditWallet.findUnique({ where: { id: walletId }, select: { balance: true } }),
             prisma.creditLedger.findFirst({
               where: { walletId },
               orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-              select: {
-                id: true,
-                delta: true,
-                reason: true,
-                requestId: true,
-                createdAt: true,
-              },
+              select: { id: true, delta: true, reason: true, requestId: true, createdAt: true },
             }),
           ])
         : [null, null];
@@ -976,7 +882,7 @@ export async function POST(req: Request) {
 
         await recordChatMetric({
           nowMs: Date.now(),
-          mode,
+          mode: modeForMetric,
           status: 402,
           latencyMs: Date.now() - startTime,
         });
@@ -984,7 +890,7 @@ export async function POST(req: Request) {
         return NextResponse.json(
           {
             ok: false,
-            mode,
+            mode: clientMode,
             error: "Insufficient credits",
             sessionId,
             creditsCharged,
@@ -992,10 +898,7 @@ export async function POST(req: Request) {
             usage: { promptTokens, completionTokens, totalTokens },
             rate: rateMeta,
           },
-          {
-            status: 402,
-            headers: responseHeaders(requestId, rateMeta ?? undefined),
-          }
+          { status: 402, headers: responseHeaders(requestId, rateMeta ?? undefined) }
         );
       }
 
@@ -1026,7 +929,8 @@ export async function POST(req: Request) {
       throw e;
     }
 
-    if (mode === "review") {
+    // 12) REVIEW response path (structured JSON)
+    if (persistedMode === "review") {
       const jsonText = extractJsonObject(rawReply);
 
       try {
@@ -1045,22 +949,15 @@ export async function POST(req: Request) {
               sessionId: sessionIdForLog,
               mode: logMode,
               durationMs: Date.now() - startTime,
-              tokenUsage: {
-                prompt: promptTokens,
-                completion: completionTokens,
-                total: totalTokens,
-              },
+              tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
               eurCost: costEur ?? undefined,
               reviewUnits: 1,
-              meta: {
-                reviewParse: "invalid_shape_after_repair",
-                costUsd: costUsd ?? undefined,
-              },
+              meta: { reviewParse: "invalid_shape_after_repair", costUsd: costUsd ?? undefined },
             });
 
             await recordChatMetric({
               nowMs: Date.now(),
-              mode,
+              mode: modeForMetric,
               status: 200,
               latencyMs: Date.now() - startTime,
             });
@@ -1068,7 +965,7 @@ export async function POST(req: Request) {
             return NextResponse.json(
               {
                 ok: false,
-                mode,
+                mode: clientMode,
                 error: "Invalid review JSON shape",
                 raw: rawReply,
                 sessionId,
@@ -1093,11 +990,7 @@ export async function POST(req: Request) {
             openaiLatencyMs,
             openaiErrorCode,
             retryCount,
-            tokenUsage: {
-              prompt: promptTokens,
-              completion: completionTokens,
-              total: totalTokens,
-            },
+            tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
             eurCost: costEur ?? undefined,
             reviewUnits: 1,
             meta: { repaired: true, costUsd: costUsd ?? undefined },
@@ -1105,7 +998,7 @@ export async function POST(req: Request) {
 
           await recordChatMetric({
             nowMs: Date.now(),
-            mode,
+            mode: modeForMetric,
             status: 200,
             latencyMs: Date.now() - startTime,
           });
@@ -1113,7 +1006,7 @@ export async function POST(req: Request) {
           return NextResponse.json(
             {
               ok: true,
-              mode,
+              mode: clientMode,
               review: repairedObj,
               sessionId,
               creditsCharged,
@@ -1138,11 +1031,7 @@ export async function POST(req: Request) {
           openaiLatencyMs,
           openaiErrorCode,
           retryCount,
-          tokenUsage: {
-            prompt: promptTokens,
-            completion: completionTokens,
-            total: totalTokens,
-          },
+          tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
           eurCost: costEur ?? undefined,
           reviewUnits: 1,
           meta: { costUsd: costUsd ?? undefined },
@@ -1150,7 +1039,7 @@ export async function POST(req: Request) {
 
         await recordChatMetric({
           nowMs: Date.now(),
-          mode,
+          mode: modeForMetric,
           status: 200,
           latencyMs: Date.now() - startTime,
         });
@@ -1158,7 +1047,7 @@ export async function POST(req: Request) {
         return NextResponse.json(
           {
             ok: true,
-            mode,
+            mode: clientMode,
             review: parsed,
             sessionId,
             creditsCharged,
@@ -1183,22 +1072,15 @@ export async function POST(req: Request) {
               sessionId: sessionIdForLog,
               mode: logMode,
               durationMs: Date.now() - startTime,
-              tokenUsage: {
-                prompt: promptTokens,
-                completion: completionTokens,
-                total: totalTokens,
-              },
+              tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
               eurCost: costEur ?? undefined,
               reviewUnits: 1,
-              meta: {
-                reviewParse: "json_parse_failed_after_repair",
-                costUsd: costUsd ?? undefined,
-              },
+              meta: { reviewParse: "json_parse_failed_after_repair", costUsd: costUsd ?? undefined },
             });
 
             await recordChatMetric({
               nowMs: Date.now(),
-              mode,
+              mode: modeForMetric,
               status: 200,
               latencyMs: Date.now() - startTime,
             });
@@ -1206,7 +1088,7 @@ export async function POST(req: Request) {
             return NextResponse.json(
               {
                 ok: false,
-                mode,
+                mode: clientMode,
                 error: "Failed to parse review JSON",
                 raw: rawReply,
                 sessionId,
@@ -1231,11 +1113,7 @@ export async function POST(req: Request) {
             openaiLatencyMs,
             openaiErrorCode,
             retryCount,
-            tokenUsage: {
-              prompt: promptTokens,
-              completion: completionTokens,
-              total: totalTokens,
-            },
+            tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
             eurCost: costEur ?? undefined,
             reviewUnits: 1,
             meta: { repaired: true, costUsd: costUsd ?? undefined },
@@ -1243,7 +1121,7 @@ export async function POST(req: Request) {
 
           await recordChatMetric({
             nowMs: Date.now(),
-            mode,
+            mode: modeForMetric,
             status: 200,
             latencyMs: Date.now() - startTime,
           });
@@ -1251,7 +1129,7 @@ export async function POST(req: Request) {
           return NextResponse.json(
             {
               ok: true,
-              mode,
+              mode: clientMode,
               review: repairedObj,
               sessionId,
               creditsCharged,
@@ -1271,11 +1149,7 @@ export async function POST(req: Request) {
             sessionId: sessionIdForLog,
             mode: logMode,
             durationMs: Date.now() - startTime,
-            tokenUsage: {
-              prompt: promptTokens,
-              completion: completionTokens,
-              total: totalTokens,
-            },
+            tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
             eurCost: costEur ?? undefined,
             reviewUnits: 1,
             meta: { reviewParse: "json_parse_failed", costUsd: costUsd ?? undefined },
@@ -1283,7 +1157,7 @@ export async function POST(req: Request) {
 
           await recordChatMetric({
             nowMs: Date.now(),
-            mode,
+            mode: modeForMetric,
             status: 200,
             latencyMs: Date.now() - startTime,
           });
@@ -1291,7 +1165,7 @@ export async function POST(req: Request) {
           return NextResponse.json(
             {
               ok: false,
-              mode,
+              mode: clientMode,
               error: "Failed to parse review JSON",
               raw: rawReply,
               sessionId,
@@ -1306,52 +1180,47 @@ export async function POST(req: Request) {
       }
     }
 
-    // COACH (and CASES) response
-    {
-      log("info", {
-        event: "chat_completed",
-        requestId,
-        auth0Sub,
-        orgId,
-        sessionId: sessionIdForLog,
-        mode: logMode,
-        durationMs: Date.now() - startTime,
-        model,
-        openaiLatencyMs,
-        openaiErrorCode,
-        retryCount,
-        tokenUsage: {
-          prompt: promptTokens,
-          completion: completionTokens,
-          total: totalTokens,
-        },
-        eurCost: costEur ?? undefined,
-        reviewUnits: 0,
-        meta: { costUsd: costUsd ?? undefined, wantCases },
-      });
+    // 13) COACH + CASES response (plain reply text)
+    log("info", {
+      event: "chat_completed",
+      requestId,
+      auth0Sub,
+      orgId,
+      sessionId: sessionIdForLog,
+      mode: logMode,
+      durationMs: Date.now() - startTime,
+      model,
+      openaiLatencyMs,
+      openaiErrorCode,
+      retryCount,
+      tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+      eurCost: costEur ?? undefined,
+      // NOTE: cases consumes units only in logs; billing remains token->credits.
+      reviewUnits: wantCases ? 1 : 0,
+      meta: { costUsd: costUsd ?? undefined, clientMode },
+    });
 
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode,
-        status: 200,
-        latencyMs: Date.now() - startTime,
-      });
+    await recordChatMetric({
+      nowMs: Date.now(),
+      mode: modeForMetric,
+      status: 200,
+      latencyMs: Date.now() - startTime,
+    });
 
-      return NextResponse.json(
-        {
-          ok: true,
-          mode,
-          reply: coachText ?? "No reply returned",
-          coach: coachParsed,
-          sessionId,
-          creditsCharged,
-          creditsRemaining,
-          usage: { promptTokens, completionTokens, totalTokens },
-          rate: rateMeta,
-        },
-        { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-      );
-    }
+    return NextResponse.json(
+      {
+        ok: true,
+        mode: clientMode,
+        reply: replyTextForUser ?? "No reply returned",
+        coach: coachParsed, // null for cases/review; populated for coach (when parse succeeds)
+        sessionId,
+        creditsCharged,
+        creditsRemaining,
+        usage: { promptTokens, completionTokens, totalTokens },
+        rate: rateMeta,
+      },
+      { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
+    );
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : "Unknown server error";
 
@@ -1368,7 +1237,7 @@ export async function POST(req: Request) {
       auth0Sub: auth0SubForLog,
       orgId,
       sessionId: sessionIdForLog,
-      mode: modeForLog === "coach" || modeForLog === "review" ? modeForLog : undefined,
+      mode: modeForMetric === "coach" || modeForMetric === "review" || modeForMetric === "cases" ? modeForMetric : undefined,
       durationMs: Date.now() - startTime,
       model: openaiModel,
       openaiLatencyMs,
@@ -1380,7 +1249,7 @@ export async function POST(req: Request) {
 
     await recordChatMetric({
       nowMs: Date.now(),
-      mode: modeForLog,
+      mode: modeForMetric,
       status: 500,
       latencyMs: Date.now() - startTime,
     });

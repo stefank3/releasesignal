@@ -89,19 +89,30 @@ export function getOpenAITraceFromError(e: unknown): OpenAITrace | null {
  * We avoid depending on a specific SDK error class to keep upgrades painless.
  */
 function extractOpenAIErrorCode(e: unknown): string | undefined {
-  if (!e || typeof e !== "object") return undefined;
+  if (typeof e !== "object" || e === null) return undefined;
 
-  // Common OpenAI SDK error shapes may include: { code }, { error: { code } }, { status }
-  const anyErr = e as any;
+  const record = e as Record<string, unknown>;
 
-  const code =
-    (typeof anyErr.code === "string" && anyErr.code) ||
-    (typeof anyErr?.error?.code === "string" && anyErr.error.code) ||
-    undefined;
+  // Direct code
+  if (typeof record.code === "string") {
+    return record.code;
+  }
 
-  if (code) return code;
+  // Nested error.code
+  if (
+    typeof record.error === "object" &&
+    record.error !== null
+  ) {
+    const nested = record.error as Record<string, unknown>;
+    if (typeof nested.code === "string") {
+      return nested.code;
+    }
+  }
 
-  // Fallback: status is sometimes present (number)
-  const status = typeof anyErr.status === "number" ? String(anyErr.status) : undefined;
-  return status;
+  // Fallback: status number → string
+  if (typeof record.status === "number") {
+    return String(record.status);
+  }
+
+  return undefined;
 }

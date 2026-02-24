@@ -70,7 +70,7 @@ const runtimeStage = resolveRuntimeStage();
  * Every Redis key must be namespaced.
  * This guarantees zero cross-environment contamination.
  */
-function resolveRedisPrefix(): string {
+function _resolveRedisPrefix(): string {
   return `${runtimeStage}:stefans-mvp:`;
 }
 

@@ -5,9 +5,11 @@ import UserBar from "./UserBar";
 
 /**
  * Chat modes:
- * - coach: model returns structured JSON with risk-based test approach
- * - review: model returns structured JSON with score/breakdown/gaps/improvements
- * - cases: model returns structured JSON test cases (steps + expected results)
+ * - coach: model returns structured JSON (server renders to readable text)
+ * - review: model returns structured JSON (score/breakdown/gaps/improvements)
+ * - cases: model returns STRICT plain-text test cases (copy-paste for Jira/Xray)
+ *
+ * WHY (M5.1): cases is intentionally NOT JSON. Contract is locked to plain text.
  */
 type Mode = "coach" | "review" | "cases";
 
@@ -30,6 +32,11 @@ type ReviewResult = {
   improvements: string[];
 };
 
+/**
+ * Legacy Cases JSON types (kept for history replay ONLY).
+ * WHY (M5.1): Older builds may have persisted cases as JSON in chat history.
+ * New cases mode is plain text and should not rely on these types.
+ */
 type TestCasePriority = "P0" | "P1" | "P2";
 type TestCaseType = "UI" | "API" | "Integration" | "E2E";
 
@@ -56,15 +63,15 @@ type CasesResult = {
  * UI message model:
  * - text: normal user/bot chat messages
  * - review: structured scorecard output
- * - cases: structured test case suite output
+ * - casesText: strict plain-text test case suite output
+ * - casesLegacy: legacy structured cases suite (history replay only)
  * - error: API/runtime errors shown to the user
- *
- * requestId is optional metadata used for debugging & correlation with server logs.
  */
 type ChatItem =
   | { kind: "text"; role: "user" | "bot"; text: string; requestId?: string }
   | { kind: "review"; role: "bot"; review: ReviewResult; requestId?: string }
-  | { kind: "cases"; role: "bot"; cases: CasesResult; requestId?: string }
+  | { kind: "casesText"; role: "bot"; text: string; requestId?: string }
+  | { kind: "casesLegacy"; role: "bot"; cases: CasesResult; requestId?: string }
   | { kind: "error"; role: "bot"; title: string; details: string; requestId?: string };
 
 type PersistedState = {
@@ -84,7 +91,7 @@ type RateMeta = {
 
 /**
  * ✅ Chat API response type (kept flexible but avoids "any").
- * Server may return replay=true when it served an idempotent replay.
+ * NOTE (M5.1): cases returns reply only (plain text).
  */
 type ChatApiResponse = {
   ok: boolean;
@@ -92,8 +99,8 @@ type ChatApiResponse = {
   reply?: string;
 
   review?: ReviewResult;
-  cases?: CasesResult;
 
+  // Legacy fields (keep permissive, server may return raw on failures)
   raw?: string;
   error?: string;
   details?: string;
@@ -103,14 +110,11 @@ type ChatApiResponse = {
   creditsRemaining?: number;
 
   rate?: RateMeta;
-  replay?: boolean; // ✅ served from DB / idempotent path
+  replay?: boolean;
 };
 
 /**
  * --- Chat History types (API: /api/chat/history) ---
- * Your backend returns:
- * - items[]: sessions list
- * - nextCursor: pagination cursor (sessionId)
  */
 type SessionListItem = {
   id: string;
@@ -123,7 +127,6 @@ type SessionListItem = {
 
 /**
  * Messages returned by GET /api/chat/history/:sessionId
- * NOTE: Backend uses "role" values: user | assistant | system
  */
 type HistoryMessage = {
   id: string;
@@ -143,7 +146,6 @@ function clamp(n: number, min: number, max: number) {
 /**
  * ✅ Scroll helper:
  * Determine if user is already near the bottom of the chat window.
- * We only auto-scroll when near bottom, to avoid “scroll yanking” while reading history.
  */
 function isNearBottom(el: HTMLDivElement, thresholdPx = 140) {
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -157,7 +159,6 @@ function mdSafe(s: string) {
 
 /**
  * Convert review result to Markdown so it can be pasted into Jira/Confluence.
- * This is the "human-friendly export".
  */
 function reviewToMarkdown(r: ReviewResult) {
   const b = r.breakdown;
@@ -192,16 +193,16 @@ function reviewToMarkdown(r: ReviewResult) {
 
 /**
  * Convert review result to JSON (pretty printed).
- * This is the "machine-friendly export" for future integrations.
  */
 function reviewToJson(r: ReviewResult) {
   return JSON.stringify(r, null, 2);
 }
 
 /**
- * Convert cases suite to Markdown (Jira/Confluence paste).
+ * Legacy: Convert cases suite (JSON) to Markdown (Jira/Confluence paste).
+ * WHY: Only used for history replay of older persisted cases payloads.
  */
-function casesToMarkdown(c: CasesResult) {
+function casesLegacyToMarkdown(c: CasesResult) {
   const lines: string[] = [];
 
   lines.push(`# ${mdSafe(c.suiteTitle)}`);
@@ -221,9 +222,7 @@ function casesToMarkdown(c: CasesResult) {
     lines.push(`- Priority: ${tc.priority}`);
     lines.push(`- Type: ${tc.type}`);
 
-    if (tc.tags?.length) {
-      lines.push(`- Tags: ${tc.tags.map(mdSafe).join(", ")}`);
-    }
+    if (tc.tags?.length) lines.push(`- Tags: ${tc.tags.map(mdSafe).join(", ")}`);
 
     lines.push("");
     lines.push("**Preconditions**");
@@ -233,9 +232,7 @@ function casesToMarkdown(c: CasesResult) {
     lines.push("");
     lines.push("**Steps**");
     if (!tc.steps?.length) lines.push("1. (missing steps)");
-    else {
-      tc.steps.forEach((s, i) => lines.push(`${i + 1}. ${mdSafe(s)}`));
-    }
+    else tc.steps.forEach((s, i) => lines.push(`${i + 1}. ${mdSafe(s)}`));
 
     lines.push("");
     lines.push("**Expected Results**");
@@ -262,16 +259,12 @@ function casesToMarkdown(c: CasesResult) {
   return lines.join("\n").trim();
 }
 
-/**
- * Convert cases suite to JSON.
- */
-function casesToJson(c: CasesResult) {
+function casesLegacyToJson(c: CasesResult) {
   return JSON.stringify(c, null, 2);
 }
 
 /**
  * Generate a client-side request id for correlation.
- * Uses crypto.randomUUID() when available, else a small fallback.
  */
 function createRequestId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -282,7 +275,6 @@ function createRequestId(): string {
 
 /**
  * IDP: generate a stable client-side id for new-session creation.
- * This must remain stable across retries until server returns a real sessionId.
  */
 function createSessionClientId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -294,7 +286,7 @@ function createSessionClientId(): string {
 /**
  * Fetch helper:
  * - throws on non-2xx responses
- * - detects HTML early (Auth0 redirect / middleware / error pages)
+ * - detects HTML early
  * - always returns parsed json
  */
 async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -305,12 +297,17 @@ async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
 
   const first = text.trimStart().slice(0, 200).replace(/\s+/g, " ");
   const looksHtml =
-    ct.includes("text/html") || first.startsWith("<!doctype") || first.startsWith("<html") || first.startsWith("<");
+    ct.includes("text/html") ||
+    first.startsWith("<!doctype") ||
+    first.startsWith("<html") ||
+    first.startsWith("<");
 
   const looksJson = ct.includes("application/json") || first.startsWith("{") || first.startsWith("[");
 
   if (!looksJson) {
-    const hint = looksHtml ? "Expected JSON but got HTML (redirect/login/error page)" : "Expected JSON but got non-JSON";
+    const hint = looksHtml
+      ? "Expected JSON but got HTML (redirect/login/error page)"
+      : "Expected JSON but got non-JSON";
     throw new Error(`${hint} (HTTP ${res.status}). content-type=${ct || "(none)"} first=${first}`);
   }
 
@@ -325,7 +322,6 @@ async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
 
 /**
  * Attempt to parse a bot message content as a ReviewResult JSON.
- * This enables "history replay" to render past review results nicely.
  */
 function tryParseReview(text: string): ReviewResult | null {
   try {
@@ -342,24 +338,19 @@ function tryParseReview(text: string): ReviewResult | null {
       return obj as ReviewResult;
     }
   } catch {
-    // ignore parse errors
+    // ignore
   }
   return null;
 }
 
 /**
- * Attempt to parse a bot message content as a CasesResult JSON.
- * Enables history replay rendering.
+ * Legacy-only: Attempt to parse a bot message content as a CasesResult JSON.
+ * WHY (M5.1): cases is now strict plain text, but old history may still contain JSON.
  */
-function tryParseCases(text: string): CasesResult | null {
+function tryParseCasesLegacy(text: string): CasesResult | null {
   try {
     const obj = JSON.parse(text);
-    if (
-      obj &&
-      typeof obj.suiteTitle === "string" &&
-      Array.isArray(obj.assumptions) &&
-      Array.isArray(obj.testCases)
-    ) {
+    if (obj && typeof obj.suiteTitle === "string" && Array.isArray(obj.assumptions) && Array.isArray(obj.testCases)) {
       return obj as CasesResult;
     }
   } catch {
@@ -373,6 +364,38 @@ function looksLikeJson(s: string) {
   return t.startsWith("{") || t.startsWith("[");
 }
 
+/**
+ * ✅ Heuristic:
+ * Some older sessions might have mode stored as coach/review, but the assistant content is clearly cases plain text.
+ * If so, render assistant messages with CasesTextCard (instead of bubble).
+ */
+function looksLikeCasesPlainText(text: string): boolean {
+  const t = String(text ?? "").replace(/\r/g, "");
+
+  // Strong "TC-001" signal. Require at least 1 TC line AND one other structure marker.
+  const tcCount = (t.match(/^TC-\d{1,4}\b.*$/gim) || []).length;
+
+  const hasMarkers =
+    /(^|\n)\s*Preconditions\s*:/i.test(t) ||
+    /(^|\n)\s*Test Steps\s*:/i.test(t) ||
+    /(^|\n)\s*Steps\s*:/i.test(t) ||
+    /(^|\n)\s*Expected Result(s)?\s*:/i.test(t) ||
+    /(^|\n)\s*Priority\s*:/i.test(t) ||
+    /(^|\n)\s*Type\s*:/i.test(t);
+
+  // Also catch suites that start immediately with TC sections without headings.
+  if (tcCount >= 1 && hasMarkers) return true;
+
+  // Fallback: if there are multiple "TC-" lines it's almost certainly cases.
+  if (tcCount >= 2) return true;
+
+  return false;
+}
+
+/**
+ * Coach readability fallback:
+ * If bot reply is JSON, attempt to show a short readable summary.
+ */
 function tryFormatCoachJson(text: string): string | null {
   try {
     const obj = JSON.parse(text) as {
@@ -478,7 +501,6 @@ function Chip({ children }: { children: React.ReactNode }) {
 
 /**
  * Header button style for Coach/Review/Cases/Clear and demo actions.
- * - active gives a stronger background to show selection.
  */
 function HeaderButton({
   active,
@@ -564,7 +586,7 @@ function Section({ title, items }: { title: string; items: string[] }) {
 
 /**
  * Review UI card for structured scoring output.
- * Includes Copy MD + Copy JSON with a small toast notification (no alerts).
+ * Includes Copy MD + Copy JSON.
  */
 function ReviewCard({ review }: { review: ReviewResult }) {
   const score = clamp(Number(review.score) || 0, 0, 100);
@@ -686,10 +708,90 @@ function ReviewCard({ review }: { review: ReviewResult }) {
 }
 
 /**
- * Cases UI card for generated test case suite.
- * Includes Copy MD + Copy JSON.
+ * Cases (plain text) card:
+ * - copy button
+ * - preserves whitespace for Jira/Xray paste
  */
-function CasesCard({ cases }: { cases: CasesResult }) {
+function CasesTextCard({ text }: { text: string }) {
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 1200);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast("Copied ✓");
+    } catch {
+      setToast("Copy failed (clipboard blocked)");
+    }
+  };
+
+  return (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 16,
+        padding: 16,
+        background: "#fff",
+        boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
+        color: "#111",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 14, fontWeight: 900 }}>Generated Test Cases</div>
+          <div style={{ fontSize: 12, color: "#666" }}>Copy-paste into Jira/Xray</div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <SmallButton onClick={copyText}>Copy</SmallButton>
+        </div>
+      </div>
+
+      {toast && (
+        <div
+          style={{
+            marginTop: 10,
+            display: "inline-block",
+            padding: "6px 10px",
+            borderRadius: 999,
+            border: "1px solid #ddd",
+            background: "#fff",
+            color: "#111",
+            fontSize: 12,
+            fontWeight: 800,
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
+      <pre
+        style={{
+          marginTop: 12,
+          whiteSpace: "pre-wrap",
+          fontSize: 13,
+          lineHeight: 1.45,
+          background: "#fafafa",
+          border: "1px solid #eee",
+          borderRadius: 14,
+          padding: 12,
+        }}
+      >
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+/**
+ * Legacy Cases UI card (history replay only).
+ */
+function CasesLegacyCard({ cases }: { cases: CasesResult }) {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -721,14 +823,12 @@ function CasesCard({ cases }: { cases: CasesResult }) {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
         <div style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 900 }}>{cases.suiteTitle}</div>
-          <div style={{ fontSize: 12, color: "#666" }}>
-            {cases.testCases?.length ?? 0} test case(s)
-          </div>
+          <div style={{ fontSize: 12, color: "#666" }}>{cases.testCases?.length ?? 0} test case(s)</div>
         </div>
 
         <div style={{ display: "flex", gap: 8 }}>
-          <SmallButton onClick={() => copyText(casesToMarkdown(cases), "Markdown")}>Copy MD</SmallButton>
-          <SmallButton onClick={() => copyText(casesToJson(cases), "JSON")} variant="dark">
+          <SmallButton onClick={() => copyText(casesLegacyToMarkdown(cases), "Markdown")}>Copy MD</SmallButton>
+          <SmallButton onClick={() => copyText(casesLegacyToJson(cases), "JSON")} variant="dark">
             Copy JSON
           </SmallButton>
         </div>
@@ -752,19 +852,6 @@ function CasesCard({ cases }: { cases: CasesResult }) {
         </div>
       )}
 
-      {cases.assumptions?.length ? (
-        <div style={{ marginTop: 14, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fafafa" }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: "#333", marginBottom: 8 }}>Assumptions</div>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {cases.assumptions.slice(0, 10).map((a, i) => (
-              <li key={i} style={{ fontSize: 13, marginBottom: 6, lineHeight: 1.35 }}>
-                {a}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
       <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
         {(cases.testCases ?? []).slice(0, 30).map((tc) => (
           <div key={tc.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
@@ -777,11 +864,7 @@ function CasesCard({ cases }: { cases: CasesResult }) {
               </div>
             </div>
 
-            {tc.tags?.length ? (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>
-                Tags: {tc.tags.join(", ")}
-              </div>
-            ) : null}
+            {tc.tags?.length ? <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>Tags: {tc.tags.join(", ")}</div> : null}
 
             <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
               <div>
@@ -828,42 +911,10 @@ function CasesCard({ cases }: { cases: CasesResult }) {
                   <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>(missing expected results)</div>
                 )}
               </div>
-
-              {tc.testData && Object.keys(tc.testData).length ? (
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>Test Data</div>
-                  <pre
-                    style={{
-                      marginTop: 6,
-                      background: "#fafafa",
-                      border: "1px solid #eee",
-                      borderRadius: 12,
-                      padding: 10,
-                      fontSize: 12,
-                      overflowX: "auto",
-                    }}
-                  >
-                    {JSON.stringify(tc.testData, null, 2)}
-                  </pre>
-                </div>
-              ) : null}
             </div>
           </div>
         ))}
       </div>
-
-      {cases.optionalClarifications?.length ? (
-        <div style={{ marginTop: 14, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fafafa" }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: "#333", marginBottom: 8 }}>Optional clarifications</div>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {cases.optionalClarifications.slice(0, 3).map((q, i) => (
-              <li key={i} style={{ fontSize: 13, marginBottom: 6, lineHeight: 1.35 }}>
-                {q}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -891,6 +942,13 @@ export default function ChatPage() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  /**
+   * ✅ Needed to render history correctly.
+   * - cases sessions => assistant history messages should render as CasesTextCard (unless legacy JSON cases is detected).
+   * - plus: some older sessions may be mis-labeled; we can upgrade based on message content.
+   */
+  const [activeSessionMode, setActiveSessionMode] = useState<Mode>("coach");
 
   const [pendingSessionClientId, setPendingSessionClientId] = useState<string | null>(null);
 
@@ -1029,6 +1087,7 @@ Acceptance criteria:
 
   const loadDemo = (demoMode: Mode, text: string) => {
     setMode(demoMode);
+    if (!activeSessionId) setActiveSessionMode(demoMode);
     setInput(text);
   };
 
@@ -1052,7 +1111,12 @@ Acceptance criteria:
     }
   };
 
-  const loadSessionMessages = async (sessionId: string, reset: boolean) => {
+  /**
+   * ✅ History loader:
+   * - uses sessionMode for correct rendering
+   * - upgrades to "cases" if assistant messages strongly look like cases plain text (for mis-labeled older sessions)
+   */
+  const loadSessionMessages = async (sessionId: string, reset: boolean, sessionMode: Mode) => {
     if (messagesLoading) return;
 
     setMessagesLoading(true);
@@ -1067,20 +1131,45 @@ Acceptance criteria:
 
       const data = await fetchJSON<{ items: HistoryMessage[]; nextCursor: string | null }>(url.toString());
 
+      // ✅ Decide effective mode for rendering (upgrade mis-labeled sessions)
+      let effectiveSessionMode: Mode = sessionMode;
+      if (sessionMode !== "cases") {
+        const assistantMsgs = data.items.filter((m) => m.role === "assistant").map((m) => m.content);
+
+        const anyReviewJson = assistantMsgs.some((t) => !!tryParseReview(t));
+        const anyLegacyCasesJson = assistantMsgs.some((t) => !!tryParseCasesLegacy(t));
+        const anyCasesText = assistantMsgs.some((t) => looksLikeCasesPlainText(t));
+
+        // If it's clearly a cases session and not a review JSON session, render as cases.
+        if (!anyReviewJson && (anyLegacyCasesJson || anyCasesText)) {
+          effectiveSessionMode = "cases";
+
+          // keep UI consistent for this session
+          setActiveSessionMode("cases");
+          setMode("cases");
+        }
+      }
+
       const mapped: ChatItem[] = data.items
         .filter((m) => m.role !== "system")
         .map((m) => {
           const isUser = m.role === "user";
 
-          if (!isUser) {
-            const maybeReview = tryParseReview(m.content);
-            if (maybeReview) return { kind: "review", role: "bot", review: maybeReview };
+          if (isUser) return { kind: "text", role: "user", text: m.content };
 
-            const maybeCases = tryParseCases(m.content);
-            if (maybeCases) return { kind: "cases", role: "bot", cases: maybeCases };
+          // Assistant message rendering:
+          if (effectiveSessionMode === "cases") {
+            const maybeCasesLegacy = tryParseCasesLegacy(m.content);
+            if (maybeCasesLegacy) return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
+
+            // strict plain text cases
+            return { kind: "casesText", role: "bot", text: m.content };
           }
 
-          return { kind: "text", role: isUser ? "user" : "bot", text: m.content };
+          const maybeReview = tryParseReview(m.content);
+          if (maybeReview) return { kind: "review", role: "bot", review: maybeReview };
+
+          return { kind: "text", role: "bot", text: m.content };
         });
 
       setItems((prev) => (reset ? mapped : [...mapped, ...prev]));
@@ -1105,8 +1194,15 @@ Acceptance criteria:
     }
   };
 
-  const selectSession = async (sessionId: string) => {
+  /**
+   * ✅ Selecting a session sets BOTH activeSessionId and activeSessionMode
+   * so history rendering behaves correctly (and can be upgraded by loader).
+   */
+  const selectSession = async (sessionId: string, sessionMode: Mode) => {
     setActiveSessionId(sessionId);
+    setActiveSessionMode(sessionMode);
+    setMode(sessionMode);
+
     setPendingSessionClientId(null);
     setMessagesCursor(null);
 
@@ -1119,12 +1215,13 @@ Acceptance criteria:
 
     setLastPending(null);
 
-    await loadSessionMessages(sessionId, true);
+    await loadSessionMessages(sessionId, true, sessionMode);
     setShouldScrollToBottom(true);
   };
 
   const newChat = () => {
     setActiveSessionId(null);
+    setActiveSessionMode(mode);
     setPendingSessionClientId(createSessionClientId());
     setMessagesCursor(null);
 
@@ -1145,7 +1242,6 @@ Acceptance criteria:
 
   const renameSession = async (sessionId: string, title: string) => {
     const nextTitle = title.trim();
-
     if (!nextTitle || nextTitle.length > 80) return;
 
     setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
@@ -1233,6 +1329,7 @@ Acceptance criteria:
 
       if (res.ok && data?.sessionId && typeof data.sessionId === "string") {
         setActiveSessionId(data.sessionId);
+        setActiveSessionMode(effectiveMode);
         setPendingSessionClientId(null);
         await loadSessions(true);
       }
@@ -1245,24 +1342,19 @@ Acceptance criteria:
 
       setRateLimitMsg(null);
 
-      // REVIEW success
+      // ✅ REVIEW success
       if (res.ok && data?.mode === "review" && data?.review) {
-        setItems((prev) => [
-          ...prev,
-          { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId },
-        ]);
+        setItems((prev) => [...prev, { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId }]);
         setShouldScrollToBottom(true);
         void loadSessions(true);
         setLastPending(null);
         return;
       }
 
-      // CASES success
-      if (res.ok && data?.mode === "cases" && data?.cases) {
-        setItems((prev) => [
-          ...prev,
-          { kind: "cases", role: "bot", cases: data.cases as CasesResult, requestId: serverRequestId },
-        ]);
+      // ✅ CASES success (M5.1): plain text reply only
+      if (res.ok && data?.mode === "cases") {
+        const reply = typeof data?.reply === "string" ? data.reply : "";
+        setItems((prev) => [...prev, { kind: "casesText", role: "bot", text: reply || "No reply returned", requestId: serverRequestId }]);
         setShouldScrollToBottom(true);
         void loadSessions(true);
         setLastPending(null);
@@ -1288,40 +1380,25 @@ Acceptance criteria:
         return;
       }
 
-      // CASES parsing issue fallback
-      if (data?.mode === "cases" && data?.raw) {
-        setItems((prev) => [
-          ...prev,
-          {
-            kind: "error",
-            role: "bot",
-            title: data?.error ?? "Cases parsing issue",
-            details: String(data.raw),
-            requestId: serverRequestId,
-          },
-        ]);
-
-        setShouldScrollToBottom(true);
-        void loadSessions(true);
-        setLastPending(null);
-        return;
-      }
-
       // Generic success -> text
       if (res.ok) {
-        const textToShow =
-          !data?.reply && typeof (data as any)?.raw === "string"
-            ? String((data as any).raw)
-            : data?.reply ?? "No reply returned";
+        function isRecord(v: unknown): v is Record<string, unknown> {
+            return typeof v === "object" && v !== null;
+          }
+
+          const rawValue =
+            isRecord(data) && typeof data.raw === "string" ? data.raw : undefined;
+
+          const textToShow =
+            !data?.reply && typeof rawValue === "string"
+              ? rawValue
+              : data?.reply ?? "No reply returned";
 
         // If bot returned JSON in coach mode, try to format it.
         const finalText =
           effectiveMode === "coach" && looksLikeJson(textToShow) ? tryFormatCoachJson(textToShow) ?? textToShow : textToShow;
 
-        setItems((prev) => [
-          ...prev,
-          { kind: "text", role: "bot", text: finalText, requestId: serverRequestId },
-        ]);
+        setItems((prev) => [...prev, { kind: "text", role: "bot", text: finalText, requestId: serverRequestId }]);
         setShouldScrollToBottom(true);
         void loadSessions(true);
         setLastPending(null);
@@ -1432,7 +1509,7 @@ Acceptance criteria:
                 }}
               >
                 <button
-                  onClick={() => void selectSession(s.id)}
+                  onClick={() => void selectSession(s.id, s.mode)}
                   style={{
                     width: "100%",
                     textAlign: "left",
@@ -1594,15 +1671,36 @@ Acceptance criteria:
 
           {lastPending && !isSending && <HeaderButton onClick={() => void send({ replay: true })}>Retry last</HeaderButton>}
 
-          <HeaderButton active={mode === "coach"} onClick={() => setMode("coach")} disabled={isSending}>
+          <HeaderButton
+            active={mode === "coach"}
+            onClick={() => {
+              setMode("coach");
+              if (!activeSessionId) setActiveSessionMode("coach");
+            }}
+            disabled={isSending}
+          >
             Coach
           </HeaderButton>
 
-          <HeaderButton active={mode === "review"} onClick={() => setMode("review")} disabled={isSending}>
+          <HeaderButton
+            active={mode === "review"}
+            onClick={() => {
+              setMode("review");
+              if (!activeSessionId) setActiveSessionMode("review");
+            }}
+            disabled={isSending}
+          >
             Review
           </HeaderButton>
 
-          <HeaderButton active={mode === "cases"} onClick={() => setMode("cases")} disabled={isSending}>
+          <HeaderButton
+            active={mode === "cases"}
+            onClick={() => {
+              setMode("cases");
+              if (!activeSessionId) setActiveSessionMode("cases");
+            }}
+            disabled={isSending}
+          >
             Cases
           </HeaderButton>
 
@@ -1630,7 +1728,7 @@ Acceptance criteria:
           <Chip>{activeSessionId ? `Session: ${activeSessionId.slice(0, 8)}…` : "Session: (new)"}</Chip>
 
           {activeSessionId && messagesCursor && (
-            <HeaderButton onClick={() => void loadSessionMessages(activeSessionId, false)} disabled={messagesLoading}>
+            <HeaderButton onClick={() => void loadSessionMessages(activeSessionId, false, activeSessionMode)} disabled={messagesLoading}>
               {messagesLoading ? "Loading…" : "Load older"}
             </HeaderButton>
           )}
@@ -1660,15 +1758,14 @@ Acceptance criteria:
                 ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately (assumptions included), then ask up to 3 optional clarifications."
                 : mode === "review"
                 ? "Paste test cases or a test plan. I’ll return a score + breakdown + improvements."
-                : "Describe the feature + acceptance criteria. I’ll generate structured test cases (steps + expected results) as JSON."}
+                : "Describe the feature + acceptance criteria. I’ll generate STRICT plain-text Jira/Xray-ready test cases (no JSON)."}
             </div>
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
               {items.map((it, idx) => {
                 if (it.kind === "text") {
                   const isUser = it.role === "user";
-                  const textToShow =
-                    !isUser && looksLikeJson(it.text) ? tryFormatCoachJson(it.text) ?? it.text : it.text;
+                  const textToShow = !isUser && looksLikeJson(it.text) ? tryFormatCoachJson(it.text) ?? it.text : it.text;
 
                   return (
                     <div key={idx} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
@@ -1686,11 +1783,7 @@ Acceptance criteria:
                         }}
                       >
                         {textToShow}
-                        {it.requestId && (
-                          <div style={{ marginTop: 8, fontSize: 11, opacity: 0.6 }}>
-                            requestId: {it.requestId.slice(0, 8)}…
-                          </div>
-                        )}
+                        {it.requestId && <div style={{ marginTop: 8, fontSize: 11, opacity: 0.6 }}>requestId: {it.requestId.slice(0, 8)}…</div>}
                       </div>
                     </div>
                   );
@@ -1700,20 +1793,25 @@ Acceptance criteria:
                   return (
                     <div key={idx} style={{ display: "grid", gap: 8 }}>
                       <ReviewCard review={it.review} />
-                      {it.requestId && (
-                        <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>
-                      )}
+                      {it.requestId && <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>}
                     </div>
                   );
                 }
 
-                if (it.kind === "cases") {
+                if (it.kind === "casesText") {
                   return (
                     <div key={idx} style={{ display: "grid", gap: 8 }}>
-                      <CasesCard cases={it.cases} />
-                      {it.requestId && (
-                        <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>
-                      )}
+                      <CasesTextCard text={it.text} />
+                      {it.requestId && <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>}
+                    </div>
+                  );
+                }
+
+                if (it.kind === "casesLegacy") {
+                  return (
+                    <div key={idx} style={{ display: "grid", gap: 8 }}>
+                      <CasesLegacyCard cases={it.cases} />
+                      {it.requestId && <div style={{ fontSize: 11, opacity: 0.65, color: "#111" }}>requestId: {it.requestId}</div>}
                     </div>
                   );
                 }
@@ -1747,13 +1845,7 @@ Acceptance criteria:
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              mode === "review"
-                ? "Paste test cases / test plan…"
-                : mode === "cases"
-                ? "Describe feature + acceptance criteria (or user story)…"
-                : "Describe the feature / workflow…"
-            }
+            placeholder={mode === "review" ? "Paste test cases / test plan…" : mode === "cases" ? "Describe feature + acceptance criteria (or user story)…" : "Describe the feature / workflow…"}
             style={{
               flex: 1,
               padding: "10px 12px",

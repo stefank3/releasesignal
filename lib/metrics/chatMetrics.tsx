@@ -6,7 +6,11 @@
 import "server-only";
 import { redis } from "@/lib/redis";
 
-export type ChatMetricMode = "coach" | "review" | "unknown";
+/**
+ * ✅ (M5.1) Add "cases" so we can track the new mode distinctly.
+ * WHY: Observability must reflect actual user behavior; this does not affect billing.
+ */
+export type ChatMetricMode = "coach" | "review" | "cases" | "unknown";
 export type ChatMetricStatus = 200 | 400 | 401 | 402 | 403 | 429 | 500;
 
 function bucketKey(nowMs: number) {
@@ -33,7 +37,9 @@ export async function recordChatMetric(input: {
         ? "mode_coach"
         : input.mode === "review"
           ? "mode_review"
-          : "mode_unknown";
+          : input.mode === "cases"
+            ? "mode_cases"
+            : "mode_unknown";
 
     const statusField = `status_${input.status}`;
     const latency = Math.max(0, Math.floor(input.latencyMs));
