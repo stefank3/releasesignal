@@ -971,6 +971,9 @@ export default function ChatPage() {
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false);
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
   const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
@@ -1310,6 +1313,43 @@ Acceptance criteria:
     }
   };
 
+    const deleteSession = async (sessionId: string) => {
+    // Minimal confirmation (avoid accidental deletes)
+    const ok = window.confirm("Delete this session? This cannot be undone.");
+    if (!ok) return;
+
+    setDeleteBusy(true);
+    setDeletingId(sessionId);
+
+    try {
+      await fetchJSON(`/api/chat/history/${sessionId}`, { method: "DELETE" });
+
+      // If the deleted session is open, reset UI
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(null);
+        setItems([]);
+        setInput("");
+        setMessagesCursor(null);
+        setRate(null);
+        setRateLimitMsg(null);
+        setLastRequestId(null);
+        setLastPending(null);
+      }
+
+      // Remove from sidebar immediately (snappy UX)
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+
+      // Refresh list (keeps pagination consistent)
+      await loadSessions(true);
+    } catch (err) {
+      console.error("Delete failed", err);
+      await loadSessions(true);
+    } finally {
+      setDeleteBusy(false);
+      setDeletingId(null);
+    }
+  };
+
   const send = async (opts?: { replay?: boolean }) => {
     const replay = opts?.replay ?? false;
 
@@ -1623,6 +1663,7 @@ Acceptance criteria:
                     padding: "8px 10px",
                     borderTop: "1px solid rgba(255,255,255,0.12)",
                     alignItems: "center",
+                    flexWrap: "wrap",
                   }}
                 >
                   {renamingId === s.id ? (
@@ -1669,27 +1710,51 @@ Acceptance criteria:
                       </button>
                     </>
                   ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRenamingId(s.id);
-                        setRenameValue(s.title ?? "New chat");
-                      }}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 10,
-                        border: "1px solid rgba(255,255,255,0.22)",
-                        background: "rgba(255,255,255,0.06)",
-                        color: "#fff",
-                        fontWeight: 900,
-                        cursor: "pointer",
-                        fontSize: 12,
-                      }}
-                    >
-                      Rename
-                    </button>
-                  )}
-                </div>
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenamingId(s.id);
+                            setRenameValue(s.title ?? "New chat");
+                          }}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: 10,
+                            border: "1px solid rgba(255,255,255,0.22)",
+                            background: "rgba(255,255,255,0.06)",
+                            color: "#fff",
+                            fontWeight: 900,
+                            cursor: "pointer",
+                            fontSize: 12,
+                          }}
+                        >
+                          Rename
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void deleteSession(s.id);
+                          }}
+                          disabled={deleteBusy}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: 10,
+                            border: "1px solid rgba(255,255,255,0.22)",
+                            background: "rgba(255,255,255,0.06)",
+                            color: "#fff",
+                            fontWeight: 900,
+                            cursor: deleteBusy ? "not-allowed" : "pointer",
+                            opacity: deleteBusy ? 0.6 : 1,
+                            fontSize: 12,
+                          }}
+                          title="Delete session"
+                        >
+                          {deletingId === s.id ? "Deleting…" : "Delete"}
+                        </button>
+                      </>
+                    )}
+                 </div>
               </div>
             );
           })}
