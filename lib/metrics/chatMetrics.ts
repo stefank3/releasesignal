@@ -11,7 +11,13 @@ import { redis } from "@/lib/redis";
  * WHY: Observability must reflect actual user behavior; this does not affect billing.
  */
 export type ChatMetricMode = "coach" | "review" | "cases" | "unknown";
-export type ChatMetricStatus = 200 | 400 | 401 | 402 | 403 | 429 | 500;
+
+/**
+ * ✅ Allow 409 in metrics.
+ * WHY: /api/chat can intentionally return HTTP 409 for conflict/idempotency-like conditions;
+ * metrics must accept it so we don’t downcast/lie about status codes.
+ */
+export type ChatMetricStatus = 200 | 400 | 401 | 402 | 403 | 404 | 409 | 429 | 500;
 
 function bucketKey(nowMs: number) {
   const bucketSeconds = Math.floor(nowMs / 1000 / 300) * 300; // 5-minute buckets

@@ -1,4 +1,3 @@
-// app/api/chat/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -10,12 +9,7 @@ import { Prisma } from "@prisma/client"; // Prisma error types (P2002)
 import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
 import { QA_SYSTEM_PROMPT, CASES_SYSTEM_PROMPT } from "@/lib/framework/systemPrompt";
-import {
-  isCoachResult,
-  isReviewResult,
-  type CoachResult,
-  type ReviewResult,
-} from "@/lib/framework/reviewSchema";
+import { isCoachResult, isReviewResult, type CoachResult, type ReviewResult } from "@/lib/framework/reviewSchema";
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics";
 
@@ -28,16 +22,17 @@ import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
 import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
 /**
- * Persisted/billed modes (DB-safe).
+ * Execution modes (contract + validation behavior).
+ * - review: strict ReviewResult JSON
+ * - coach: strict CoachResult JSON (rendered to text)
  *
- * WHY: We intentionally do NOT persist "cases" as a DB mode to avoid schema/data migration.
+ * WHY: cases is a plain-text contract and does not use JSON repair/validation.
  */
-type PersistedMode = "coach" | "review";
+type ExecutionMode = "coach" | "review";
 
 /**
- * Client-facing modes (UI toggle).
- *
- * WHY: "cases" is a client behavior (plain-text contract); persistence stays coach|review.
+ * Session UX modes (persisted for cohesion + history rendering).
+ * WHY (M6.1): session mode must be stable so users don't mix outputs across one thread.
  */
 type ClientMode = "coach" | "review" | "cases";
 
@@ -186,7 +181,7 @@ function coachToText(coach: CoachResult): string {
  * - Used only for coach/review (JSON contracts).
  * - NOT used for cases mode because cases contract is plain-text test cases only.
  */
-async function repairJsonOnce(args: { mode: PersistedMode; raw: string }): Promise<string> {
+async function repairJsonOnce(args: { mode: ExecutionMode; raw: string }): Promise<string> {
   const schemaInstruction =
     args.mode === "review"
       ? [
@@ -237,6 +232,10 @@ async function repairJsonOnce(args: { mode: PersistedMode; raw: string }): Promi
   });
 
   return repaired.choices[0]?.message?.content ?? args.raw;
+}
+
+function normalizeClientMode(m: unknown): ClientMode {
+  return m === "review" || m === "cases" ? m : "coach";
 }
 
 export async function POST(req: Request) {
@@ -356,26 +355,26 @@ export async function POST(req: Request) {
     }
 
     // 3) Client mode selection (defaults to coach)
-    const clientMode: ClientMode = body?.mode === "review" || body?.mode === "cases" ? body.mode : "coach";
+    const clientMode: ClientMode = normalizeClientMode(body?.mode);
 
     const wantCases = clientMode === "cases";
     const wantReview = clientMode === "review";
 
-    // Persisted + billed modes remain: coach | review
-    const persistedMode: PersistedMode = wantReview ? "review" : "coach";
+    // Execution + validation modes remain coach|review (cases is plain-text).
+    const executionMode: ExecutionMode = wantReview ? "review" : "coach";
 
     /**
-     * WHY (M5.1):
-     * - Metrics/logs should reflect requested behavior ("cases") for observability.
-     * - DB persistence + billing remain on coach|review to avoid schema changes.
+     * WHY (M6.1):
+     * - Metrics/logs should reflect session UX mode (including cases).
+     * - Session mode is now persisted as clientMode for history and cohesion.
      */
     modeForMetric = clientMode;
-    const logMode: "coach" | "review" | "cases" = clientMode;
+    const logMode: ClientMode = clientMode;
 
     const weakInput = isWeakInput(message);
 
     // 4) RBAC: review is admin-only (cases is allowed for non-admin by design)
-    if (persistedMode === "review") {
+    if (executionMode === "review") {
       const isAdmin = await isAdminFromAccessToken();
       if (!isAdmin) {
         log("warn", {
@@ -405,11 +404,9 @@ export async function POST(req: Request) {
     });
 
     // ✅ Typed extraction (no any)
-    const orgIdFromState =
-      typeof orgState.organizationId === "string" ? orgState.organizationId : undefined;
+    const orgIdFromState = typeof orgState.organizationId === "string" ? orgState.organizationId : undefined;
 
-    const walletIdForOrg =
-      orgState.wallet && typeof orgState.wallet.id === "string" ? orgState.wallet.id : undefined;
+    const walletIdForOrg = orgState.wallet && typeof orgState.wallet.id === "string" ? orgState.wallet.id : undefined;
 
     orgId = orgIdFromState;
 
@@ -483,15 +480,39 @@ export async function POST(req: Request) {
       );
     }
 
-    // 7) Create or reuse ChatSession (IDP-safe)
+    // 7) Create or reuse ChatSession (IDP-safe) + enforce session-mode consistency (M6.1)
     let sessionId = body?.sessionId;
 
     if (sessionId) {
       const existing = await prisma.chatSession.findFirst({
         where: { id: sessionId, auth0Sub },
-        select: { id: true },
+        select: { id: true, mode: true },
       });
-      if (!existing) sessionId = undefined;
+
+      if (!existing) {
+        sessionId = undefined;
+      } else if (existing.mode && existing.mode !== clientMode) {
+        /**
+         * WHY (M6.1): cross-mode execution within a session breaks UX cohesion + deterministic history rendering.
+         * We fail fast with an explicit 409 so the client can guide the user to "start new session".
+         */
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: modeForMetric,
+          status: 409,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "SESSION_MODE_MISMATCH",
+            sessionMode: existing.mode,
+            requestedMode: clientMode,
+          },
+          { status: 409, headers: responseHeaders(requestId, rateMeta ?? undefined) }
+        );
+      }
     }
 
     if (!sessionId) {
@@ -502,16 +523,36 @@ export async function POST(req: Request) {
         where: { auth0Sub_clientSessionId: { auth0Sub, clientSessionId } },
         create: {
           auth0Sub,
-          mode: persistedMode, // DB-safe: coach|review only
+          mode: clientMode, // ✅ M6.1: persist session UX mode (coach|review|cases)
           title: body?.title ?? null,
           clientSessionId,
         },
         update: {
-          // DO NOT overwrite title on reuse
+          // WHY (M6.1): never overwrite a session's mode via retry; mode is canonical for the session.
           title: undefined,
         },
-        select: { id: true },
+        select: { id: true, mode: true },
       });
+
+      // If an existing session was reused via upsert, enforce mode determinism.
+      if (sessionRow.mode && sessionRow.mode !== clientMode) {
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: modeForMetric,
+          status: 409,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "SESSION_MODE_MISMATCH",
+            sessionMode: sessionRow.mode,
+            requestedMode: clientMode,
+          },
+          { status: 409, headers: responseHeaders(requestId, rateMeta ?? undefined) }
+        );
+      }
 
       sessionId = sessionRow.id;
     }
@@ -572,7 +613,7 @@ export async function POST(req: Request) {
       });
 
       // Review replay can be returned as structured JSON if parseable
-      if (persistedMode === "review") {
+      if (executionMode === "review") {
         const raw = existingAssistant.content ?? "";
         try {
           const parsed = JSON.parse(extractJsonObject(raw)) as unknown;
@@ -668,7 +709,7 @@ export async function POST(req: Request) {
           `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
           "Generate the test cases for the user's feature. Follow the OUTPUT CONTRACT exactly.",
         ].join("\n")
-      : persistedMode === "review"
+      : executionMode === "review"
       ? [
           "MODE: REVIEW & SCORING",
           "Return ONLY valid JSON. No markdown. No prose outside JSON.",
@@ -728,7 +769,7 @@ export async function POST(req: Request) {
           model,
           temperature: 0.2,
           // ✅ WHY: cases needs room for 8–12 full test cases.
-          max_tokens: persistedMode === "review" ? 500 : wantCases ? 1400 : 700,
+          max_tokens: executionMode === "review" ? 500 : wantCases ? 1400 : 700,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "system", content: modeInstruction },
@@ -771,7 +812,7 @@ export async function POST(req: Request) {
     let coachParsed: CoachResult | null = null;
     let replyTextForUser: string | null = null;
 
-    if (persistedMode === "coach" && !wantCases) {
+    if (executionMode === "coach" && !wantCases) {
       try {
         const obj = JSON.parse(extractJsonObject(rawReply));
         if (isCoachResult(obj)) coachParsed = obj;
@@ -822,7 +863,7 @@ export async function POST(req: Request) {
                 sessionId,
                 auth0Sub,
                 role: "assistant",
-                content: persistedMode === "review" ? rawReply : replyTextForUser ?? "No reply returned",
+                content: executionMode === "review" ? rawReply : replyTextForUser ?? "No reply returned",
                 tokensIn: promptTokens,
                 tokensOut: completionTokens,
                 requestId,
@@ -930,7 +971,7 @@ export async function POST(req: Request) {
     }
 
     // 12) REVIEW response path (structured JSON)
-    if (persistedMode === "review") {
+    if (executionMode === "review") {
       const jsonText = extractJsonObject(rawReply);
 
       try {
@@ -1195,8 +1236,6 @@ export async function POST(req: Request) {
       retryCount,
       tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
       eurCost: costEur ?? undefined,
-      // NOTE: cases consumes units only in logs; billing remains token->credits.
-      reviewUnits: wantCases ? 1 : 0,
       meta: { costUsd: costUsd ?? undefined, clientMode },
     });
 

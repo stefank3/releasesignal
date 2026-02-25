@@ -111,6 +111,10 @@ type ChatApiResponse = {
 
   rate?: RateMeta;
   replay?: boolean;
+
+  // ✅ Milestone 6.1: explicit mode mismatch details
+  sessionMode?: Mode;
+  requestedMode?: Mode;
 };
 
 /**
@@ -119,7 +123,8 @@ type ChatApiResponse = {
 type SessionListItem = {
   id: string;
   title: string | null;
-  mode: Mode;
+  mode: Mode; // persisted mode
+  effectiveMode?: Mode; // optional future-proofing
   createdAt: string;
   lastActivityAt?: string;
   lastMessage: null | { role: string; content: string; createdAt: string };
@@ -297,17 +302,12 @@ async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
 
   const first = text.trimStart().slice(0, 200).replace(/\s+/g, " ");
   const looksHtml =
-    ct.includes("text/html") ||
-    first.startsWith("<!doctype") ||
-    first.startsWith("<html") ||
-    first.startsWith("<");
+    ct.includes("text/html") || first.startsWith("<!doctype") || first.startsWith("<html") || first.startsWith("<");
 
   const looksJson = ct.includes("application/json") || first.startsWith("{") || first.startsWith("[");
 
   if (!looksJson) {
-    const hint = looksHtml
-      ? "Expected JSON but got HTML (redirect/login/error page)"
-      : "Expected JSON but got non-JSON";
+    const hint = looksHtml ? "Expected JSON but got HTML (redirect/login/error page)" : "Expected JSON but got non-JSON";
     throw new Error(`${hint} (HTTP ${res.status}). content-type=${ct || "(none)"} first=${first}`);
   }
 
@@ -383,10 +383,7 @@ function looksLikeCasesPlainText(text: string): boolean {
     /(^|\n)\s*Priority\s*:/i.test(t) ||
     /(^|\n)\s*Type\s*:/i.test(t);
 
-  // Also catch suites that start immediately with TC sections without headings.
   if (tcCount >= 1 && hasMarkers) return true;
-
-  // Fallback: if there are multiple "TC-" lines it's almost certainly cases.
   if (tcCount >= 2) return true;
 
   return false;
@@ -864,7 +861,9 @@ function CasesLegacyCard({ cases }: { cases: CasesResult }) {
               </div>
             </div>
 
-            {tc.tags?.length ? <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>Tags: {tc.tags.join(", ")}</div> : null}
+            {tc.tags?.length ? (
+              <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>Tags: {tc.tags.join(", ")}</div>
+            ) : null}
 
             <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
               <div>
@@ -919,6 +918,10 @@ function CasesLegacyCard({ cases }: { cases: CasesResult }) {
   );
 }
 
+function modeLabel(m: Mode) {
+  return m === "coach" ? "Coach" : m === "review" ? "Review" : "Cases";
+}
+
 export default function ChatPage() {
   const [mode, setMode] = useState<Mode>("coach");
   const [input, setInput] = useState("");
@@ -928,6 +931,12 @@ export default function ChatPage() {
   const [rateLimitMsg, setRateLimitMsg] = useState<string | null>(null);
   const [rate, setRate] = useState<RateMeta | null>(null);
   const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+
+  // ✅ Milestone 6.1: show deterministic UX guidance on mode mismatch
+  const [modeLockMsg, setModeLockMsg] = useState<{
+    sessionMode: Mode;
+    requestedMode: Mode;
+  } | null>(null);
 
   const [lastPending, setLastPending] = useState<{
     requestId: string;
@@ -989,6 +998,12 @@ export default function ChatPage() {
     const t = setTimeout(() => setRateLimitMsg(null), 4000);
     return () => clearTimeout(t);
   }, [rateLimitMsg]);
+
+  useEffect(() => {
+    if (!modeLockMsg) return;
+    const t = setTimeout(() => setModeLockMsg(null), 6000);
+    return () => clearTimeout(t);
+  }, [modeLockMsg]);
 
   useEffect(() => {
     const el = chatBoxRef.current;
@@ -1086,6 +1101,11 @@ Acceptance criteria:
 - After 5 failed attempts, account is locked for 15 minutes`;
 
   const loadDemo = (demoMode: Mode, text: string) => {
+    if (activeSessionId && demoMode !== activeSessionMode) {
+      setModeLockMsg({ sessionMode: activeSessionMode, requestedMode: demoMode });
+      return;
+    }
+
     setMode(demoMode);
     if (!activeSessionId) setActiveSessionMode(demoMode);
     setInput(text);
@@ -1162,7 +1182,6 @@ Acceptance criteria:
             const maybeCasesLegacy = tryParseCasesLegacy(m.content);
             if (maybeCasesLegacy) return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
 
-            // strict plain text cases
             return { kind: "casesText", role: "bot", text: m.content };
           }
 
@@ -1194,11 +1213,9 @@ Acceptance criteria:
     }
   };
 
-  /**
-   * ✅ Selecting a session sets BOTH activeSessionId and activeSessionMode
-   * so history rendering behaves correctly (and can be upgraded by loader).
-   */
   const selectSession = async (sessionId: string, sessionMode: Mode) => {
+    setModeLockMsg(null);
+
     setActiveSessionId(sessionId);
     setActiveSessionMode(sessionMode);
     setMode(sessionMode);
@@ -1220,6 +1237,8 @@ Acceptance criteria:
   };
 
   const newChat = () => {
+    setModeLockMsg(null);
+
     setActiveSessionId(null);
     setActiveSessionMode(mode);
     setPendingSessionClientId(createSessionClientId());
@@ -1238,6 +1257,34 @@ Acceptance criteria:
     setLastPending(null);
 
     shouldAutoScrollRef.current = true;
+  };
+
+  const startNewSessionInMode = (m: Mode) => {
+    setMode(m);
+    setActiveSessionMode(m);
+    setActiveSessionId(null);
+    setPendingSessionClientId(createSessionClientId());
+
+    setItems([]);
+    setInput("");
+    setMessagesCursor(null);
+
+    setRate(null);
+    setRateLimitMsg(null);
+    setLastRequestId(null);
+    setLastPending(null);
+
+    shouldAutoScrollRef.current = true;
+  };
+
+  const trySetMode = (next: Mode) => {
+    if (activeSessionId && next !== activeSessionMode) {
+      setModeLockMsg({ sessionMode: activeSessionMode, requestedMode: next });
+      return;
+    }
+
+    setMode(next);
+    if (!activeSessionId) setActiveSessionMode(next);
   };
 
   const renameSession = async (sessionId: string, title: string) => {
@@ -1275,6 +1322,12 @@ Acceptance criteria:
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
 
     const sessionIdForRequest = replay ? lastPending?.sessionId ?? activeSessionId : activeSessionId;
+
+    // ✅ Client-side fast-fail
+    if (sessionIdForRequest && effectiveMode !== activeSessionMode) {
+      setModeLockMsg({ sessionMode: activeSessionMode, requestedMode: effectiveMode });
+      return;
+    }
 
     const sessionClientIdForRequest =
       sessionIdForRequest
@@ -1327,6 +1380,25 @@ Acceptance criteria:
 
       if (data?.rate) setRate(data.rate);
 
+      // ✅ Milestone 6.1: explicit server-side mismatch signal
+      if (res.status === 409 && data?.error === "SESSION_MODE_MISMATCH" && data.sessionMode && data.requestedMode) {
+        setModeLockMsg({ sessionMode: data.sessionMode, requestedMode: data.requestedMode });
+
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "error",
+            role: "bot",
+            title: "Session mode mismatch",
+            details: `This session is locked to "${data.sessionMode}". Start a new session to use "${data.requestedMode}".`,
+            requestId: serverRequestId,
+          },
+        ]);
+
+        setShouldScrollToBottom(true);
+        return;
+      }
+
       if (res.ok && data?.sessionId && typeof data.sessionId === "string") {
         setActiveSessionId(data.sessionId);
         setActiveSessionMode(effectiveMode);
@@ -1344,7 +1416,10 @@ Acceptance criteria:
 
       // ✅ REVIEW success
       if (res.ok && data?.mode === "review" && data?.review) {
-        setItems((prev) => [...prev, { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId }]);
+        setItems((prev) => [
+          ...prev,
+          { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId },
+        ]);
         setShouldScrollToBottom(true);
         void loadSessions(true);
         setLastPending(null);
@@ -1354,7 +1429,10 @@ Acceptance criteria:
       // ✅ CASES success (M5.1): plain text reply only
       if (res.ok && data?.mode === "cases") {
         const reply = typeof data?.reply === "string" ? data.reply : "";
-        setItems((prev) => [...prev, { kind: "casesText", role: "bot", text: reply || "No reply returned", requestId: serverRequestId }]);
+        setItems((prev) => [
+          ...prev,
+          { kind: "casesText", role: "bot", text: reply || "No reply returned", requestId: serverRequestId },
+        ]);
         setShouldScrollToBottom(true);
         void loadSessions(true);
         setLastPending(null);
@@ -1383,20 +1461,17 @@ Acceptance criteria:
       // Generic success -> text
       if (res.ok) {
         function isRecord(v: unknown): v is Record<string, unknown> {
-            return typeof v === "object" && v !== null;
-          }
+          return typeof v === "object" && v !== null;
+        }
 
-          const rawValue =
-            isRecord(data) && typeof data.raw === "string" ? data.raw : undefined;
+        const rawValue = isRecord(data) && typeof data.raw === "string" ? data.raw : undefined;
 
-          const textToShow =
-            !data?.reply && typeof rawValue === "string"
-              ? rawValue
-              : data?.reply ?? "No reply returned";
+        const textToShow = !data?.reply && typeof rawValue === "string" ? rawValue : data?.reply ?? "No reply returned";
 
-        // If bot returned JSON in coach mode, try to format it.
         const finalText =
-          effectiveMode === "coach" && looksLikeJson(textToShow) ? tryFormatCoachJson(textToShow) ?? textToShow : textToShow;
+          effectiveMode === "coach" && looksLikeJson(textToShow)
+            ? tryFormatCoachJson(textToShow) ?? textToShow
+            : textToShow;
 
         setItems((prev) => [...prev, { kind: "text", role: "bot", text: finalText, requestId: serverRequestId }]);
         setShouldScrollToBottom(true);
@@ -1459,7 +1534,7 @@ Acceptance criteria:
     background: "#fafafa",
   };
 
-  const modeLabel = mode === "coach" ? "Coach" : mode === "review" ? "Review" : "Cases";
+  const modeChip = modeLabel(mode);
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
@@ -1534,7 +1609,8 @@ Acceptance criteria:
                     >
                       {title}
                     </div>
-                    <div style={{ fontSize: 11, opacity: 0.8 }}>{s.mode}</div>
+
+                    <div style={{ fontSize: 11, opacity: 0.85 }}>{modeLabel(s.mode)}</div>
                   </div>
 
                   <div style={{ fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.35 }}>{preview}</div>
@@ -1665,42 +1741,21 @@ Acceptance criteria:
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-          <Chip>Mode: {modeLabel}</Chip>
+          <Chip>Mode: {modeChip}</Chip>
           {rateChipText && <Chip>{rateChipText}</Chip>}
           {lastRequestId && <Chip>requestId: {lastRequestId.slice(0, 8)}…</Chip>}
 
           {lastPending && !isSending && <HeaderButton onClick={() => void send({ replay: true })}>Retry last</HeaderButton>}
 
-          <HeaderButton
-            active={mode === "coach"}
-            onClick={() => {
-              setMode("coach");
-              if (!activeSessionId) setActiveSessionMode("coach");
-            }}
-            disabled={isSending}
-          >
+          <HeaderButton active={mode === "coach"} onClick={() => trySetMode("coach")} disabled={isSending}>
             Coach
           </HeaderButton>
 
-          <HeaderButton
-            active={mode === "review"}
-            onClick={() => {
-              setMode("review");
-              if (!activeSessionId) setActiveSessionMode("review");
-            }}
-            disabled={isSending}
-          >
+          <HeaderButton active={mode === "review"} onClick={() => trySetMode("review")} disabled={isSending}>
             Review
           </HeaderButton>
 
-          <HeaderButton
-            active={mode === "cases"}
-            onClick={() => {
-              setMode("cases");
-              if (!activeSessionId) setActiveSessionMode("cases");
-            }}
-            disabled={isSending}
-          >
+          <HeaderButton active={mode === "cases"} onClick={() => trySetMode("cases")} disabled={isSending}>
             Cases
           </HeaderButton>
 
@@ -1715,6 +1770,7 @@ Acceptance criteria:
                 setRateLimitMsg(null);
                 setLastRequestId(null);
                 setLastPending(null);
+                setModeLockMsg(null);
                 localStorage.removeItem(STORAGE_KEY);
               }}
               disabled={isSending}
@@ -1724,8 +1780,50 @@ Acceptance criteria:
           </div>
         </div>
 
+        {modeLockMsg && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.22)",
+              background: "rgba(255,255,255,0.08)",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ lineHeight: 1.35 }}>
+              This session is locked to <b>{modeLabel(modeLockMsg.sessionMode)}</b>. To use{" "}
+              <b>{modeLabel(modeLockMsg.requestedMode)}</b>, start a new session.
+            </div>
+
+            <button
+              onClick={() => startNewSessionInMode(modeLockMsg.requestedMode)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.22)",
+                background: "rgba(255,255,255,0.14)",
+                color: "#fff",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              New session in {modeLabel(modeLockMsg.requestedMode)}
+            </button>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
           <Chip>{activeSessionId ? `Session: ${activeSessionId.slice(0, 8)}…` : "Session: (new)"}</Chip>
+
+          {activeSessionId && <Chip>Session mode: {modeLabel(activeSessionMode)}</Chip>}
 
           {activeSessionId && messagesCursor && (
             <HeaderButton onClick={() => void loadSessionMessages(activeSessionId, false, activeSessionMode)} disabled={messagesLoading}>
@@ -1783,7 +1881,9 @@ Acceptance criteria:
                         }}
                       >
                         {textToShow}
-                        {it.requestId && <div style={{ marginTop: 8, fontSize: 11, opacity: 0.6 }}>requestId: {it.requestId.slice(0, 8)}…</div>}
+                        {it.requestId && (
+                          <div style={{ marginTop: 8, fontSize: 11, opacity: 0.6 }}>requestId: {it.requestId.slice(0, 8)}…</div>
+                        )}
                       </div>
                     </div>
                   );
@@ -1845,7 +1945,13 @@ Acceptance criteria:
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={mode === "review" ? "Paste test cases / test plan…" : mode === "cases" ? "Describe feature + acceptance criteria (or user story)…" : "Describe the feature / workflow…"}
+            placeholder={
+              mode === "review"
+                ? "Paste test cases / test plan…"
+                : mode === "cases"
+                ? "Describe feature + acceptance criteria (or user story)…"
+                : "Describe the feature / workflow…"
+            }
             style={{
               flex: 1,
               padding: "10px 12px",

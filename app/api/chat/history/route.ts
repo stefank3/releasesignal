@@ -5,6 +5,8 @@ import { log } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
+type Mode = "coach" | "review" | "cases";
+
 function sanitizeTitle(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
 
@@ -19,6 +21,60 @@ function getRequestId(req: Request): string {
   // WHY: allow upstream correlation, else generate locally
   const fromHeader = req.headers.get("x-request-id")?.trim();
   return fromHeader && fromHeader.length > 0 ? fromHeader : crypto.randomUUID();
+}
+
+function normalizeMode(m: unknown): Mode {
+  // WHY (M6.1): older rows or unexpected values should not break the history UI.
+  return m === "review" || m === "cases" ? m : "coach";
+}
+
+/**
+ * Heuristic: detect cases plain-text output in stored assistant content.
+ *
+ * WHY (M6.1):
+ * - We intentionally do NOT persist "cases" as a DB mode (no schema/data migration).
+ * - History UX still needs an accurate mode badge per session.
+ * - Using the last assistant message gives a cheap, high-signal inference.
+ *
+ * This is intentionally conservative:
+ * - requires "TC-###" lines + at least one structure marker, OR multiple TC lines.
+ */
+function looksLikeCasesPlainText(text: string): boolean {
+  const t = String(text ?? "").replace(/\r/g, "");
+
+  const tcCount = (t.match(/^TC-\d{1,4}\b.*$/gim) || []).length;
+
+  const hasMarkers =
+    /(^|\n)\s*Preconditions\s*:/i.test(t) ||
+    /(^|\n)\s*Test Steps\s*:/i.test(t) ||
+    /(^|\n)\s*Steps\s*:/i.test(t) ||
+    /(^|\n)\s*Expected Result(s)?\s*:/i.test(t) ||
+    /(^|\n)\s*Priority\s*:/i.test(t) ||
+    /(^|\n)\s*Type\s*:/i.test(t);
+
+  if (tcCount >= 1 && hasMarkers) return true;
+  if (tcCount >= 2) return true;
+
+  return false;
+}
+
+/**
+ * Compute the UI-effective mode for a session.
+ *
+ * WHY (M6.1):
+ * - "review" sessions must always badge as review (admin-only, JSON contract).
+ * - "cases" is a client behavior; we infer it from assistant content instead of DB mode.
+ */
+function computeEffectiveMode(args: {
+  persistedMode: Mode;
+  lastMessage: null | { role: string; content: string };
+}): Mode {
+  if (args.persistedMode === "review") return "review";
+
+  const last = args.lastMessage;
+  if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) return "cases";
+
+  return "coach";
 }
 
 // GET /api/chat/history?cursor=...&limit=20
@@ -54,9 +110,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
 
     const limitRaw = Number(url.searchParams.get("limit") ?? 20);
-    const limit = Number.isFinite(limitRaw)
-      ? Math.min(Math.max(limitRaw, 1), 50)
-      : 20;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 20;
 
     const cursor = url.searchParams.get("cursor");
 
@@ -78,7 +132,7 @@ export async function GET(req: Request) {
     const page = hasMore ? sessions.slice(0, limit) : sessions;
     const sessionIds = page.map((s) => s.id);
 
-    // Latest message per session (for preview)
+    // Latest message per session (for preview + effectiveMode inference)
     const lastMessages = await prisma.$transaction(
       sessionIds.map((sid) =>
         prisma.chatMessage.findFirst({
@@ -89,9 +143,7 @@ export async function GET(req: Request) {
       )
     );
 
-    const lastBySessionId = new Map(
-      lastMessages.filter(Boolean).map((m) => [m!.sessionId, m!])
-    );
+    const lastBySessionId = new Map(lastMessages.filter(Boolean).map((m) => [m!.sessionId, m!]));
 
     // Title fallback: last USER message only (never assistant)
     const lastUserMessages = await prisma.$transaction(
@@ -104,9 +156,7 @@ export async function GET(req: Request) {
       )
     );
 
-    const lastUserBySessionId = new Map(
-      lastUserMessages.filter(Boolean).map((m) => [m!.sessionId, m!])
-    );
+    const lastUserBySessionId = new Map(lastUserMessages.filter(Boolean).map((m) => [m!.sessionId, m!]));
 
     const res = NextResponse.json({
       items: page.map((s) => {
@@ -120,10 +170,23 @@ export async function GET(req: Request) {
               ? sanitizeTitle(lastUser.content)
               : "New chat";
 
+        const persistedMode = normalizeMode(s.mode);
+
+        const effectiveMode = computeEffectiveMode({
+          persistedMode,
+          lastMessage: last ? { role: last.role, content: last.content } : null,
+        });
+
         return {
           id: s.id,
           title: computedTitle,
-          mode: s.mode,
+
+          // mode: persisted DB mode (kept for backward compatibility)
+          mode: persistedMode,
+
+          // effectiveMode: UI mode for badges + session consistency (M6.1)
+          effectiveMode,
+
           createdAt: s.createdAt.toISOString(),
           updatedAt: s.updatedAt.toISOString(),
           lastActivityAt: s.updatedAt.toISOString(),
