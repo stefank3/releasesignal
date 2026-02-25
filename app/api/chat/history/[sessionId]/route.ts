@@ -126,3 +126,47 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     hasMore,
   });
 }
+/**
+ * DELETE /api/chat/history/:sessionId
+ * SECURITY:
+ * - Requires Auth0 session
+ * - Only deletes sessions owned by the current user
+ * - Does not leak whether session exists for other users
+ */
+export async function DELETE(_req: NextRequest, ctx: Ctx) {
+  const authSession = await auth0.getSession();
+  const sub = authSession?.user?.sub;
+
+  if (!sub) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const params = await resolveParams(ctx);
+  const sessionId = params?.sessionId;
+
+  if (!sessionId) {
+    return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
+  }
+
+  // Delete messages first (works even if you don't have ON DELETE CASCADE)
+  const result = await prisma.$transaction(async (tx) => {
+    // Ownership check (no leaks)
+    const owned = await tx.chatSession.findFirst({
+      where: { id: sessionId, auth0Sub: sub },
+      select: { id: true },
+    });
+
+    if (!owned) return { deleted: false as const };
+
+    await tx.chatMessage.deleteMany({ where: { sessionId, auth0Sub: sub } });
+    await tx.chatSession.delete({ where: { id: sessionId } });
+
+    return { deleted: true as const };
+  });
+
+  if (!result.deleted) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true }, { status: 200 });
+}
