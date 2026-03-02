@@ -293,8 +293,15 @@ function createSessionClientId(): string {
  * - throws on non-2xx responses
  * - detects HTML early
  * - always returns parsed json
+ *
+ * ✅ CHANGE (M6.1):
+ * We now return { status, headers, data } so callers can inspect HTTP status reliably,
+ * and still access the structured error payload (e.g., SESSION_MODE_MISMATCH 409).
  */
-async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+async function fetchJSONWithMeta<T>(
+  input: RequestInfo,
+  init?: RequestInit,
+): Promise<{ status: number; headers: Headers; data: T }> {
   const res = await fetch(input, init);
 
   const text = await res.text().catch(() => "");
@@ -313,11 +320,23 @@ async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
 
   const data = text ? (JSON.parse(text) as unknown) : ({} as unknown);
 
-  if (!res.ok) {
-    throw new Error((data as { error?: string })?.error || `HTTP ${res.status}`);
-  }
+  // ✅ DO NOT throw on !res.ok. The caller may need status + payload to do UX handling.
+  // Example: 409 SESSION_MODE_MISMATCH should be handled as a guided UI action, not a generic error.
+  return { status: res.status, headers: res.headers, data: data as T };
+}
 
-  return data as T;
+/**
+ * Backward-compatible wrapper:
+ * Some call sites only need "happy path" and want exceptions on non-2xx.
+ * We keep this to avoid refactors in unrelated areas.
+ */
+async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const { status, data } = await fetchJSONWithMeta<T>(input, init);
+  if (status >= 200 && status < 300) return data;
+
+  // ✅ Minimal error extraction, consistent with earlier behavior
+  const err = (data as { error?: string })?.error;
+  throw new Error(err || `HTTP ${status}`);
 }
 
 /**
@@ -492,6 +511,42 @@ function Chip({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+    </span>
+  );
+}
+
+/**
+ * ✅ Milestone 6.1:
+ * Mode identity must be visually strong and consistent everywhere (sidebar + header).
+ */
+function ModeBadge({ mode, locked, compact }: { mode: Mode; locked?: boolean; compact?: boolean }) {
+  const meta =
+    mode === "coach"
+      ? { label: "COACH", bg: "rgba(56,189,248,0.16)", border: "rgba(56,189,248,0.35)" } // cyan-ish
+      : mode === "review"
+      ? { label: "REVIEW", bg: "rgba(34,197,94,0.16)", border: "rgba(34,197,94,0.35)" } // green-ish
+      : { label: "CASES", bg: "rgba(168,85,247,0.16)", border: "rgba(168,85,247,0.35)" }; // purple-ish
+
+  return (
+    <span
+      title={locked ? "Mode is locked for this session" : undefined}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: compact ? "4px 8px" : "6px 10px",
+        borderRadius: 999,
+        border: `1px solid ${meta.border}`,
+        background: meta.bg,
+        color: "#fff",
+        fontSize: compact ? 11 : 12,
+        fontWeight: 950,
+        letterSpacing: 0.4,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {locked ? <span aria-hidden="true">🔒</span> : null}
+      {meta.label}
     </span>
   );
 }
@@ -1152,8 +1207,27 @@ Acceptance criteria:
       const prevScrollHeight = el?.scrollHeight ?? 0;
       const prevScrollTop = el?.scrollTop ?? 0;
 
-      const data = await fetchJSON<{ items: HistoryMessage[]; nextCursor: string | null }>(url.toString());
+      const data = await fetchJSON<{
+        items: HistoryMessage[];
+        nextCursor: string | null;
+        hasMore?: boolean;
 
+        // ✅ M6.1: server tells us the canonical mode for this session
+        sessionMode?: Mode;
+        effectiveMode?: Mode;
+      }>(url.toString());
+
+      // ✅ If server returns a canonical mode, trust it (on initial load)
+      if (reset) {
+        const serverMode = data.effectiveMode ?? data.sessionMode;
+
+        if (serverMode && serverMode !== activeSessionMode) {
+          setActiveSessionMode(serverMode);
+          setMode(serverMode);
+          // also keep the local param consistent for the rest of the function
+          sessionMode = serverMode;
+        }
+      }
       // ✅ Decide effective mode for rendering (upgrade mis-labeled sessions)
       let effectiveSessionMode: Mode = sessionMode;
       if (sessionMode !== "cases") {
@@ -1163,13 +1237,9 @@ Acceptance criteria:
         const anyLegacyCasesJson = assistantMsgs.some((t) => !!tryParseCasesLegacy(t));
         const anyCasesText = assistantMsgs.some((t) => looksLikeCasesPlainText(t));
 
-        // If it's clearly a cases session and not a review JSON session, render as cases.
+        // WHY: If it’s clearly cases output and not review JSON, render this session as cases for UX correctness.
         if (!anyReviewJson && (anyLegacyCasesJson || anyCasesText)) {
           effectiveSessionMode = "cases";
-
-          // keep UI consistent for this session
-          setActiveSessionMode("cases");
-          setMode("cases");
         }
       }
 
@@ -1263,6 +1333,9 @@ Acceptance criteria:
   };
 
   const startNewSessionInMode = (m: Mode) => {
+    // WHY (M6.1): deterministic shortcut — always allow “New session in X mode” in one click.
+    setModeLockMsg(null);
+
     setMode(m);
     setActiveSessionMode(m);
     setActiveSessionId(null);
@@ -1282,6 +1355,7 @@ Acceptance criteria:
 
   const trySetMode = (next: Mode) => {
     if (activeSessionId && next !== activeSessionMode) {
+      // WHY (M6.1): session mode is immutable — prevent “silent mode switches” that create confusing mixed sessions.
       setModeLockMsg({ sessionMode: activeSessionMode, requestedMode: next });
       return;
     }
@@ -1313,7 +1387,7 @@ Acceptance criteria:
     }
   };
 
-    const deleteSession = async (sessionId: string) => {
+  const deleteSession = async (sessionId: string) => {
     // Minimal confirmation (avoid accidental deletes)
     const ok = window.confirm("Delete this session? This cannot be undone.");
     if (!ok) return;
@@ -1399,7 +1473,10 @@ Acceptance criteria:
     });
 
     try {
-      const res = await fetch("/api/chat", {
+      // ✅ CHANGE (M6.1):
+      // Use fetchJSONWithMeta so we can reliably handle non-2xx statuses
+      // while still reading the JSON error payload.
+      const { status, headers, data } = await fetchJSONWithMeta<ChatApiResponse>("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1413,15 +1490,13 @@ Acceptance criteria:
         }),
       });
 
-      const data = (await res.json().catch(() => ({}))) as ChatApiResponse;
-
-      const serverRequestId = res.headers.get("x-request-id") || requestId;
+      const serverRequestId = headers.get("x-request-id") || requestId;
       setLastRequestId(serverRequestId);
 
       if (data?.rate) setRate(data.rate);
 
-      // ✅ Milestone 6.1: explicit server-side mismatch signal
-      if (res.status === 409 && data?.error === "SESSION_MODE_MISMATCH" && data.sessionMode && data.requestedMode) {
+      // ✅ Milestone 6.1: explicit server-side mismatch signal (single authoritative handler)
+      if (status === 409 && data?.error === "SESSION_MODE_MISMATCH" && data.sessionMode && data.requestedMode) {
         setModeLockMsg({ sessionMode: data.sessionMode, requestedMode: data.requestedMode });
 
         setItems((prev) => [
@@ -1439,23 +1514,41 @@ Acceptance criteria:
         return;
       }
 
-      if (res.ok && data?.sessionId && typeof data.sessionId === "string") {
+      // ✅ 429 should show the server-provided guidance
+      if (status === 429) {
+        setRateLimitMsg(`${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`);
+        setShouldScrollToBottom(true);
+        return;
+      }
+
+      // ✅ If not ok, render an error card with the server payload (better than silent fail)
+      if (!(status >= 200 && status < 300) || data?.ok === false) {
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "error",
+            role: "bot",
+            title: `API Error ${status}`,
+            details: JSON.stringify(data, null, 2),
+            requestId: serverRequestId,
+          },
+        ]);
+        setShouldScrollToBottom(true);
+        return;
+      }
+
+      // ✅ Session id assignment on first success
+      if (data?.sessionId && typeof data.sessionId === "string") {
         setActiveSessionId(data.sessionId);
         setActiveSessionMode(effectiveMode);
         setPendingSessionClientId(null);
         await loadSessions(true);
       }
 
-      if (res.status === 429) {
-        setRateLimitMsg(`${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`);
-        setShouldScrollToBottom(true);
-        return;
-      }
-
       setRateLimitMsg(null);
 
       // ✅ REVIEW success
-      if (res.ok && data?.mode === "review" && data?.review) {
+      if (data?.mode === "review" && data?.review) {
         setItems((prev) => [
           ...prev,
           { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId },
@@ -1467,7 +1560,7 @@ Acceptance criteria:
       }
 
       // ✅ CASES success (M5.1): plain text reply only
-      if (res.ok && data?.mode === "cases") {
+      if (data?.mode === "cases") {
         const reply = typeof data?.reply === "string" ? data.reply : "";
         setItems((prev) => [
           ...prev,
@@ -1499,7 +1592,7 @@ Acceptance criteria:
       }
 
       // Generic success -> text
-      if (res.ok) {
+      {
         function isRecord(v: unknown): v is Record<string, unknown> {
           return typeof v === "object" && v !== null;
         }
@@ -1509,9 +1602,7 @@ Acceptance criteria:
         const textToShow = !data?.reply && typeof rawValue === "string" ? rawValue : data?.reply ?? "No reply returned";
 
         const finalText =
-          effectiveMode === "coach" && looksLikeJson(textToShow)
-            ? tryFormatCoachJson(textToShow) ?? textToShow
-            : textToShow;
+          effectiveMode === "coach" && looksLikeJson(textToShow) ? tryFormatCoachJson(textToShow) ?? textToShow : textToShow;
 
         setItems((prev) => [...prev, { kind: "text", role: "bot", text: finalText, requestId: serverRequestId }]);
         setShouldScrollToBottom(true);
@@ -1519,18 +1610,6 @@ Acceptance criteria:
         setLastPending(null);
         return;
       }
-
-      setItems((prev) => [
-        ...prev,
-        {
-          kind: "error",
-          role: "bot",
-          title: `API Error ${res.status}`,
-          details: JSON.stringify(data, null, 2),
-          requestId: serverRequestId,
-        },
-      ]);
-      setShouldScrollToBottom(true);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
 
@@ -1574,8 +1653,6 @@ Acceptance criteria:
     background: "#fafafa",
   };
 
-  const modeChip = modeLabel(mode);
-
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <aside
@@ -1613,6 +1690,9 @@ Acceptance criteria:
             const title = s.title ?? "New chat";
             const preview = s.lastMessage?.role === "user" ? s.lastMessage.content.slice(0, 80) : "Open to view";
 
+            // WHY (M6.1): badge must be visible in the session list (mode identity at-a-glance).
+            const effectiveMode = s.effectiveMode ?? s.mode;
+
             return (
               <div
                 key={s.id}
@@ -1624,7 +1704,7 @@ Acceptance criteria:
                 }}
               >
                 <button
-                  onClick={() => void selectSession(s.id, s.mode)}
+                  onClick={() => void selectSession(s.id, effectiveMode)}
                   style={{
                     width: "100%",
                     textAlign: "left",
@@ -1636,7 +1716,7 @@ Acceptance criteria:
                   }}
                   title={s.id}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                     <div
                       style={{
                         fontWeight: 900,
@@ -1644,13 +1724,13 @@ Acceptance criteria:
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
-                        maxWidth: 230,
+                        maxWidth: 220,
                       }}
                     >
                       {title}
                     </div>
 
-                    <div style={{ fontSize: 11, opacity: 0.85 }}>{modeLabel(s.mode)}</div>
+                    <ModeBadge mode={effectiveMode} compact />
                   </div>
 
                   <div style={{ fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.35 }}>{preview}</div>
@@ -1710,51 +1790,51 @@ Acceptance criteria:
                       </button>
                     </>
                   ) : (
-                      <>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setRenamingId(s.id);
-                            setRenameValue(s.title ?? "New chat");
-                          }}
-                          style={{
-                            padding: "6px 10px",
-                            borderRadius: 10,
-                            border: "1px solid rgba(255,255,255,0.22)",
-                            background: "rgba(255,255,255,0.06)",
-                            color: "#fff",
-                            fontWeight: 900,
-                            cursor: "pointer",
-                            fontSize: 12,
-                          }}
-                        >
-                          Rename
-                        </button>
+                    <>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenamingId(s.id);
+                          setRenameValue(s.title ?? "New chat");
+                        }}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 10,
+                          border: "1px solid rgba(255,255,255,0.22)",
+                          background: "rgba(255,255,255,0.06)",
+                          color: "#fff",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                          fontSize: 12,
+                        }}
+                      >
+                        Rename
+                      </button>
 
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void deleteSession(s.id);
-                          }}
-                          disabled={deleteBusy}
-                          style={{
-                            padding: "6px 10px",
-                            borderRadius: 10,
-                            border: "1px solid rgba(255,255,255,0.22)",
-                            background: "rgba(255,255,255,0.06)",
-                            color: "#fff",
-                            fontWeight: 900,
-                            cursor: deleteBusy ? "not-allowed" : "pointer",
-                            opacity: deleteBusy ? 0.6 : 1,
-                            fontSize: 12,
-                          }}
-                          title="Delete session"
-                        >
-                          {deletingId === s.id ? "Deleting…" : "Delete"}
-                        </button>
-                      </>
-                    )}
-                 </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void deleteSession(s.id);
+                        }}
+                        disabled={deleteBusy}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 10,
+                          border: "1px solid rgba(255,255,255,0.22)",
+                          background: "rgba(255,255,255,0.06)",
+                          color: "#fff",
+                          fontWeight: 900,
+                          cursor: deleteBusy ? "not-allowed" : "pointer",
+                          opacity: deleteBusy ? 0.6 : 1,
+                          fontSize: 12,
+                        }}
+                        title="Delete session"
+                      >
+                        {deletingId === s.id ? "Deleting…" : "Delete"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1806,7 +1886,8 @@ Acceptance criteria:
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-          <Chip>Mode: {modeChip}</Chip>
+          {/* WHY (M6.1): show a strong mode identity badge (not just text). */}
+          <ModeBadge mode={mode} />
           {rateChipText && <Chip>{rateChipText}</Chip>}
           {lastRequestId && <Chip>requestId: {lastRequestId.slice(0, 8)}…</Chip>}
 
@@ -1823,6 +1904,20 @@ Acceptance criteria:
           <HeaderButton active={mode === "cases"} onClick={() => trySetMode("cases")} disabled={isSending}>
             Cases
           </HeaderButton>
+
+          {/* ✅ Milestone 6.1 shortcut: “Start new session in X mode” always available */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Chip>New in</Chip>
+            <HeaderButton onClick={() => startNewSessionInMode("coach")} disabled={isSending}>
+              Coach
+            </HeaderButton>
+            <HeaderButton onClick={() => startNewSessionInMode("review")} disabled={isSending}>
+              Review
+            </HeaderButton>
+            <HeaderButton onClick={() => startNewSessionInMode("cases")} disabled={isSending}>
+              Cases
+            </HeaderButton>
+          </div>
 
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
             <UserBar />
@@ -1885,16 +1980,28 @@ Acceptance criteria:
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
           <Chip>{activeSessionId ? `Session: ${activeSessionId.slice(0, 8)}…` : "Session: (new)"}</Chip>
 
-          {activeSessionId && <Chip>Session mode: {modeLabel(activeSessionMode)}</Chip>}
+          {activeSessionId ? (
+            // WHY (M6.1): make immutability explicit + visible (locked badge).
+            <ModeBadge mode={activeSessionMode} locked />
+          ) : null}
 
           {activeSessionId && messagesCursor && (
-            <HeaderButton onClick={() => void loadSessionMessages(activeSessionId, false, activeSessionMode)} disabled={messagesLoading}>
+            <HeaderButton
+              onClick={() => void loadSessionMessages(activeSessionId, false, activeSessionMode)}
+              disabled={messagesLoading}
+            >
               {messagesLoading ? "Loading…" : "Load older"}
             </HeaderButton>
           )}
+
+          {activeSessionId ? (
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
+              Mode is locked for this session. Start a new session to change modes.
+            </div>
+          ) : null}
         </div>
 
         {rateLimitMsg && (

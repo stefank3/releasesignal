@@ -1,4 +1,7 @@
+// app/api/chat/history/route.ts
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+
 import { auth0 } from "@/lib/auth0";
 import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
@@ -20,7 +23,7 @@ function sanitizeTitle(s: string): string {
 function getRequestId(req: Request): string {
   // WHY: allow upstream correlation, else generate locally
   const fromHeader = req.headers.get("x-request-id")?.trim();
-  return fromHeader && fromHeader.length > 0 ? fromHeader : crypto.randomUUID();
+  return fromHeader && fromHeader.length > 0 ? fromHeader : randomUUID();
 }
 
 function normalizeMode(m: unknown): Mode {
@@ -31,12 +34,7 @@ function normalizeMode(m: unknown): Mode {
 /**
  * Heuristic: detect cases plain-text output in stored assistant content.
  *
- * WHY (M6.1):
- * - We intentionally do NOT persist "cases" as a DB mode (no schema/data migration).
- * - History UX still needs an accurate mode badge per session.
- * - Using the last assistant message gives a cheap, high-signal inference.
- *
- * This is intentionally conservative:
+ * Conservative signal:
  * - requires "TC-###" lines + at least one structure marker, OR multiple TC lines.
  */
 function looksLikeCasesPlainText(text: string): boolean {
@@ -63,16 +61,20 @@ function looksLikeCasesPlainText(text: string): boolean {
  *
  * WHY (M6.1):
  * - "review" sessions must always badge as review (admin-only, JSON contract).
- * - "cases" is a client behavior; we infer it from assistant content instead of DB mode.
+ * - "cases" can be inferred from assistant content to handle older mis-labeled sessions.
+ *
+ * Backward compatibility:
+ * - If persisted mode is already "cases", honor it.
  */
 function computeEffectiveMode(args: {
   persistedMode: Mode;
-  lastMessage: null | { role: string; content: string };
+  lastAssistantMessage: null | { role: string; content: string };
 }): Mode {
   if (args.persistedMode === "review") return "review";
+  if (args.persistedMode === "cases") return "cases"; // backward-compat
 
-  const last = args.lastMessage;
-  if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) return "cases";
+  const lastA = args.lastAssistantMessage;
+  if (lastA?.role === "assistant" && looksLikeCasesPlainText(lastA.content)) return "cases";
 
   return "coach";
 }
@@ -102,9 +104,7 @@ export async function GET(req: Request) {
       event: "chat_start",
       requestId,
       auth0Sub: sub,
-      meta: {
-        route: "/api/chat/history",
-      },
+      meta: { route: "/api/chat/history" },
     });
 
     const url = new URL(req.url);
@@ -132,36 +132,74 @@ export async function GET(req: Request) {
     const page = hasMore ? sessions.slice(0, limit) : sessions;
     const sessionIds = page.map((s) => s.id);
 
-    // Latest message per session (for preview + effectiveMode inference)
-    const lastMessages = await prisma.$transaction(
+    /**
+     * ✅ IMPORTANT:
+     * Avoid a single prisma.$transaction([...]) with mixed return shapes.
+     * That creates union types that break TS narrowing (your errors).
+     *
+     * Instead: run 3 separate typed transactions (each returns a clean array type).
+     *
+     * NOTE:
+     * limit <= 50 -> 50 findFirst calls is acceptable for MVP history.
+     */
+
+    type LastMsg = { sessionId: string; role: string; content: string; createdAt: Date };
+    type LastUserMsg = { sessionId: string; content: string };
+    type LastAssistantMsg = { sessionId: string; role: string; content: string };
+
+    // 1) Latest message per session (preview)
+    const lastPerSession = (await prisma.$transaction(
       sessionIds.map((sid) =>
         prisma.chatMessage.findFirst({
-          where: { sessionId: sid, auth0Sub: sub },
+          where: { auth0Sub: sub, sessionId: sid },
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           select: { sessionId: true, role: true, content: true, createdAt: true },
         })
       )
-    );
+    )) as Array<LastMsg | null>;
 
-    const lastBySessionId = new Map(lastMessages.filter(Boolean).map((m) => [m!.sessionId, m!]));
-
-    // Title fallback: last USER message only (never assistant)
-    const lastUserMessages = await prisma.$transaction(
+    // 2) Latest USER message per session (title fallback)
+    const lastUserPerSession = (await prisma.$transaction(
       sessionIds.map((sid) =>
         prisma.chatMessage.findFirst({
-          where: { sessionId: sid, auth0Sub: sub, role: "user" },
+          where: { auth0Sub: sub, sessionId: sid, role: "user" },
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           select: { sessionId: true, content: true },
         })
       )
-    );
+    )) as Array<LastUserMsg | null>;
 
-    const lastUserBySessionId = new Map(lastUserMessages.filter(Boolean).map((m) => [m!.sessionId, m!]));
+    // 3) Latest ASSISTANT message per session (effectiveMode inference)
+    const lastAssistantPerSession = (await prisma.$transaction(
+      sessionIds.map((sid) =>
+        prisma.chatMessage.findFirst({
+          where: { auth0Sub: sub, sessionId: sid, role: "assistant" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          select: { sessionId: true, role: true, content: true },
+        })
+      )
+    )) as Array<LastAssistantMsg | null>;
+
+    const lastBySessionId = new Map<string, LastMsg>();
+    for (const m of lastPerSession) {
+      if (m) lastBySessionId.set(m.sessionId, m);
+    }
+
+    const lastUserBySessionId = new Map<string, LastUserMsg>();
+    for (const m of lastUserPerSession) {
+      if (m) lastUserBySessionId.set(m.sessionId, m);
+    }
+
+    const lastAssistantBySessionId = new Map<string, LastAssistantMsg>();
+    for (const m of lastAssistantPerSession) {
+      if (m) lastAssistantBySessionId.set(m.sessionId, m);
+    }
 
     const res = NextResponse.json({
       items: page.map((s) => {
         const last = lastBySessionId.get(s.id) ?? null;
         const lastUser = lastUserBySessionId.get(s.id) ?? null;
+        const lastAssistant = lastAssistantBySessionId.get(s.id) ?? null;
 
         const computedTitle =
           s.title?.trim()
@@ -174,7 +212,7 @@ export async function GET(req: Request) {
 
         const effectiveMode = computeEffectiveMode({
           persistedMode,
-          lastMessage: last ? { role: last.role, content: last.content } : null,
+          lastAssistantMessage: lastAssistant ? { role: lastAssistant.role, content: lastAssistant.content } : null,
         });
 
         return {
