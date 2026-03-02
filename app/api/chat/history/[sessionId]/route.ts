@@ -1,8 +1,11 @@
+// app/api/chat/history/[sessionId]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { auth0 } from "@/lib/auth0";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
+
+type Mode = "coach" | "review" | "cases";
 
 type Ctx =
   | { params: { sessionId: string } }
@@ -15,10 +18,63 @@ type Ctx =
  * We normalize it here to avoid `any` casts and keep lint clean.
  */
 async function resolveParams(ctx: Ctx): Promise<{ sessionId: string } | undefined> {
-  const rawParams =
-    ctx.params instanceof Promise ? await ctx.params : ctx.params;
-
+  const rawParams = ctx.params instanceof Promise ? await ctx.params : ctx.params;
   return rawParams;
+}
+
+function normalizeMode(m: unknown): Mode {
+  // WHY (M6.1): older rows or unexpected values should not break the history UI.
+  return m === "review" || m === "cases" ? m : "coach";
+}
+
+/**
+ * Heuristic: detect cases plain-text output in stored assistant content.
+ *
+ * WHY (M6.1):
+ * - Some older sessions may have persisted mode as coach but contain cases output.
+ * - We do NOT rely on schema migrations to make history render correctly.
+ * - If assistant output looks like strict cases plain-text, we render session as cases.
+ *
+ * Conservative signal:
+ * - requires "TC-###" lines + at least one structure marker, OR multiple TC lines.
+ */
+function looksLikeCasesPlainText(text: string): boolean {
+  const t = String(text ?? "").replace(/\r/g, "");
+
+  const tcCount = (t.match(/^TC-\d{1,4}\b.*$/gim) || []).length;
+
+  const hasMarkers =
+    /(^|\n)\s*Preconditions\s*:/i.test(t) ||
+    /(^|\n)\s*Test Steps\s*:/i.test(t) ||
+    /(^|\n)\s*Steps\s*:/i.test(t) ||
+    /(^|\n)\s*Expected Result(s)?\s*:/i.test(t) ||
+    /(^|\n)\s*Priority\s*:/i.test(t) ||
+    /(^|\n)\s*Type\s*:/i.test(t);
+
+  if (tcCount >= 1 && hasMarkers) return true;
+  if (tcCount >= 2) return true;
+
+  return false;
+}
+
+/**
+ * Compute the UI-effective mode for a session.
+ *
+ * WHY (M6.1):
+ * - Must match /api/chat/history list logic for consistency.
+ * - review sessions remain review (admin-only + JSON contract).
+ * - cases is inferred from the latest assistant content (cheap + stable).
+ */
+function computeEffectiveMode(args: {
+  persistedMode: Mode;
+  lastMessage: null | { role: string; content: string };
+}): Mode {
+  if (args.persistedMode === "review") return "review";
+
+  const last = args.lastMessage;
+  if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) return "cases";
+
+  return "coach";
 }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
@@ -35,10 +91,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const sessionId = params?.sessionId;
 
   if (!sessionId) {
-    return NextResponse.json(
-      { error: "Missing sessionId" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
   }
 
   /**
@@ -48,7 +101,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
    */
   const session = await prisma.chatSession.findFirst({
     where: { id: sessionId, auth0Sub: sub },
-    select: { id: true },
+    select: { id: true, mode: true },
   });
 
   if (!session) {
@@ -64,9 +117,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
    * Default = 120, hard cap = 200.
    */
   const limitRaw = Number(url.searchParams.get("limit") ?? 120);
-  const limit = Number.isFinite(limitRaw)
-    ? Math.min(Math.max(limitRaw, 1), 200)
-    : 120;
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 120;
 
   const cursor = url.searchParams.get("cursor");
 
@@ -95,6 +146,28 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const page = hasMore ? rows.slice(0, limit) : rows;
 
   /**
+   * ✅ M6.1: Persisted mode is canonical (for mode-locking).
+   */
+  const persistedMode = normalizeMode(session.mode);
+
+  /**
+   * ✅ M6.1: effectiveMode inference must NOT depend on the current page.
+   * If the newest assistant message is short/non-structured, page-based inference can flip modes.
+   *
+   * We infer from the latest message in the session (single query), matching list route logic.
+   */
+  const lastMessage = await prisma.chatMessage.findFirst({
+    where: { sessionId, auth0Sub: sub },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { role: true, content: true },
+  });
+
+  const effectiveMode = computeEffectiveMode({
+    persistedMode,
+    lastMessage: lastMessage ? { role: lastMessage.role, content: lastMessage.content ?? "" } : null,
+  });
+
+  /**
    * UX:
    * Client renders messages oldest → newest.
    * We query DESC for pagination efficiency,
@@ -112,6 +185,12 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     }));
 
   return NextResponse.json({
+    // ✅ M6.1: persisted session mode for deterministic client locking (canonical)
+    sessionMode: persistedMode,
+
+    // ✅ M6.1: inferred mode for correct rendering of older mis-labeled sessions
+    effectiveMode,
+
     items,
 
     /**
@@ -126,6 +205,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     hasMore,
   });
 }
+
 /**
  * DELETE /api/chat/history/:sessionId
  * SECURITY:

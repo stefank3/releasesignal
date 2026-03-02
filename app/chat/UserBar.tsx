@@ -10,20 +10,34 @@ export default function UserBar() {
   const [me, setMe] = useState<MeResponse | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
 
     (async () => {
       try {
-        const res = await fetch("/api/me", { cache: "no-store" });
+        // WHY: /api/me must reflect the *current* Auth0 session immediately (no stale cache).
+        const res = await fetch("/api/me", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
+        // WHY: If the request fails (401/500/etc.), fall back to unauthenticated UI deterministically.
+        if (!res.ok) {
+          setMe({ authenticated: false });
+          return;
+        }
+
         const data = (await res.json()) as MeResponse;
-        if (!cancelled) setMe(data);
+        setMe(data);
       } catch {
-        if (!cancelled) setMe({ authenticated: false });
+        // WHY: Network errors should not break the shell UI; degrade to "not logged in".
+        // Abort is also caught here during unmount—acceptable to treat as unauthenticated for rendering.
+        setMe({ authenticated: false });
       }
     })();
 
     return () => {
-      cancelled = true;
+      // WHY: Prevent state updates after unmount and stop in-flight request.
+      controller.abort();
     };
   }, []);
 
@@ -35,10 +49,14 @@ export default function UserBar() {
       <span className="opacity-80">{me.email}</span>
 
       {me.isAdmin && (
-        <a href="/admin/metrics" className="rounded-lg border px-3 py-2 hover:bg-white/10">
+        <a
+          href="/admin/metrics"
+          className="rounded-lg border px-3 py-2 hover:bg-white/10"
+        >
           Metrics
         </a>
       )}
+
       <a href="/auth/logout" className="rounded-lg border px-3 py-2 hover:bg-white/10">
         Logout
       </a>
