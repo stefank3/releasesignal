@@ -109,12 +109,48 @@ function isUniqueViolation(e: unknown) {
  * Extract first {...} JSON block from a mixed response.
  * This helps if the model leaks prose around JSON (coach/review only).
  */
-function extractJsonObject(raw: string): string {
-  const t = raw.trim();
-  const start = t.indexOf("{");
-  const end = t.lastIndexOf("}");
-  if (start >= 0 && end >= 0 && end > start) return t.slice(start, end + 1);
+function stripCodeFences(s: string): string {
+  const t = s.trim();
+
+  // ```json ... ``` or ``` ... ```
+  if (t.startsWith("```")) {
+    return t
+      .replace(/^```[a-zA-Z]*\n?/, "")
+      .replace(/```$/, "")
+      .trim();
+  }
+
   return t;
+}
+
+/**
+ * Extract first {...} JSON block from a mixed response.
+ * Tolerates:
+ * - prose around JSON
+ * - ```json fenced JSON
+ * - trailing explanations
+ */
+function extractJsonObject(raw: string): string {
+  const cleaned = stripCodeFences(raw).trim();
+
+  const start = cleaned.indexOf("{");
+  if (start < 0) return cleaned;
+
+  // Scan for matching closing brace
+  let depth = 0;
+  for (let i = start; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+
+    if (depth === 0) return cleaned.slice(start, i + 1);
+  }
+
+  // Fallback: last brace slice
+  const end = cleaned.lastIndexOf("}");
+  if (end > start) return cleaned.slice(start, end + 1);
+
+  return cleaned;
 }
 
 /**
@@ -134,6 +170,221 @@ function isWeakInput(message: string): boolean {
   return false;
 }
 
+/**
+ * M7.4: Suggestions payload contract for Guided Strategy Interaction.
+ * - No DB schema changes.
+ * - Returned only when coach output includes optionalClarifications (clarification phase).
+ * - Pure API contract addition; billing/session enforcement unaffected.
+ */
+type CoachSuggestions = {
+  groups: { label: string; type: "single" | "multi"; options: string[] }[];
+  template: string;
+};
+
+/**
+ * M7.4: Detect if the user is responding to the guided template (clarification round).
+ * We keep this lightweight and deterministic (no history required).
+ */
+function isGuidedClarificationAnswer(message: string): boolean {
+  const t = message.toLowerCase();
+  // Heuristic: if user used our template headings, treat as "clarification answered"
+  return (
+    t.includes("objective:") ||
+    t.includes("primary risk:") ||
+    t.includes("integrations:") ||
+    t.includes("constraints:") ||
+    t.includes("scope:")
+  );
+}
+
+ /**
+ * M7.4: Build suggestions dynamically from coach.optionalClarifications.
+ * Each clarification becomes a group with generic answer options.
+ * This removes hard-coded product-specific choices and keeps the flow conversational.
+ */
+function buildCoachSuggestionsFromCoach(coach: CoachResult): CoachSuggestions | null {
+  const clarifications = (coach.optionalClarifications ?? [])
+    .map((q) => (q ?? "").trim())
+    .filter((q) => q.length > 0)
+    .slice(0, 3);
+
+  if (clarifications.length === 0) return null;
+
+  type ClarificationKind = "objective" | "risk" | "scope" | "success" | "env" | "other";
+
+  const classify = (q: string): ClarificationKind => {
+    const t = q.toLowerCase();
+
+    if (t.includes("objective") || t.includes("goal") || t.includes("outcome") || t.includes("priority")) return "objective";
+    if (t.includes("risk") || t.includes("failure") || t.includes("worst case") || t.includes("worst-case")) return "risk";
+    if (t.includes("scope") || t.includes("constraint") || t.includes("limit") || t.includes("in scope") || t.includes("out of scope")) {
+      return "scope";
+    }
+    if (t.includes("success") || t.includes("definition of done") || t.includes("acceptance")) return "success";
+    if (t.includes("environment") || t.includes("env") || t.includes("where run") || t.includes("which env")) return "env";
+    return "other";
+  };
+
+  const groups: CoachSuggestions["groups"] = clarifications.map((q) => {
+    const labelRaw = q.replace(/^[-•\d.)\s]+/, "").trim(); // strip bullets like "- " / "1. "
+    const label =
+      labelRaw.length > 64
+        ? labelRaw.slice(0, 61) + "..."
+        : labelRaw.length === 0
+          ? "Clarification"
+          : labelRaw;
+
+    const kind = classify(q);
+
+    let options: string[];
+
+    switch (kind) {
+      case "objective":
+        options = [
+          "Ship this feature safely in the next release",
+          "Stabilize critical paths and regressions",
+          "Explore unknown risk areas first",
+          "Validate key integrations and contracts",
+          "Not fully defined yet – I need your proposal",
+        ];
+        break;
+
+      case "risk":
+        options = [
+          "Auth / session / security",
+          "Permissions / RBAC / roles",
+          "Data integrity and migrations",
+          "External integrations / contracts",
+          "Performance / scalability / latency",
+          "UX / flows / accessibility",
+          "Not sure – highlight what you see as highest risk",
+        ];
+        break;
+
+      case "scope":
+        options = [
+          "Only this feature in isolation",
+          "End-to-end flows including dependencies",
+          "Happy-path plus a few critical edges",
+          "Full regression on impacted areas",
+          "Not decided yet – suggest a scope",
+        ];
+        break;
+
+      case "success":
+        options = [
+          "Ready for release with no critical issues",
+          "Key risks documented and mitigated",
+          "Smoke suite green and reliable in CI",
+          "Stakeholders sign off on coverage",
+          "I need help defining clear success criteria",
+        ];
+        break;
+
+      case "env":
+        options = [
+          "Local / dev only",
+          "Staging and pre-prod",
+          "Pre-prod mirroring production",
+          "Production shadow traffic only",
+          "Environments are not fixed yet",
+        ];
+        break;
+
+      case "other":
+      default:
+        options = [
+          "We already have this well defined",
+          "We have a rough idea but it’s fuzzy",
+          "We haven’t decided yet",
+          "Out of scope for now",
+          "I need you to propose a default",
+        ];
+        break;
+    }
+
+    return {
+      label,
+      type: "single",
+      options,
+    };
+  });
+
+  // Template wires each clarification label into a simple “answer sheet”
+  const lines: string[] = [];
+  lines.push("Answers to your clarifications (to refine the strategy):");
+
+  for (const g of groups) {
+    // buildGuidedReply will replace {label} with the selected chip values
+    lines.push(`- ${g.label}: {${g.label}}`);
+  }
+
+  lines.push("");
+  lines.push("Scope / Constraints (optional):");
+  lines.push("- ");
+  lines.push("Success Criteria (optional):");
+  lines.push("- ");
+
+  return {
+    groups,
+    template: lines.join("\n"),
+  };
+}
+
+/**
+ * M7.4: Fallback generic suggestions (used only when we can't derive from clarifications).
+ * Still generic (no product-specific integrations).
+ */
+function buildFallbackCoachSuggestions(): CoachSuggestions {
+  return {
+    groups: [
+      {
+        label: "Objective",
+        type: "single",
+        options: [
+          "Ship safely in the next release",
+          "Reduce regression risk on critical flows",
+          "Explore unknown areas and edge cases",
+          "Prepare for beta / stakeholder sign-off",
+          "Not fully defined yet – need your proposal",
+        ],
+      },
+      {
+        label: "Risk focus",
+        type: "multi",
+        options: [
+          "Auth / session / security",
+          "Permissions / RBAC / roles",
+          "Data integrity and migrations",
+          "External integrations / contracts",
+          "Performance / scalability",
+          "UX / flows / accessibility",
+          "Not sure – highlight what you see as highest risk",
+        ],
+      },
+      {
+        label: "Constraints",
+        type: "multi",
+        options: [
+          "Tight deadline",
+          "Limited QA capacity",
+          "Limited environment access",
+          "No production data allowed",
+          "Change freeze window",
+        ],
+      },
+    ],
+    template: [
+      "Objective: {Objective}",
+      "Risk focus: {Risk focus}",
+      "Constraints (optional): {Constraints}",
+      "Scope / Constraints (optional):",
+      "- ",
+      "Success Criteria (optional):",
+      "- ",
+    ].join("\n"),
+  };
+}
 /**
  * Convert a CoachResult to UI-friendly plain text.
  *
@@ -164,12 +415,10 @@ function coachToText(coach: CoachResult): string {
     for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
   }
 
-  const clarifications = coach.optionalClarifications.slice(0, 3);
-  if (clarifications.length) {
-    lines.push("");
-    lines.push("If you want more detailed tests, answer:");
-    for (const q of clarifications) lines.push(`- ${q}`);
-  }
+  // NOTE:
+  // We intentionally DO NOT render coach.optionalClarifications here anymore.
+  // Clarification is handled via Guided Suggestions in the UI (chips + template),
+  // so the main coach answer stays focused on strategy, risks, and test ideas.
 
   return lines.join("\n");
 }
@@ -221,16 +470,21 @@ async function repairJsonOnce(args: { mode: ExecutionMode; raw: string }): Promi
           "- optionalClarifications must be <= 3 and placed last.",
         ].join("\n");
 
-  const repaired = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    temperature: 0,
-    max_tokens: 650,
-    messages: [
-      { role: "system", content: "You are a strict JSON reformatter." },
-      { role: "system", content: schemaInstruction },
-      { role: "user", content: `Fix this into valid JSON only:\n\n${args.raw}` },
-    ],
-  });
+        const repaired = await openai.chat.completions.create({
+          model: "gpt-4.1-mini",
+          temperature: 0,
+          max_tokens: 900,
+          // ✅ Force JSON object output (prevents markdown/fences)
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: "You are a strict JSON reformatter. Output ONLY a raw JSON object. No markdown. No code fences.",
+            },
+            { role: "system", content: schemaInstruction },
+            { role: "user", content: `Fix this into valid JSON only:\n\n${args.raw}` },
+          ],
+        });
 
   return repaired.choices[0]?.message?.content ?? args.raw;
 }
@@ -395,6 +649,10 @@ export async function POST(req: Request) {
     const logMode: ClientMode = clientMode;
 
     const weakInput = isWeakInput(message);
+
+    // M7.4: Heuristic flag used to enforce "only one clarification round".
+    // If user is answering the guided template, we force the model to proceed with output (no more clarifications).
+    const guidedAnswer = executionMode === "coach" && !wantCases && isGuidedClarificationAnswer(message); // M7.4
 
     // 4) RBAC: review is admin-only
     if (executionMode === "review") {
@@ -575,7 +833,7 @@ export async function POST(req: Request) {
       orgId,
       sessionId: sessionIdForLog,
       mode: logMode,
-      meta: { messageChars: message.length, weakInput, clientMode },
+      meta: { messageChars: message.length, weakInput, clientMode, guidedAnswer }, // M7.4 (added guidedAnswer)
     });
 
     // 8) Idempotent replay (serve stored assistant message)
@@ -615,6 +873,12 @@ export async function POST(req: Request) {
         status: 200,
         latencyMs: Date.now() - startTime,
       });
+
+      // M7.4: On replay we can't reliably reconstruct prior suggestions (no schema/meta storage).
+      // We still provide a deterministic suggestions payload if the stored assistant content includes a clarification section.
+     const replayHasClarifications =
+    !wantCases && executionMode === "coach" && (existingAssistant.content ?? "").includes("If you want more detailed tests, answer:"); // M7.4
+    const replaySuggestions: CoachSuggestions | null = replayHasClarifications ? buildFallbackCoachSuggestions() : null; // M7.4
 
       if (executionMode === "review") {
         const raw = existingAssistant.content ?? "";
@@ -679,6 +943,7 @@ export async function POST(req: Request) {
           },
           rate: rateMeta,
           replay: true,
+          ...(replaySuggestions ? { suggestions: replaySuggestions } : {}), // M7.4 (new)
         },
         { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
       );
@@ -737,6 +1002,13 @@ export async function POST(req: Request) {
             "Always provide: assumptions + riskMatrix + highSignalApproach + testIdeas.",
             "Clarifications are OPTIONAL and MUST be last (max 3).",
             "If you include clarifications, they must be phrased as an opt-in for deeper tests.",
+            // M7.4: Enforce "only one clarification round" when user is replying to the guided template.
+            ...(guidedAnswer
+              ? [
+                  "GUIDED_CLARIFICATION_ANSWER: true",
+                  "Rule: The user has provided clarification answers. You MUST NOT include optionalClarifications. Proceed with full output.",
+                ]
+              : []),
             "Schema:",
             "{",
             '  "assumptions": string[],',
@@ -760,17 +1032,24 @@ export async function POST(req: Request) {
 
     const { result: completion, trace } = await withOpenAITrace(
       () =>
-        openai.chat.completions.create({
-          model,
-          temperature: 0.2,
-          max_tokens: executionMode === "review" ? 500 : wantCases ? 1400 : 700,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "system", content: modeInstruction },
-            { role: "user", content: message },
-          ],
-        }),
-      model
+      openai.chat.completions.create({
+            model,
+            
+            // ✅ Lower drift for JSON modes; keep cases as-is
+            temperature: wantCases ? 0.2 : 0,
+
+            max_tokens: executionMode === "review" ? 650 : wantCases ? 1400 : 900,
+
+            // ✅ Force JSON for coach/review ONLY (cases is plain text contract)
+            response_format: wantCases ? undefined : { type: "json_object" },
+
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "system", content: modeInstruction },
+              { role: "user", content: message },
+            ],
+          }),
+                model
     );
 
     openaiLatencyMs = trace.latencyMs;
@@ -785,7 +1064,7 @@ export async function POST(req: Request) {
       model: trace.model,
       openaiLatencyMs: trace.latencyMs,
       retryCount: trace.retryCount,
-      meta: { clientMode },
+      meta: { clientMode, guidedAnswer }, // M7.4 (added guidedAnswer)
     });
 
     const rawReply = completion.choices[0]?.message?.content ?? "No reply returned";
@@ -811,6 +1090,9 @@ export async function POST(req: Request) {
     let reviewObj: ReviewResult | null = null;
     let reviewStoredJson: string | null = null;
     let reviewRepaired = false;
+
+    // M7.4: suggestions payload returned only when coach output includes optionalClarifications.
+    let suggestions: CoachSuggestions | null = null;
 
     if (executionMode === "review") {
       // Parse or repair to get canonical ReviewResult
@@ -856,8 +1138,20 @@ export async function POST(req: Request) {
       }
 
       if (coachParsed) {
+        // Hard rule: max 3 clarifying prompts
         coachParsed.optionalClarifications = coachParsed.optionalClarifications.slice(0, 3);
+
+        // M7.4: If we detect the user answered the guided template, enforce "only one clarification round"
+        // by stripping optionalClarifications (server-side safety net).
+        if (guidedAnswer) coachParsed.optionalClarifications = []; // M7.4 (new)
+
         replyTextForUser = coachToText(coachParsed);
+
+        // M7.4: Attach suggestions only when we actually have clarifications to guide.
+        // Build them dynamically from coachParsed, fallback to generic if needed.
+      if (coachParsed.optionalClarifications.length > 0) {
+        suggestions = buildCoachSuggestionsFromCoach(coachParsed) ?? buildFallbackCoachSuggestions();
+      }
       } else {
         replyTextForUser =
           "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
@@ -868,6 +1162,7 @@ export async function POST(req: Request) {
     if (wantCases) {
       replyTextForUser = rawReply.trim();
       coachParsed = null;
+      suggestions = null; // M7.4: never attach suggestions in cases mode
     }
 
     // Decide what we persist as assistant content (single source of truth)
@@ -1078,7 +1373,7 @@ export async function POST(req: Request) {
       retryCount,
       tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
       eurCost: costEur ?? undefined,
-      meta: { costUsd: costUsd ?? undefined, clientMode },
+      meta: { costUsd: costUsd ?? undefined, clientMode, guidedAnswer, suggestions: !!suggestions }, // M7.4
     });
 
     await recordChatMetric({
@@ -1099,6 +1394,7 @@ export async function POST(req: Request) {
         creditsRemaining,
         usage: { promptTokens, completionTokens, totalTokens },
         rate: rateMeta,
+        ...(suggestions ? { suggestions } : {}), // M7.4 (new): guided suggestions payload
       },
       { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
     );

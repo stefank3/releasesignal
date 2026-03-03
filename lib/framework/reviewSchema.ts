@@ -44,11 +44,29 @@ export type CoachApproach = {
   minimalRepro?: string[];
 };
 
+/**
+ * M7.4: Guided Strategy Interaction payload (optional).
+ * WHY: When coach asks clarifying questions, the API can include guided reply suggestions
+ * that the UI renders as selectable chips + a structured response template.
+ *
+ * HARD RULES:
+ * - Optional field (no DB migrations required).
+ * - Not required for CoachResult validity; used only to enhance UX.
+ */
+export type CoachSuggestions = {
+  groups: { label: string; type: "single" | "multi"; options: string[] }[];
+  template: string;
+};
+
 export type CoachResult = {
   assumptions: string[];
   riskMatrix: CoachRisk[];
   highSignalApproach: CoachApproach;
   optionalClarifications: string[]; // MUST be <= 3 (server truncates defensively)
+
+  // M7.4 (new): optional suggestions to guide clarification answers in Strategy mode.
+  // NOTE: The model does NOT need to output this. The API can attach it.
+  suggestions?: CoachSuggestions;
 };
 
 /**
@@ -97,6 +115,26 @@ function isRiskLevel(x: unknown): x is RiskLevel {
   return x === "Low" || x === "Med" || x === "High";
 }
 
+// M7.4: Runtime validation for suggestions (kept permissive + shallow).
+// WHY: Suggestions are UX sugar; don't fail coach parsing if suggestions is absent/malformed.
+function isCoachSuggestions(x: unknown): x is CoachSuggestions {
+  if (typeof x !== "object" || x === null) return false;
+
+  const r = x as Record<string, unknown>;
+  if (!Array.isArray(r.groups)) return false;
+  if (typeof r.template !== "string") return false;
+
+  for (const g of r.groups) {
+    if (typeof g !== "object" || g === null) return false;
+    const gg = g as Record<string, unknown>;
+    if (typeof gg.label !== "string") return false;
+    if (gg.type !== "single" && gg.type !== "multi") return false;
+    if (!Array.isArray(gg.options)) return false;
+  }
+
+  return true;
+}
+
 export function isCoachResult(x: unknown): x is CoachResult {
   if (typeof x !== "object" || x === null) return false;
 
@@ -121,6 +159,9 @@ export function isCoachResult(x: unknown): x is CoachResult {
 
   // minimalRepro optional
   if (hs.minimalRepro !== undefined && !Array.isArray(hs.minimalRepro)) return false;
+
+  // M7.4 (new): suggestions optional (do not fail if absent)
+  if (r.suggestions !== undefined && !isCoachSuggestions(r.suggestions)) return false;
 
   return true;
 }
