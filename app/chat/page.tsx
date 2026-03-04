@@ -1,17 +1,16 @@
 // app/chat/page.tsx
 // M7 Phase 2 (Structural Refactor)
 // CHANGELOG (surgical):
-// 1) FIX: correct module paths (chat.types + CasesLegacyCard location)
-// 2) FIX: remove inline SuggestedReplies usage; use extracted GuidedSuggestions component instead
-// 3) FIX: normalize ChatUI casing import (ChatUI.tsx)
-// 4) FIX: type the autofill callback param to avoid implicit any
+// 1) CHANGE: sidebar JSX extracted into ./components/SessionSidebar (no behavior change)
+// 2) FIX (already done): ChatUI casing import normalized
+// 3) FIX (already done): GuidedSuggestions extracted usage
+// 4) NOTE: CasesLegacyCard import kept under ./cards (as in your repo)
 
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import UserBar from "./UserBar";
 
-// ✅ FIX (M7): import shared types from app/chat/chat.types.ts (now included via tsconfig **/*.ts)
 import type {
   Mode,
   ReviewResult,
@@ -25,18 +24,16 @@ import type {
   CoachSuggestions,
 } from "./chat.types";
 
-// ✅ FIX (M7): normalize casing => ChatUI (NOT ChatUi)
-import { Chip, Group, HeaderButton, ModeBadge, Toolbar, clamp } from "./components/ChatUI";
+import { Chip, Group, HeaderButton, ModeBadge, Toolbar } from "./components/ChatUI";
 
-// ✅ FIX (M7): cards live under app/chat/cards
 import ReviewCard from "./cards/ReviewCard";
 import CasesTextCard from "./cards/CasesTextCard";
-
-// ✅ FIX (M7): CasesLegacyCard is NOT under /cards in your tree; it is app/chat/CasesLegacyCard.tsx
 import CasesLegacyCard from "./cards/CasesLegacyCard";
 
-// ✅ FIX (M7): guided UI extracted into its own component file
 import GuidedSuggestions from "./GuidedSuggestions";
+
+// ✅ NEW (M7): extracted sidebar component
+import SessionSidebar from "./components/SessionSidebar";
 
 /** Local storage key (so reload keeps the demo context). */
 const STORAGE_KEY = "stefans-mvp-chat-v1";
@@ -260,15 +257,6 @@ function tryFormatCoachJson(text: string): string | null {
 
 function modeLabel(m: Mode) {
   return m === "coach" ? "Coach" : m === "review" ? "Review" : "Cases";
-}
-
-// M7.2 CHANGE: derive a stable “initials / glyph” for icon-only session rows.
-function sessionGlyph(title: string) {
-  const t = (title || "New chat").trim();
-  const parts = t.split(/\s+/).filter(Boolean);
-  const a = (parts[0]?.[0] ?? "N").toUpperCase();
-  const b = (parts[1]?.[0] ?? "").toUpperCase();
-  return (a + b).slice(0, 2);
 }
 
 export default function ChatPage() {
@@ -691,6 +679,7 @@ Acceptance criteria:
     } finally {
       setRenameSaving(false);
       setRenamingId(null);
+      setRenameValue("");
     }
   };
 
@@ -976,258 +965,34 @@ Acceptance criteria:
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
-      <aside
-        style={{
-          width: sidebarWidth,
-          transition: "width 180ms ease",
-          borderRight: "1px solid rgba(255,255,255,0.12)",
-          padding: sidebarCollapsed ? 10 : 14,
-          background: "rgba(0,0,0,0.35)",
-          overflow: "auto",
+      {/* ✅ M7: Sidebar extracted (no behavior change) */}
+      <SessionSidebar
+        sidebarWidth={sidebarWidth}
+        sidebarCollapsed={sidebarCollapsed}
+        sessions={sessions}
+        sessionsCursor={sessionsCursor}
+        sessionsLoading={sessionsLoading}
+        activeSessionId={activeSessionId}
+        renamingId={renamingId}
+        renameValue={renameValue}
+        renameSaving={renameSaving}
+        deletingId={deletingId}
+        deleteBusy={deleteBusy}
+        onNewChatAction={newChat}
+        onSelectSessionAction={(id, m) => void selectSession(id, m)}
+        onLoadMoreSessionsAction={() => void loadSessions(false)}
+        onStartRenameAction={(id, title) => {
+          setRenamingId(id);
+          setRenameValue(title);
         }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          {!sidebarCollapsed ? <div style={{ color: "#fff", fontWeight: 900 }}>History</div> : <div />}
-
-          <button
-            onClick={newChat}
-            title="New chat"
-            style={{
-              padding: sidebarCollapsed ? "8px 10px" : "8px 10px",
-              borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.22)",
-              background: "rgba(255,255,255,0.06)",
-              color: "#fff",
-              fontWeight: 950,
-              cursor: "pointer",
-              width: sidebarCollapsed ? 44 : "auto",
-            }}
-          >
-            {sidebarCollapsed ? "＋" : "New"}
-          </button>
-        </div>
-
-        <div style={{ display: "grid", gap: 8 }}>
-          {sessions.map((s) => {
-            const active = s.id === activeSessionId;
-
-            const title = s.title ?? "New chat";
-            const preview = s.lastMessage?.role === "user" ? s.lastMessage.content.slice(0, 80) : "Open to view";
-
-            const effectiveMode = s.effectiveMode ?? s.mode;
-
-            if (sidebarCollapsed) {
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => void selectSession(s.id, effectiveMode)}
-                  title={`${title} • ${effectiveMode.toUpperCase()}`}
-                  style={{
-                    width: "100%",
-                    borderRadius: 14,
-                    border: active ? "1px solid rgba(255,255,255,0.32)" : "1px solid rgba(255,255,255,0.18)",
-                    background: active ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
-                    color: "#fff",
-                    cursor: "pointer",
-                    padding: 10,
-                    display: "grid",
-                    placeItems: "center",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 14,
-                      border: "1px solid rgba(255,255,255,0.18)",
-                      background: "rgba(255,255,255,0.08)",
-                      display: "grid",
-                      placeItems: "center",
-                      fontWeight: 950,
-                      letterSpacing: 0.4,
-                      fontSize: 12,
-                    }}
-                  >
-                    {sessionGlyph(title)}
-                  </div>
-                </button>
-              );
-            }
-
-            return (
-              <div
-                key={s.id}
-                style={{
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
-                  overflow: "hidden",
-                }}
-              >
-                <button
-                  onClick={() => void selectSession(s.id, effectiveMode)}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: 10,
-                    border: "none",
-                    background: "transparent",
-                    color: "#fff",
-                    cursor: "pointer",
-                  }}
-                  title={s.id}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                    <div
-                      style={{
-                        fontWeight: 900,
-                        fontSize: 12,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        maxWidth: 220,
-                      }}
-                    >
-                      {title}
-                    </div>
-
-                    <ModeBadge mode={effectiveMode} compact />
-                  </div>
-
-                  <div style={{ fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.35 }}>{preview}</div>
-                </button>
-
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    padding: "8px 10px",
-                    borderTop: "1px solid rgba(255,255,255,0.12)",
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  {renamingId === s.id ? (
-                    <>
-                      <input
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        placeholder="New title…"
-                        style={{
-                          flex: 1,
-                          padding: "6px 8px",
-                          borderRadius: 10,
-                          border: "1px solid rgba(255,255,255,0.22)",
-                          background: "rgba(255,255,255,0.08)",
-                          color: "#fff",
-                          outline: "none",
-                          fontSize: 12,
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void renameSession(s.id, renameValue);
-                          if (e.key === "Escape") {
-                            setRenamingId(null);
-                            setRenameValue("");
-                          }
-                        }}
-                      />
-
-                      <button
-                        onClick={() => void renameSession(s.id, renameValue)}
-                        disabled={renameSaving}
-                        style={{
-                          padding: "6px 10px",
-                          borderRadius: 10,
-                          border: "1px solid rgba(255,255,255,0.22)",
-                          background: "rgba(255,255,255,0.14)",
-                          color: "#fff",
-                          fontWeight: 900,
-                          cursor: renameSaving ? "not-allowed" : "pointer",
-                          opacity: renameSaving ? 0.6 : 1,
-                          fontSize: 12,
-                        }}
-                      >
-                        {renameSaving ? "Saving…" : "Save"}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRenamingId(s.id);
-                          setRenameValue(s.title ?? "New chat");
-                        }}
-                        style={{
-                          padding: "6px 10px",
-                          borderRadius: 10,
-                          border: "1px solid rgba(255,255,255,0.22)",
-                          background: "rgba(255,255,255,0.06)",
-                          color: "#fff",
-                          fontWeight: 900,
-                          cursor: "pointer",
-                          fontSize: 12,
-                        }}
-                      >
-                        Rename
-                      </button>
-
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void deleteSession(s.id);
-                        }}
-                        disabled={deleteBusy}
-                        style={{
-                          padding: "6px 10px",
-                          borderRadius: 10,
-                          border: "1px solid rgba(255,255,255,0.22)",
-                          background: "rgba(255,255,255,0.06)",
-                          color: "#fff",
-                          fontWeight: 900,
-                          cursor: deleteBusy ? "not-allowed" : "pointer",
-                          opacity: deleteBusy ? 0.6 : 1,
-                          fontSize: 12,
-                        }}
-                        title="Delete session"
-                      >
-                        {deletingId === s.id ? "Deleting…" : "Delete"}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-
-          {sessions.length === 0 && !sidebarCollapsed && (
-            <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, lineHeight: 1.45 }}>
-              No sessions yet. Send your first message to create one.
-            </div>
-          )}
-
-          {sessionsCursor && (
-            <button
-              onClick={() => void loadSessions(false)}
-              disabled={sessionsLoading}
-              title="Load more sessions"
-              style={{
-                padding: sidebarCollapsed ? "10px 10px" : "10px 12px",
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.18)",
-                background: "rgba(255,255,255,0.06)",
-                color: "#fff",
-                fontWeight: 950,
-                cursor: sessionsLoading ? "not-allowed" : "pointer",
-                opacity: sessionsLoading ? 0.6 : 1,
-                width: sidebarCollapsed ? "100%" : "auto",
-              }}
-            >
-              {sessionsLoading ? (sidebarCollapsed ? "…" : "Loading…") : sidebarCollapsed ? "↓" : "Load more"}
-            </button>
-          )}
-        </div>
-      </aside>
+        onRenameValueChangeAction={(v) => setRenameValue(v)}
+        onSaveRenameAction={(id, v) => void renameSession(id, v)}
+        onCancelRenameAction={() => {
+          setRenamingId(null);
+          setRenameValue("");
+        }}
+        onDeleteSessionAction={(id) => void deleteSession(id)}
+      />
 
       <main style={{ ...mainStyle, flex: 1, overflow: "auto" }}>
         {/* Header row */}
@@ -1257,7 +1022,9 @@ Acceptance criteria:
             <h1 style={{ fontSize: 20, fontWeight: 900, margin: 0, lineHeight: 1.15 }}>
               AI-Assisted Quality Review & Coaching
             </h1>
-            <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Coach · Review · Cases (mode is session-locked)</div>
+            <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+              Coach · Review · Cases (mode is session-locked)
+            </div>
           </div>
 
           <div style={{ flex: "0 0 auto" }}>
@@ -1308,7 +1075,9 @@ Acceptance criteria:
             <ModeBadge mode={mode} />
             {rateChipText && <Chip>{rateChipText}</Chip>}
             {lastRequestId && <Chip>rid: {lastRequestId.slice(0, 8)}…</Chip>}
-            {lastPending && !isSending && <HeaderButton onClickAction={() => void send({ replay: true })}>Retry</HeaderButton>}
+            {lastPending && !isSending && (
+              <HeaderButton onClickAction={() => void send({ replay: true })}>Retry</HeaderButton>
+            )}
           </Group>
 
           <Group>
@@ -1395,7 +1164,9 @@ Acceptance criteria:
           )}
 
           {activeSessionId ? (
-            <div style={{ fontSize: 12, opacity: 0.72 }}>Mode is session-locked. Start a new session to switch modes.</div>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>
+              Mode is session-locked. Start a new session to switch modes.
+            </div>
           ) : null}
         </div>
 
@@ -1466,7 +1237,9 @@ Acceptance criteria:
                   return (
                     <div key={idx} style={{ display: "grid", gap: 10 }}>
                       <ReviewCard review={it.review} />
-                      {it.requestId && <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>}
+                      {it.requestId && (
+                        <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
+                      )}
                     </div>
                   );
                 }
@@ -1475,7 +1248,9 @@ Acceptance criteria:
                   return (
                     <div key={idx} style={{ display: "grid", gap: 10 }}>
                       <CasesTextCard text={it.text} />
-                      {it.requestId && <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>}
+                      {it.requestId && (
+                        <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
+                      )}
                     </div>
                   );
                 }
@@ -1484,7 +1259,9 @@ Acceptance criteria:
                   return (
                     <div key={idx} style={{ display: "grid", gap: 10 }}>
                       <CasesLegacyCard cases={it.cases} />
-                      {it.requestId && <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>}
+                      {it.requestId && (
+                        <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
+                      )}
                     </div>
                   );
                 }
@@ -1518,10 +1295,8 @@ Acceptance criteria:
         {/* Guided suggestions block (always below chat, above input) */}
         {mode === "coach" && activeSessionMode === "coach" && latestCoachSuggestions && (
           <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-start" }}>
-            {/* ✅ FIX (M7): use extracted component instead of inline SuggestedReplies */}
             <GuidedSuggestions
               suggestions={latestCoachSuggestions}
-              // ✅ FIX: type the callback param (avoid implicit any)
               onUseSelectionsAction={(autofillText: string) => {
                 setInput(autofillText);
                 requestAnimationFrame(() => {
