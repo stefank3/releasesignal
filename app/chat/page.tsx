@@ -28,6 +28,7 @@ import { Chip, Group, HeaderButton, ModeBadge, Toolbar } from "./components/Chat
 
 import ChatMessageList from "./components/ChatMessageList";
 import GuidedSuggestions from "./GuidedSuggestions";
+import ChatInput from "./components/ChatInput";
 
 // ✅ NEW (M7): extracted sidebar component
 import SessionSidebar from "./components/SessionSidebar";
@@ -1203,51 +1204,15 @@ Acceptance criteria:
             />
           </div>
         )}
-
-        {/* Input row */}
-        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              mode === "review"
-                ? "Paste test cases / test plan…"
-                : mode === "cases"
-                  ? "Describe feature + acceptance criteria (or user story)…"
-                  : "Describe the feature / workflow…"
-            }
-            style={{
-              flex: 1,
-              padding: "12px 14px",
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(255,255,255,0.92)",
-              color: "#111",
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void send();
-            }}
-            disabled={isSending}
-          />
-
-          <button
-            onClick={() => void send()}
-            style={{
-              padding: "12px 16px",
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.14)",
-              background: "rgba(0,0,0,0.55)",
-              color: "#fff",
-              fontWeight: 950,
-              opacity: isSending ? 0.7 : 1,
-              cursor: isSending ? "not-allowed" : "pointer",
-            }}
-            disabled={isSending}
-          >
-            {isSending ? "Sending…" : "Send"}
-          </button>
-        </div>
+        {/* Input row (extracted) */}
+        <ChatInput
+          ref={inputRef}
+          mode={mode}
+          value={input}
+          disabled={isSending}
+          onChangeAction={(next: string) => setInput(next)}
+          onSendAction={() => void send()}
+        />
       </main>
     </div>
   );
