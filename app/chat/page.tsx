@@ -26,10 +26,7 @@ import type {
 
 import { Chip, Group, HeaderButton, ModeBadge, Toolbar } from "./components/ChatUI";
 
-import ReviewCard from "./cards/ReviewCard";
-import CasesTextCard from "./cards/CasesTextCard";
-import CasesLegacyCard from "./cards/CasesLegacyCard";
-
+import ChatMessageList from "./components/ChatMessageList";
 import GuidedSuggestions from "./GuidedSuggestions";
 
 // ✅ NEW (M7): extracted sidebar component
@@ -1189,109 +1186,8 @@ Acceptance criteria:
 
         {/* Chat messages */}
         <div ref={chatBoxRef} style={chatBoxStyle}>
-          {items.length === 0 ? (
-            <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 1.55 }}>
-              {mode === "coach"
-                ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately (assumptions included), then ask up to 3 optional clarifications."
-                : mode === "review"
-                  ? "Paste test cases or a test plan. I’ll return a score + breakdown + improvements."
-                  : "Describe the feature + acceptance criteria. I’ll generate STRICT plain-text Jira/Xray-ready test cases (no JSON)."}
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 18 }}>
-              {items.map((it, idx) => {
-                if (it.kind === "text") {
-                  const isUser = it.role === "user";
-                  const textToShow = !isUser && looksLikeJson(it.text) ? tryFormatCoachJson(it.text) ?? it.text : it.text;
-
-                  return (
-                    <div key={idx} style={{ display: "grid", gap: 10 }}>
-                      <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
-                        <div
-                          style={{
-                            maxWidth: "78%",
-                            border: isUser ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(255,255,255,0.10)",
-                            borderRadius: 16,
-                            padding: 16,
-                            background: isUser ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.92)",
-                            color: isUser ? "#fff" : "#111",
-                            whiteSpace: "pre-wrap",
-                            fontSize: 13,
-                            lineHeight: 1.55,
-                            boxShadow: isUser ? "none" : "0 6px 22px rgba(0,0,0,0.08)",
-                          }}
-                        >
-                          {textToShow}
-                          {it.requestId && (
-                            <div style={{ marginTop: 10, fontSize: 10, opacity: 0.55 }}>
-                              requestId: {it.requestId.slice(0, 8)}…
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-
-                if (it.kind === "review") {
-                  return (
-                    <div key={idx} style={{ display: "grid", gap: 10 }}>
-                      <ReviewCard review={it.review} />
-                      {it.requestId && (
-                        <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
-                      )}
-                    </div>
-                  );
-                }
-
-                if (it.kind === "casesText") {
-                  return (
-                    <div key={idx} style={{ display: "grid", gap: 10 }}>
-                      <CasesTextCard text={it.text} />
-                      {it.requestId && (
-                        <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
-                      )}
-                    </div>
-                  );
-                }
-
-                if (it.kind === "casesLegacy") {
-                  return (
-                    <div key={idx} style={{ display: "grid", gap: 10 }}>
-                      <CasesLegacyCard cases={it.cases} />
-                      {it.requestId && (
-                        <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
-                      )}
-                    </div>
-                  );
-                }
-
-                return (
-                  <div
-                    key={idx}
-                    style={{
-                      border: "1px solid #f0b",
-                      borderRadius: 16,
-                      padding: 16,
-                      background: "rgba(255,255,255,0.92)",
-                      color: "#111",
-                      boxShadow: "0 6px 22px rgba(0,0,0,0.08)",
-                    }}
-                  >
-                    <div style={{ fontWeight: 950, marginBottom: 10 }}>{it.title}</div>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.45 }}>{it.details}</pre>
-                    {it.requestId && (
-                      <div style={{ marginTop: 10, fontSize: 11, opacity: 0.75, fontWeight: 800 }}>
-                        requestId: <span style={{ fontFamily: "monospace" }}>{it.requestId}</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <ChatMessageList items={items} mode={mode} />
         </div>
-
         {/* Guided suggestions block (always below chat, above input) */}
         {mode === "coach" && activeSessionMode === "coach" && latestCoachSuggestions && (
           <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-start" }}>
