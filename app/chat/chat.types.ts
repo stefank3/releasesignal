@@ -175,6 +175,10 @@ export type SessionListItem = {
   createdAt: string;
   lastActivityAt?: string;
   lastMessage: null | { role: string; content: string; createdAt: string };
+
+  // CHANGE (M7.7): lightweight pin metadata for sidebar badge
+  hasPinnedRequirement?: boolean;
+  artifactUpdatedAt?: string | null;
 };
 
 export type HistoryMessage = {

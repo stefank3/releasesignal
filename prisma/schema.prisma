@@ -8,7 +8,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // NOTE: you likely have `url = env("DATABASE_URL")` in your real file.
+
+  // CHANGE: Prisma needs a URL to run `prisma generate` / migrations.
+  // If you have a different env var name in your real repo, keep that instead.
+  url = env("DATABASE_URL")
 }
 
 model Organization {
@@ -77,7 +80,7 @@ model CreditLedger {
   @@index([walletId, createdAt])
   @@index([requestId])
 
-  // IDP: prevent duplicate ledger rows for the same operation
+  // NOTE: Postgres allows multiple NULLs, so this only enforces uniqueness when requestId is set.
   @@unique([walletId, reason, requestId])
 }
 
@@ -92,10 +95,16 @@ model ChatSession {
   updatedAt       DateTime @updatedAt
 
   // ==============================
-  // CHANGE (M7.7): Session Artifact fields (Pinned requirement)
+  // Session Artifact (M7)
   // ==============================
-  artifactJson     Json?     // Stores SessionArtifact (e.g., { refinedRequirement: {...} })
-  artifactUpdatedAt DateTime? // When artifactJson last changed (NOT tied to updatedAt)
+  // Stores the SessionArtifact JSON contract for the session (e.g., refined requirement).
+  // NOTE: Prisma Json is backed by Postgres JSONB under the hood.
+  artifactJson      Json?
+
+  // App-managed timestamp:
+  // - set ONLY when artifactJson changes
+  // - do NOT rely on updatedAt (updatedAt changes for ANY session update)
+  artifactUpdatedAt DateTime?
   // ==============================
 
   messages ChatMessage[]
@@ -122,7 +131,6 @@ model ChatMessage {
 
   // CURSOR: matches where { auth0Sub, sessionId } and ORDER BY createdAt DESC, id DESC
   @@index([auth0Sub, sessionId, createdAt, id])
-
   @@index([requestId])
 
   // IDP: prevent duplicate messages for the same request within a session

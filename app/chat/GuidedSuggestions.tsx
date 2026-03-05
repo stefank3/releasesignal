@@ -116,12 +116,12 @@ export default function GuidedSuggestions({
     <div
       style={{
         marginTop: 10,
-        border: "1px solid rgba(0,0,0,0.10)",
+        border: "1px solid rgba(255,255,255,0.12)", // CHANGE: dark-friendly border
         borderRadius: 16,
         padding: 12,
-        background: "rgba(255,255,255,0.96)",
-        color: "#111",
-        boxShadow: "0 6px 18px rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.06)", // CHANGE: dark-friendly surface
+        color: "#fff", // CHANGE: dark-friendly text
+        boxShadow: "none", // CHANGE: consistent with chat panel
         maxWidth: "78%",
       }}
     >
@@ -138,9 +138,10 @@ export default function GuidedSuggestions({
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <div style={{ fontSize: 12, fontWeight: 950 }}>Guided strategy setup</div>
-          <div style={{ fontSize: 11, color: "#555" }}>
-            Step {step + 1} of {stepsCount + 1}: answer a few quick questions, then add scope & success criteria in the
-            input box.
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.70)" }}>
+            {/* CHANGE: remove misleading +1; you only have stepsCount steps */}
+            Step {step + 1} of {stepsCount}: answer a few quick questions, then add scope & success criteria in the input
+            box.
           </div>
         </div>
 
@@ -150,9 +151,9 @@ export default function GuidedSuggestions({
           style={{
             padding: "7px 10px",
             borderRadius: 12,
-            border: "1px solid rgba(0,0,0,0.12)",
-            background: hasAnySelection ? "#111" : "rgba(0,0,0,0.12)",
-            color: hasAnySelection ? "#fff" : "rgba(0,0,0,0.45)",
+            border: "1px solid rgba(255,255,255,0.18)",
+            background: hasAnySelection ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
+            color: hasAnySelection ? "#fff" : "rgba(255,255,255,0.55)",
             fontWeight: 950,
             cursor: hasAnySelection ? "pointer" : "not-allowed",
             whiteSpace: "nowrap",
@@ -175,9 +176,9 @@ export default function GuidedSuggestions({
       >
         {currentGroup && (
           <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(255,255,255,0.86)" }}>
               {LABEL_TO_QUESTION[currentGroup.label] ?? currentGroup.label}{" "}
-              <span style={{ fontWeight: 800, color: "#666" }}>
+              <span style={{ fontWeight: 800, color: "rgba(255,255,255,0.60)" }}>
                 ({currentGroup.type === "single" ? "pick 1" : "pick any"})
               </span>
             </div>
@@ -192,9 +193,9 @@ export default function GuidedSuggestions({
                     style={{
                       padding: "7px 10px",
                       borderRadius: 999,
-                      border: picked ? "1px solid #111" : "1px solid rgba(0,0,0,0.12)",
-                      background: picked ? "#111" : "rgba(0,0,0,0.04)",
-                      color: picked ? "#fff" : "#111",
+                      border: picked ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.18)",
+                      background: picked ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)",
+                      color: "#fff",
                       fontSize: 12,
                       fontWeight: 900,
                       cursor: "pointer",
@@ -215,10 +216,10 @@ export default function GuidedSuggestions({
               marginTop: 6,
               padding: "8px 10px",
               borderRadius: 10,
-              border: "1px dashed rgba(0,0,0,0.18)",
-              background: "rgba(0,0,0,0.02)",
+              border: "1px dashed rgba(255,255,255,0.20)",
+              background: "rgba(0,0,0,0.18)",
               fontSize: 11,
-              color: "#444",
+              color: "rgba(255,255,255,0.78)",
             }}
           >
             In the input box below, please describe:
@@ -249,9 +250,9 @@ export default function GuidedSuggestions({
               style={{
                 padding: "6px 10px",
                 borderRadius: 999,
-                border: "1px solid rgba(0,0,0,0.14)",
-                background: "rgba(0,0,0,0.03)",
-                color: "#111",
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.06)",
+                color: "#fff",
                 fontSize: 12,
                 fontWeight: 900,
                 cursor: "pointer",
@@ -270,9 +271,9 @@ export default function GuidedSuggestions({
               style={{
                 padding: "6px 10px",
                 borderRadius: 999,
-                border: "1px solid rgba(0,0,0,0.14)",
-                background: currentHasSelection ? "#111" : "rgba(0,0,0,0.10)",
-                color: currentHasSelection ? "#fff" : "rgba(0,0,0,0.55)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: currentHasSelection ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
+                color: currentHasSelection ? "#fff" : "rgba(255,255,255,0.55)",
                 fontSize: 12,
                 fontWeight: 900,
                 cursor: currentHasSelection ? "pointer" : "not-allowed",
@@ -289,9 +290,9 @@ export default function GuidedSuggestions({
               style={{
                 padding: "6px 10px",
                 borderRadius: 999,
-                border: "1px solid rgba(0,0,0,0.18)",
-                background: hasAnySelection ? "#111" : "rgba(0,0,0,0.10)",
-                color: hasAnySelection ? "#fff" : "rgba(0,0,0,0.55)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: hasAnySelection ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
+                color: hasAnySelection ? "#fff" : "rgba(255,255,255,0.55)",
                 fontSize: 12,
                 fontWeight: 900,
                 cursor: hasAnySelection ? "pointer" : "not-allowed",

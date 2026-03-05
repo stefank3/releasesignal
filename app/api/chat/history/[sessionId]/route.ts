@@ -27,6 +27,13 @@ function normalizeMode(m: unknown): Mode {
   return m === "review" || m === "cases" ? m : "coach";
 }
 
+// CHANGE (M7.7): normalize artifact JSON output to SessionArtifact|null (defensive)
+function readArtifact(v: unknown): Record<string, unknown> | null {
+  if (!v) return null;
+  if (typeof v !== "object") return null;
+  return v as Record<string, unknown>;
+}
+
 /**
  * Heuristic: detect cases plain-text output in stored assistant content.
  *
@@ -69,7 +76,10 @@ function computeEffectiveMode(args: {
   persistedMode: Mode;
   lastMessage: null | { role: string; content: string };
 }): Mode {
+  // ✅ FIX: persisted "review" and persisted "cases" must remain stable.
+  // Otherwise, a short/non-structured last assistant message can flip the UI mode.
   if (args.persistedMode === "review") return "review";
+  if (args.persistedMode === "cases") return "cases";
 
   const last = args.lastMessage;
   if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) return "cases";
@@ -194,8 +204,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     effectiveMode,
 
     // CHANGE (M7.7): surface artifact for the pinned requirement card.
-    // NOTE: we return it as `artifact` (not artifactJson) to keep API stable even if DB field changes later.
-    artifact: session.artifactJson ?? null,
+    // NOTE: return it as `artifact` (not artifactJson) to keep API stable even if DB field changes later.
+    artifact: readArtifact(session.artifactJson),
     artifactUpdatedAt: session.artifactUpdatedAt ? session.artifactUpdatedAt.toISOString() : null,
 
     items,

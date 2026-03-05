@@ -6,6 +6,14 @@ import { normalizePersistedMode } from "./chatTypes";
 import { sessionModeMismatchResponse } from "./http";
 import type { SessionArtifact } from "./artifact";
 
+// CHANGE (M7.7): small helper to keep artifact hydration consistent + explicit.
+// Prisma will return `null` when JSON is DbNull, but we normalize here for clarity.
+function readArtifact(v: unknown): SessionArtifact | null {
+  if (!v) return null;
+  if (typeof v !== "object") return null;
+  return v as SessionArtifact;
+}
+
 export async function loadOrCreateSession(args: {
   auth0Sub: string;
   requestId: string;
@@ -38,18 +46,24 @@ export async function loadOrCreateSession(args: {
 
     if (!existing) {
       sessionId = undefined;
-    } else if (existing.mode && normalizePersistedMode(existing.mode) !== clientMode) {
-      return {
-        ok: false,
-        response: sessionModeMismatchResponse({
-          requestId,
-          rateMeta,
-          sessionMode: existing.mode,
-          requestedMode: clientMode,
-        }),
-      };
     } else {
-      sessionArtifact = (existing.artifactJson as SessionArtifact | null) ?? null;
+      // CHANGE: normalize once and use it consistently (comparison + mismatch payload).
+      const persistedMode = existing.mode ? normalizePersistedMode(existing.mode) : null;
+
+      if (persistedMode && persistedMode !== clientMode) {
+        return {
+          ok: false,
+          response: sessionModeMismatchResponse({
+            requestId,
+            rateMeta,
+            // CHANGE: return normalized values so UI messaging is stable.
+            sessionMode: persistedMode,
+            requestedMode: clientMode,
+          }),
+        };
+      }
+
+      sessionArtifact = readArtifact(existing.artifactJson);
       artifactUpdatedAtIso = existing.artifactUpdatedAt ? existing.artifactUpdatedAt.toISOString() : null;
     }
   }
@@ -72,20 +86,23 @@ export async function loadOrCreateSession(args: {
       select: { id: true, mode: true, artifactJson: true, artifactUpdatedAt: true },
     });
 
-    if (sessionRow.mode && normalizePersistedMode(sessionRow.mode) !== clientMode) {
+    // CHANGE: normalize once; use normalized in mismatch payload too.
+    const persistedMode = sessionRow.mode ? normalizePersistedMode(sessionRow.mode) : null;
+
+    if (persistedMode && persistedMode !== clientMode) {
       return {
         ok: false,
         response: sessionModeMismatchResponse({
           requestId,
           rateMeta,
-          sessionMode: sessionRow.mode,
+          sessionMode: persistedMode,
           requestedMode: clientMode,
         }),
       };
     }
 
     sessionId = sessionRow.id;
-    sessionArtifact = (sessionRow.artifactJson as SessionArtifact | null) ?? null;
+    sessionArtifact = readArtifact(sessionRow.artifactJson);
     artifactUpdatedAtIso = sessionRow.artifactUpdatedAt ? sessionRow.artifactUpdatedAt.toISOString() : null;
   }
 
@@ -98,7 +115,7 @@ export async function refreshArtifact(args: { auth0Sub: string; sessionId: strin
     select: { artifactJson: true, artifactUpdatedAt: true },
   });
 
-  const artifact = (sess?.artifactJson as SessionArtifact | null) ?? args.fallback ?? null;
+  const artifact = readArtifact(sess?.artifactJson) ?? args.fallback ?? null;
   const artifactUpdatedAtIso = sess?.artifactUpdatedAt ? sess.artifactUpdatedAt.toISOString() : null;
 
   return { artifact, artifactUpdatedAtIso };

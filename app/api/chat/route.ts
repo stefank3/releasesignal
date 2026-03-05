@@ -17,7 +17,13 @@ import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
 import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
 import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
-import { normalizeClientMode, type ChatBody, type ClientMode, type ExecutionMode, type RateMeta } from "@/lib/chat/chatTypes";
+import {
+  normalizeClientMode,
+  type ChatBody,
+  type ClientMode,
+  type ExecutionMode,
+  type RateMeta,
+} from "@/lib/chat/chatTypes";
 import { responseHeaders } from "@/lib/chat/http";
 import { extractJsonObject } from "@/lib/chat/json";
 import { isWeakInput } from "@/lib/chat/inputQuality";
@@ -32,10 +38,18 @@ import {
   prismaJsonValue,
 } from "@/lib/chat/artifact";
 
-import { type CoachSuggestions, buildCoachSuggestionsFromCoach, buildFallbackCoachSuggestions } from "@/lib/chat/suggestions";
+import {
+  type CoachSuggestions,
+  buildCoachSuggestionsFromCoach,
+  buildFallbackCoachSuggestions,
+} from "@/lib/chat/suggestions";
 import { repairJsonOnce } from "@/lib/chat/repair";
 import { loadOrCreateSession, refreshArtifact } from "@/lib/chat/sessionStore";
-import { persistUserMessageIdempotent, persistAssistantWithBillingTx, InsufficientCreditsError } from "@/lib/chat/persist";
+import {
+  persistUserMessageIdempotent,
+  persistAssistantWithBillingTx,
+  InsufficientCreditsError,
+} from "@/lib/chat/persist";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +80,28 @@ function coachToText(coach: CoachResult): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * CHANGE (M7): Do not inject empty artifact context.
+ * We only consider the artifact "meaningful" if it has at least one non-empty field.
+ */
+function hasMeaningfulRefinedRequirement(artifact: SessionArtifact | null): boolean {
+  const rr = artifact?.refinedRequirement;
+  if (!rr) return false;
+
+  const hasText = (v?: string) => typeof v === "string" && v.trim().length > 0;
+  const hasList = (v?: string[]) => Array.isArray(v) && v.some((x) => String(x ?? "").trim().length > 0);
+
+  return (
+    hasText(rr.objective) ||
+    hasText(rr.context) ||
+    hasList(rr.inScope) ||
+    hasList(rr.outOfScope) ||
+    hasList(rr.integrations) ||
+    hasList(rr.riskFocus) ||
+    hasList(rr.acceptanceCriteria)
+  );
 }
 
 export async function POST(req: Request) {
@@ -231,7 +267,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 6) Create/reuse session + hydrate artifact (signature must match your lib/chat/sessionStore.ts)
+    // 6) Create/reuse session + hydrate artifact
     const sessionState = await loadOrCreateSession({
       auth0Sub,
       requestId,
@@ -261,7 +297,7 @@ export async function POST(req: Request) {
       meta: { messageChars: message.length, weakInput, clientMode, guidedAnswer, hasArtifact: !!sessionArtifact },
     });
 
-    // 7) Replay (serve stored assistant message if exists)
+    // 7) Replay
     const existingAssistant = await prisma.chatMessage.findFirst({
       where: { sessionId, requestId, role: "assistant", auth0Sub },
       select: { content: true, tokensIn: true, tokensOut: true },
@@ -274,8 +310,9 @@ export async function POST(req: Request) {
         fallback: sessionArtifact,
       });
 
-        sessionArtifact = refreshed.artifact ?? sessionArtifact ?? null;
-        artifactUpdatedAtIso = refreshed.artifactUpdatedAtIso ?? artifactUpdatedAtIso ?? null;
+      // CHANGE: fixed indentation/style (your pasted block was misaligned)
+      sessionArtifact = refreshed.artifact ?? sessionArtifact ?? null;
+      artifactUpdatedAtIso = refreshed.artifactUpdatedAtIso ?? artifactUpdatedAtIso ?? null;
 
       await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 200, latencyMs: Date.now() - startTime });
 
@@ -352,7 +389,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 8) Persist user message (signature in your error wants "content")
+    // 8) Persist user message
     await persistUserMessageIdempotent({
       sessionId,
       auth0Sub,
@@ -385,7 +422,10 @@ export async function POST(req: Request) {
     const systemPrompt = wantCases ? CASES_SYSTEM_PROMPT : QA_SYSTEM_PROMPT;
 
     const modeInstruction = wantCases
-      ? [`INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`, "Generate the test cases for the user's feature. Follow the OUTPUT CONTRACT exactly."].join("\n")
+      ? [
+          `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
+          "Generate the test cases for the user's feature. Follow the OUTPUT CONTRACT exactly.",
+        ].join("\n")
       : executionMode === "review"
         ? [
             "MODE: REVIEW & SCORING",
@@ -446,7 +486,16 @@ export async function POST(req: Request) {
             "- optionalClarifications: 0-3 items ONLY, and ONLY for more detailed tests.",
           ].join("\n");
 
-    const artifactContext = sessionArtifact ? artifactToContextText(sessionArtifact) : null;
+    /**
+     * CHANGE (M7): Artifact injection rules
+     * - Cases: ALWAYS include pinned artifact (if meaningful) to align the 8–12 tests.
+     * - Coach: include only when it helps (guided answer or weak input), to avoid over-biasing normal coach runs.
+     */
+    const hasArtifact = hasMeaningfulRefinedRequirement(sessionArtifact);
+    const includeArtifactContext =
+      (wantCases && hasArtifact) || (!wantCases && executionMode === "coach" && hasArtifact && (guidedAnswer || weakInput));
+
+    const artifactContext = includeArtifactContext && sessionArtifact ? artifactToContextText(sessionArtifact) : null;
 
     const messagesForModel: { role: "system" | "user"; content: string }[] = [
       { role: "system", content: systemPrompt },
@@ -556,7 +605,7 @@ export async function POST(req: Request) {
     const assistantContentToStore =
       executionMode === "review" ? reviewStoredJson ?? rawReply : replyTextForUser ?? "No reply returned";
 
-    // 13) Billing + assistant persistence (your helper returns a number)
+    // 13) Billing + assistant persistence
     let creditsRemaining: number | null = null;
     try {
       creditsRemaining = await persistAssistantWithBillingTx({

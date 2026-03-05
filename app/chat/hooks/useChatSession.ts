@@ -263,7 +263,6 @@ export type UseChatSessionReturn = {
 
   modeLockMsg: { sessionMode: Mode; requestedMode: Mode } | null;
 
-  // ✅ FIX (M7): expose lastPending so page.tsx can render Retry
   lastPending: LastPending | null;
 
   sessions: SessionListItem[];
@@ -329,7 +328,6 @@ export function useChatSession(): UseChatSessionReturn {
 
   const [modeLockMsg, setModeLockMsg] = useState<{ sessionMode: Mode; requestedMode: Mode } | null>(null);
 
-  // ✅ FIX (M7): this is the state page.tsx expects for Retry
   const [lastPending, setLastPending] = useState<LastPending | null>(null);
 
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
@@ -345,7 +343,7 @@ export function useChatSession(): UseChatSessionReturn {
   const [messagesLoading, setMessagesLoading] = useState(false);
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState<string>("");
+  const [renameValue, setRenameValue] = useState<string>(""); // (default empty)
   const [renameSaving, setRenameSaving] = useState(false);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -721,12 +719,14 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.rate) setRate(data.rate);
 
-          // CHANGE (M7.7): hydrate artifact from /api/chat response (success or replay)
-          const artifactPayload = readArtifactFromResponse(data);
-          if (artifactPayload) {
-            setSessionArtifact(artifactPayload.artifact);
-            setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
-          }         
+      // CHANGE (M7.7): hydrate artifact from /api/chat response (success or replay)
+      // (This supports StrategyPanel: pinned card must update immediately after guided answers)
+      const artifactPayload = readArtifactFromResponse(data);
+      if (artifactPayload) {
+        setSessionArtifact(artifactPayload.artifact);
+        setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
+      }
+
       if (status === 409 && data?.error === "SESSION_MODE_MISMATCH" && data.sessionMode && data.requestedMode) {
         setModeLockMsg({ sessionMode: data.sessionMode, requestedMode: data.requestedMode });
         setItems((prev) => [
@@ -802,24 +802,25 @@ export function useChatSession(): UseChatSessionReturn {
       }
 
       // Default “text” reply (coach mode can include suggestions)
-     const rawValue =
-          isRecord(data) && typeof data["raw"] === "string"
-            ? (data["raw"] as string)
-            : undefined;
+      const rawValue =
+        isRecord(data) && typeof data["raw"] === "string"
+          ? (data["raw"] as string)
+          : undefined;
+
       const textToShow = !data?.reply && typeof rawValue === "string" ? rawValue : data?.reply ?? "No reply returned";
 
       const finalText =
         effectiveMode === "coach" && looksLikeJson(textToShow) ? tryFormatCoachJson(textToShow) ?? textToShow : textToShow;
 
-let suggestions: CoachSuggestions | null = null;
-
-        if (isRecord(data)) {
-          if (data["suggestions"]) {
-            suggestions = data["suggestions"] as CoachSuggestions;
-          } else if (isRecord(data["coach"]) && data["coach"]["suggestions"]) {
-            suggestions = data["coach"]["suggestions"] as CoachSuggestions;
-          }
+      let suggestions: CoachSuggestions | null = null;
+      if (isRecord(data)) {
+        if (data["suggestions"]) {
+          suggestions = data["suggestions"] as CoachSuggestions;
+        } else if (isRecord(data["coach"]) && (data["coach"] as Record<string, unknown>)["suggestions"]) {
+          suggestions = (data["coach"] as Record<string, unknown>)["suggestions"] as CoachSuggestions;
         }
+      }
+
       setItems((prev) => [
         ...prev,
         {
@@ -843,22 +844,22 @@ let suggestions: CoachSuggestions | null = null;
     }
   };
 
-      function hasSuggestions(v: unknown): v is { suggestions: CoachSuggestions } {
-        if (!v || typeof v !== "object") return false;
-        return "suggestions" in v && !!(v as { suggestions?: unknown }).suggestions;
+  // ✅ CHANGE (BUGFIX): these MUST be defined at hook scope, not inside send()
+  function hasSuggestions(v: unknown): v is { suggestions: CoachSuggestions } {
+    if (!v || typeof v !== "object") return false;
+    return "suggestions" in v && !!(v as { suggestions?: unknown }).suggestions;
+  }
+
+  // ✅ Derived: grab suggestions from the latest assistant message (coach mode only)
+  const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.kind === "text" && it.role === "bot" && hasSuggestions(it)) {
+        return it.suggestions;
       }
-
-      // ✅ Derived: grab suggestions from the latest assistant message (coach mode only)
-      const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
-        for (let i = items.length - 1; i >= 0; i--) {
-          const it = items[i];
-
-          if (it.kind === "text" && it.role === "bot" && hasSuggestions(it)) {
-            return it.suggestions;
-          }
-        }
-        return null;
-      }, [items]);
+    }
+    return null;
+  }, [items]);
 
   return {
     mode,

@@ -98,26 +98,38 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
   return (
     <div style={{ display: "grid", gap: 18 }}>
       {items.map((it, idx) => {
+        // CHANGE: stable-ish key prevents flicker during repair/reorder.
+        // Prefer requestId; fallback keeps deterministic uniqueness.
+        const key = it.requestId ? `${it.kind}-${it.requestId}` : `${it.kind}-${idx}`;
+
         if (it.kind === "text") {
           const isUser = it.role === "user";
+
+          // CHANGE: Only apply coach JSON prettifier in coach mode.
+          // Prevents accidental JSON prettifying in other modes (review/cases/errors).
           const textToShow =
-            !isUser && looksLikeJson(it.text) ? tryFormatCoachJson(it.text) ?? it.text : it.text;
+            !isUser && mode === "coach" && looksLikeJson(it.text)
+              ? tryFormatCoachJson(it.text) ?? it.text
+              : it.text;
 
           return (
-            <div key={idx} style={{ display: "grid", gap: 10 }}>
+            <div key={key} style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
                 <div
                   style={{
                     maxWidth: "78%",
-                    border: isUser ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(255,255,255,0.10)",
+                    border: "1px solid rgba(255,255,255,0.12)",
                     borderRadius: 16,
                     padding: 16,
-                    background: isUser ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.92)",
-                    color: isUser ? "#fff" : "#111",
+
+                    // CHANGE: dark-friendly bubble styling for both user + assistant
+                    background: isUser ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.06)",
+                    color: "#fff",
+
                     whiteSpace: "pre-wrap",
                     fontSize: 13,
                     lineHeight: 1.55,
-                    boxShadow: isUser ? "none" : "0 6px 22px rgba(0,0,0,0.08)",
+                    boxShadow: "none",
                   }}
                 >
                   {textToShow}
@@ -134,7 +146,7 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
 
         if (it.kind === "review") {
           return (
-            <div key={idx} style={{ display: "grid", gap: 10 }}>
+            <div key={key} style={{ display: "grid", gap: 10 }}>
               <ReviewCard review={it.review as ReviewResult} />
               {it.requestId && (
                 <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
@@ -145,7 +157,7 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
 
         if (it.kind === "casesText") {
           return (
-            <div key={idx} style={{ display: "grid", gap: 10 }}>
+            <div key={key} style={{ display: "grid", gap: 10 }}>
               <CasesTextCard text={it.text} />
               {it.requestId && (
                 <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
@@ -156,7 +168,7 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
 
         if (it.kind === "casesLegacy") {
           return (
-            <div key={idx} style={{ display: "grid", gap: 10 }}>
+            <div key={key} style={{ display: "grid", gap: 10 }}>
               <CasesLegacyCard cases={it.cases as CasesResult} />
               {it.requestId && (
                 <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
@@ -168,14 +180,15 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
         // it.kind === "error"
         return (
           <div
-            key={idx}
+            key={key}
             style={{
-              border: "1px solid #f0b",
+              // CHANGE: dark-friendly error card (consistent with the app)
+              border: "1px solid rgba(255,80,200,0.55)",
               borderRadius: 16,
               padding: 16,
-              background: "rgba(255,255,255,0.92)",
-              color: "#111",
-              boxShadow: "0 6px 22px rgba(0,0,0,0.08)",
+              background: "rgba(255,255,255,0.06)",
+              color: "#fff",
+              boxShadow: "none",
             }}
           >
             <div style={{ fontWeight: 950, marginBottom: 10 }}>{it.title}</div>

@@ -16,6 +16,36 @@ function sessionGlyph(title: string) {
   return (a + b).slice(0, 2);
 }
 
+// CHANGE (M7.7): small badge for pinned requirement in sidebar list
+function PinnedBadge({ updatedAt }: { updatedAt?: string | null }) {
+  const ts =
+    typeof updatedAt === "string" && updatedAt
+      ? new Date(updatedAt).toLocaleString()
+      : null;
+
+  return (
+    <span
+      title={ts ? `Pinned requirement updated: ${ts}` : "Pinned requirement exists"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "2px 8px",
+        borderRadius: 999,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(255,255,255,0.06)",
+        color: "#fff",
+        fontSize: 11,
+        fontWeight: 900,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span aria-hidden="true">📌</span>
+      Pinned ✓
+    </span>
+  );
+}
+
 type Props = {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -113,12 +143,15 @@ export default function SessionSidebar({
 
           const effectiveMode = (s.effectiveMode ?? s.mode) as Mode;
 
+          // CHANGE (M7.7): sidebar pin badge depends on list endpoint fields
+          const hasPinned = !!s.hasPinnedRequirement;
+
           if (sidebarCollapsed) {
             return (
               <button
                 key={s.id}
                 onClick={() => onSelectSessionAction(s.id, effectiveMode)}
-                title={`${title} • ${effectiveMode.toUpperCase()}`}
+                title={`${title} • ${effectiveMode.toUpperCase()}${hasPinned ? " • PINNED" : ""}`}
                 style={{
                   width: "100%",
                   borderRadius: 14,
@@ -147,6 +180,9 @@ export default function SessionSidebar({
                 >
                   {sessionGlyph(title)}
                 </div>
+
+                {/* CHANGE (M7.7): tiny pin indicator in collapsed mode */}
+                {hasPinned ? <div style={{ marginTop: 6, fontSize: 10, opacity: 0.9 }}>📌</div> : null}
               </button>
             );
           }
@@ -192,6 +228,18 @@ export default function SessionSidebar({
                 </div>
 
                 <div style={{ fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.35 }}>{preview}</div>
+
+                {/* CHANGE (M7.7): pinned badge row */}
+                {hasPinned ? (
+                  <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <PinnedBadge updatedAt={s.artifactUpdatedAt ?? null} />
+                    {s.artifactUpdatedAt ? (
+                      <span style={{ fontSize: 11, opacity: 0.75 }}>
+                        {new Date(s.artifactUpdatedAt).toLocaleString()}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
               </button>
 
               <div

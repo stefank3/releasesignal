@@ -4,7 +4,7 @@
 
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 function SmallButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
@@ -13,9 +13,9 @@ function SmallButton({ children, onClick }: { children: React.ReactNode; onClick
       style={{
         padding: "6px 10px",
         borderRadius: 10,
-        border: "1px solid #ddd",
-        background: "#fff",
-        color: "#111",
+        border: "1px solid rgba(255,255,255,0.18)", // CHANGE: dark-friendly border
+        background: "rgba(255,255,255,0.06)", // CHANGE: dark-friendly surface
+        color: "#fff", // CHANGE: dark-friendly text
         fontWeight: 900,
         cursor: "pointer",
       }}
@@ -34,11 +34,55 @@ export default function CasesTextCard({ text }: { text: string }) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // NOTE: create a hidden textarea once to support legacy copy fallback safely
+  const legacyCopyEl = useMemo(() => {
+    const el = document.createElement("textarea");
+    el.style.position = "fixed";
+    el.style.left = "-9999px";
+    el.style.top = "0";
+    el.setAttribute("readonly", "true");
+    return el;
+  }, []);
+
+  useEffect(() => {
+    // cleanup (defensive)
+    return () => {
+      try {
+        if (legacyCopyEl.parentNode) legacyCopyEl.parentNode.removeChild(legacyCopyEl);
+      } catch {
+        // ignore
+      }
+    };
+  }, [legacyCopyEl]);
+
   const copyText = async () => {
+    // CHANGE: Clipboard API is best, but fallback improves reliability (non-HTTPS / permissions).
     try {
       await navigator.clipboard.writeText(text);
       setToast("Copied ✓");
+      return;
     } catch {
+      // continue to fallback below
+    }
+
+    try {
+      legacyCopyEl.value = text;
+
+      // Attach only when needed
+      document.body.appendChild(legacyCopyEl);
+      legacyCopyEl.select();
+      legacyCopyEl.setSelectionRange(0, legacyCopyEl.value.length);
+
+      const ok = document.execCommand("copy");
+      document.body.removeChild(legacyCopyEl);
+
+      setToast(ok ? "Copied ✓" : "Copy failed (clipboard blocked)");
+    } catch {
+      try {
+        if (legacyCopyEl.parentNode) legacyCopyEl.parentNode.removeChild(legacyCopyEl);
+      } catch {
+        // ignore
+      }
       setToast("Copy failed (clipboard blocked)");
     }
   };
@@ -46,18 +90,18 @@ export default function CasesTextCard({ text }: { text: string }) {
   return (
     <div
       style={{
-        border: "1px solid #e6e6e6",
+        border: "1px solid rgba(255,255,255,0.12)", // CHANGE: dark-friendly border
         borderRadius: 18,
         padding: 20,
-        background: "#fff",
-        boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
-        color: "#111",
+        background: "rgba(255,255,255,0.05)", // CHANGE: matches chat panel surfaces
+        boxShadow: "0 10px 26px rgba(0,0,0,0.22)", // CHANGE: closer to your dark aesthetic
+        color: "#fff", // CHANGE: dark-friendly text
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ fontSize: 15, fontWeight: 950 }}>Generated Test Cases</div>
-          <div style={{ fontSize: 12, color: "#666" }}>Copy-paste into Jira/Xray</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.72)" }}>Copy-paste into Jira/Xray</div>
         </div>
 
         <div style={{ display: "flex", gap: 8 }}>
@@ -72,9 +116,9 @@ export default function CasesTextCard({ text }: { text: string }) {
             display: "inline-block",
             padding: "6px 10px",
             borderRadius: 999,
-            border: "1px solid #e6e6e6",
-            background: "#fff",
-            color: "#111",
+            border: "1px solid rgba(255,255,255,0.14)", // CHANGE: dark-friendly chip
+            background: "rgba(255,255,255,0.06)",
+            color: "#fff",
             fontSize: 12,
             fontWeight: 800,
           }}
@@ -89,10 +133,11 @@ export default function CasesTextCard({ text }: { text: string }) {
           whiteSpace: "pre-wrap",
           fontSize: 13,
           lineHeight: 1.55,
-          background: "#fafafa",
-          border: "1px solid #f0f0f0",
+          background: "rgba(0,0,0,0.22)", // CHANGE: dark-friendly code surface
+          border: "1px solid rgba(255,255,255,0.10)",
           borderRadius: 16,
           padding: 14,
+          color: "rgba(255,255,255,0.92)",
         }}
       >
         {text}

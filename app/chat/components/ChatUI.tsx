@@ -1,13 +1,16 @@
-// app/chat/components/ChatUi.tsx
+// app/chat/components/ChatUI.tsx
 // M7 Phase 2 (Structural Refactor)
 // CHANGE: extracted small UI primitives from page.tsx (no behavior change).
+//
+// NOTE: File name standardized to ChatUI.tsx (capital UI) to avoid case-sensitivity issues on Vercel/Linux.
 
 "use client";
 
 import React from "react";
 import type { Mode } from "../chat.types";
 
-export function clamp(n: number, min: number, max: number) {
+export function clamp(n: number, min: number, max: number): number {
+  // NOTE: explicit return type helps avoid subtle inference issues in strict builds
   return Math.max(min, Math.min(max, n));
 }
 
@@ -37,7 +40,15 @@ export function Chip({ children }: { children: React.ReactNode }) {
  * ✅ Milestone 6.1:
  * Mode identity must be visually strong and consistent everywhere (sidebar + header).
  */
-export function ModeBadge({ mode, locked, compact }: { mode: Mode; locked?: boolean; compact?: boolean }) {
+export function ModeBadge({
+  mode,
+  locked,
+  compact,
+}: {
+  mode: Mode;
+  locked?: boolean;
+  compact?: boolean;
+}) {
   const meta =
     mode === "coach"
       ? { label: "COACH", bg: "rgba(56,189,248,0.16)", border: "rgba(56,189,248,0.35)" }
@@ -122,7 +133,11 @@ export function Toolbar({ children, right }: { children: React.ReactNode; right?
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0, flex: 1 }}>
         {children}
       </div>
-      {right ? <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>{right}</div> : null}
+      {right ? (
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          {right}
+        </div>
+      ) : null}
     </div>
   );
 }
