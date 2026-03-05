@@ -101,7 +101,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
    */
   const session = await prisma.chatSession.findFirst({
     where: { id: sessionId, auth0Sub: sub },
-    select: { id: true, mode: true },
+
+    // CHANGE (M7.7): include artifactJson so UI can render pinned Refined Requirement.
+    select: { id: true, mode: true, artifactJson: true, artifactUpdatedAt: true },
   });
 
   if (!session) {
@@ -190,6 +192,11 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
     // ✅ M6.1: inferred mode for correct rendering of older mis-labeled sessions
     effectiveMode,
+
+    // CHANGE (M7.7): surface artifact for the pinned requirement card.
+    // NOTE: we return it as `artifact` (not artifactJson) to keep API stable even if DB field changes later.
+    artifact: session.artifactJson ?? null,
+    artifactUpdatedAt: session.artifactUpdatedAt ? session.artifactUpdatedAt.toISOString() : null,
 
     items,
 

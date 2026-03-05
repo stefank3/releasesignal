@@ -7,6 +7,11 @@
 // 1) FIX: Expose `lastPending` in UseChatSessionReturn + return value (unblocks Retry button in page.tsx)
 // 2) FIX: Remove `React.*` namespace types (was not imported) -> use `Dispatch/SetStateAction/MutableRefObject` types
 // 3) IMPROVE: Type-narrow coach suggestions without `any` when possible (still safe if ChatItem union doesn't include suggestions)
+//
+// CHANGE (M7.7):
+// 4) ADD: sessionArtifact + artifactUpdatedAt in state + return type
+// 5) ADD: hydrate artifact from /api/chat response + /api/chat/history/:sessionId response
+// 6) ADD: reset artifact on newChat / startNewSessionInMode
 
 "use client";
 
@@ -24,6 +29,7 @@ import type {
   SessionListItem,
   HistoryMessage,
   CoachSuggestions,
+  SessionArtifact, // CHANGE (M7.7)
 } from "../chat.types";
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
@@ -33,6 +39,25 @@ const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
 export function isNearBottom(el: HTMLDivElement, thresholdPx = 140) {
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
   return distance <= thresholdPx;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function readArtifactFromResponse(
+  data: unknown
+): { artifact: SessionArtifact | null; artifactUpdatedAt: string | null } | null {
+  if (!isRecord(data)) return null;
+
+  // Only hydrate when the server actually included these fields
+  const hasArtifactField = "artifact" in data || "artifactUpdatedAt" in data;
+  if (!hasArtifactField) return null;
+
+  const artifact = (data["artifact"] ?? null) as SessionArtifact | null;
+  const artifactUpdatedAt = typeof data["artifactUpdatedAt"] === "string" ? data["artifactUpdatedAt"] : null;
+
+  return { artifact, artifactUpdatedAt };
 }
 
 /** Minimal markdown safety for list items (Jira/Confluence paste). */
@@ -266,6 +291,10 @@ export type UseChatSessionReturn = {
   setSidebarCollapsed: Dispatch<SetStateAction<boolean>>;
   sidebarWidth: number;
 
+  // CHANGE (M7.7): session artifact
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAt: string | null;
+
   // derived
   latestCoachSuggestions: CoachSuggestions | null;
   modeLabel: (m: Mode) => string;
@@ -328,6 +357,10 @@ export function useChatSession(): UseChatSessionReturn {
   // hydration-safe
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const sidebarWidth = sidebarCollapsed ? 72 : 320;
+
+  // CHANGE (M7.7): artifact state
+  const [sessionArtifact, setSessionArtifact] = useState<SessionArtifact | null>(null);
+  const [artifactUpdatedAt, setArtifactUpdatedAt] = useState<string | null>(null);
 
   // Load sidebar collapse state
   useEffect(() => {
@@ -419,7 +452,17 @@ export function useChatSession(): UseChatSessionReturn {
         hasMore?: boolean;
         sessionMode?: Mode;
         effectiveMode?: Mode;
+
+        // CHANGE (M7.7): artifact hydration from history GET
+        artifact?: SessionArtifact | null;
+        artifactUpdatedAt?: string | null;
       }>(url.toString());
+
+      // CHANGE (M7.7): hydrate artifact on reset (select session)
+      if (reset) {
+        setSessionArtifact(data.artifact ?? null);
+        setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
+      }
 
       if (reset) {
         const serverMode = data.effectiveMode ?? data.sessionMode;
@@ -488,6 +531,10 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
+    // CHANGE (M7.7): artifact will be hydrated by loadSessionMessages(reset=true)
+    setSessionArtifact(null);
+    setArtifactUpdatedAt(null);
+
     await loadSessionMessages(sessionId, true, sessionMode);
   };
 
@@ -511,6 +558,10 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
+    // CHANGE (M7.7): new chat has no pinned artifact until the user clarifies
+    setSessionArtifact(null);
+    setArtifactUpdatedAt(null);
+
     shouldAutoScrollRef.current = true;
   };
 
@@ -530,6 +581,10 @@ export function useChatSession(): UseChatSessionReturn {
     setRateLimitMsg(null);
     setLastRequestId(null);
     setLastPending(null);
+
+    // CHANGE (M7.7)
+    setSessionArtifact(null);
+    setArtifactUpdatedAt(null);
 
     shouldAutoScrollRef.current = true;
   };
@@ -584,6 +639,10 @@ export function useChatSession(): UseChatSessionReturn {
         setRateLimitMsg(null);
         setLastRequestId(null);
         setLastPending(null);
+
+        // CHANGE (M7.7)
+        setSessionArtifact(null);
+        setArtifactUpdatedAt(null);
       }
 
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
@@ -662,6 +721,12 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.rate) setRate(data.rate);
 
+          // CHANGE (M7.7): hydrate artifact from /api/chat response (success or replay)
+          const artifactPayload = readArtifactFromResponse(data);
+          if (artifactPayload) {
+            setSessionArtifact(artifactPayload.artifact);
+            setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
+          }         
       if (status === 409 && data?.error === "SESSION_MODE_MISMATCH" && data.sessionMode && data.requestedMode) {
         setModeLockMsg({ sessionMode: data.sessionMode, requestedMode: data.requestedMode });
         setItems((prev) => [
@@ -706,10 +771,7 @@ export function useChatSession(): UseChatSessionReturn {
       setRateLimitMsg(null);
 
       if (data?.mode === "review" && data?.review) {
-        setItems((prev) => [
-          ...prev,
-          { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId },
-        ]);
+        setItems((prev) => [...prev, { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId }]);
         void loadSessions(true);
         setLastPending(null);
         return;
@@ -717,10 +779,7 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.mode === "cases") {
         const reply = typeof data?.reply === "string" ? data.reply : "";
-        setItems((prev) => [
-          ...prev,
-          { kind: "casesText", role: "bot", text: reply || "No reply returned", requestId: serverRequestId },
-        ]);
+        setItems((prev) => [...prev, { kind: "casesText", role: "bot", text: reply || "No reply returned", requestId: serverRequestId }]);
         void loadSessions(true);
         setLastPending(null);
         return;
@@ -743,14 +802,24 @@ export function useChatSession(): UseChatSessionReturn {
       }
 
       // Default “text” reply (coach mode can include suggestions)
-      const rawValue = typeof (data as any)?.raw === "string" ? (data as any).raw : undefined;
+     const rawValue =
+          isRecord(data) && typeof data["raw"] === "string"
+            ? (data["raw"] as string)
+            : undefined;
       const textToShow = !data?.reply && typeof rawValue === "string" ? rawValue : data?.reply ?? "No reply returned";
 
       const finalText =
         effectiveMode === "coach" && looksLikeJson(textToShow) ? tryFormatCoachJson(textToShow) ?? textToShow : textToShow;
 
-      const suggestions = data?.suggestions ?? (data as any)?.coach?.suggestions;
+let suggestions: CoachSuggestions | null = null;
 
+        if (isRecord(data)) {
+          if (data["suggestions"]) {
+            suggestions = data["suggestions"] as CoachSuggestions;
+          } else if (isRecord(data["coach"]) && data["coach"]["suggestions"]) {
+            suggestions = data["coach"]["suggestions"] as CoachSuggestions;
+          }
+        }
       setItems((prev) => [
         ...prev,
         {
@@ -768,26 +837,28 @@ export function useChatSession(): UseChatSessionReturn {
       const message = e instanceof Error ? e.message : String(e);
 
       setLastRequestId(requestId);
-      setItems((prev) => [
-        ...prev,
-        { kind: "error", role: "bot", title: "Network/Client error", details: message, requestId },
-      ]);
+      setItems((prev) => [...prev, { kind: "error", role: "bot", title: "Network/Client error", details: message, requestId }]);
     } finally {
       setIsSending(false);
     }
   };
 
-  // ✅ Derived: grab suggestions from the latest assistant message (coach mode only)
-  const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
-    for (let i = items.length - 1; i >= 0; i--) {
-      const it = items[i];
-      if (it.kind === "text" && it.role === "bot") {
-        // Works if your ChatItem union already includes `suggestions?: CoachSuggestions`
-        if ("suggestions" in (it as any) && (it as any).suggestions) return (it as any).suggestions as CoachSuggestions;
+      function hasSuggestions(v: unknown): v is { suggestions: CoachSuggestions } {
+        if (!v || typeof v !== "object") return false;
+        return "suggestions" in v && !!(v as { suggestions?: unknown }).suggestions;
       }
-    }
-    return null;
-  }, [items]);
+
+      // ✅ Derived: grab suggestions from the latest assistant message (coach mode only)
+      const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
+        for (let i = items.length - 1; i >= 0; i--) {
+          const it = items[i];
+
+          if (it.kind === "text" && it.role === "bot" && hasSuggestions(it)) {
+            return it.suggestions;
+          }
+        }
+        return null;
+      }, [items]);
 
   return {
     mode,
@@ -807,7 +878,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     modeLockMsg,
 
-    // ✅ FIX (M7): expose for page.tsx Retry button
     lastPending,
 
     sessions,
@@ -834,6 +904,10 @@ export function useChatSession(): UseChatSessionReturn {
     sidebarCollapsed,
     setSidebarCollapsed,
     sidebarWidth,
+
+    // CHANGE (M7.7)
+    sessionArtifact,
+    artifactUpdatedAt,
 
     latestCoachSuggestions,
     modeLabel,

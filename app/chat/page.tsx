@@ -64,10 +64,7 @@ export default function ChatPage() {
       />
 
       <main style={{ ...mainStyle, flex: 1, overflow: "auto" }}>
-        <ChatHeader
-          sidebarCollapsed={chat.sidebarCollapsed}
-          onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)}
-        />
+        <ChatHeader sidebarCollapsed={chat.sidebarCollapsed} onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)} />
 
         <ChatToolbar
           chat={chat}
@@ -76,6 +73,7 @@ export default function ChatPage() {
           }}
         />
 
+        {/* NOTE (M7.7): ChatPanel now also renders pinned artifact when available */}
         <ChatPanel
           chat={chat}
           onAfterSendAction={() => {

@@ -72,6 +72,23 @@ export type CoachSuggestions = {
   template: string;
 };
 
+// ==============================
+// M7.7: Session Artifact (Pinned requirement) types
+// ==============================
+export type RefinedRequirement = {
+  objective?: string;
+  context?: string;
+  inScope?: string[];
+  outOfScope?: string[];
+  integrations?: string[];
+  riskFocus?: string[];
+  acceptanceCriteria?: string[];
+};
+
+export type SessionArtifact = {
+  refinedRequirement?: RefinedRequirement;
+};
+
 /**
  * UI message model:
  * - text: normal user/bot chat messages
@@ -141,6 +158,10 @@ export type ChatApiResponse = {
     suggestions?: CoachSuggestions;
     [k: string]: unknown;
   };
+
+  // CHANGE (M7.7): session artifact returned on every /api/chat response (and replay)
+  artifact?: SessionArtifact | null;
+  artifactUpdatedAt?: string | null;
 };
 
 /**

@@ -1,3 +1,4 @@
+// prisma/schema.prisma
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
@@ -7,12 +8,13 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // NOTE: you likely have `url = env("DATABASE_URL")` in your real file.
 }
 
 model Organization {
-  id        String      @id @default(uuid())
+  id        String        @id @default(uuid())
   name      String
-  createdAt DateTime    @default(now())
+  createdAt DateTime      @default(now())
   members   OrgMember[]
   plans     Subscription[]
   wallets   CreditWallet[]
@@ -80,16 +82,23 @@ model CreditLedger {
 }
 
 model ChatSession {
-  id             String   @id @default(uuid())
-  auth0Sub       String
-  mode           String
-  title          String?
+  id              String   @id @default(uuid())
+  auth0Sub        String
+  mode            String
+  title           String?
   clientSessionId String?   // IDP: client-generated id to prevent duplicate sessions
-  titleUpdatedAt DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  titleUpdatedAt  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  messages       ChatMessage[]
+  // ==============================
+  // CHANGE (M7.7): Session Artifact fields (Pinned requirement)
+  // ==============================
+  artifactJson     Json?     // Stores SessionArtifact (e.g., { refinedRequirement: {...} })
+  artifactUpdatedAt DateTime? // When artifactJson last changed (NOT tied to updatedAt)
+  // ==============================
+
+  messages ChatMessage[]
 
   @@index([auth0Sub, updatedAt, id])
 
@@ -97,7 +106,6 @@ model ChatSession {
   // NOTE: Postgres allows multiple NULLs, so this only enforces uniqueness when clientSessionId is set.
   @@unique([auth0Sub, clientSessionId])
 }
-
 
 model ChatMessage {
   id        String   @id @default(uuid())

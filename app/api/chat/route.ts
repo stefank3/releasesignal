@@ -1,7 +1,6 @@
 // app/api/chat/route.ts
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { Prisma } from "@prisma/client";
 
 import { auth0 } from "@/lib/auth0";
 import { prisma } from "@/lib/prisma";
@@ -14,382 +13,33 @@ import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics";
 
 import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
-import { chargeCreditsTx, InsufficientCreditsError } from "@/lib/billing/chargeCredits";
 
 import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
 import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
+import { normalizeClientMode, type ChatBody, type ClientMode, type ExecutionMode, type RateMeta } from "@/lib/chat/chatTypes";
+import { responseHeaders } from "@/lib/chat/http";
+import { extractJsonObject } from "@/lib/chat/json";
+import { isWeakInput } from "@/lib/chat/inputQuality";
+import { tokensToCredits, estimateCostUsd, maybeConvertUsdToEur } from "@/lib/chat/costs";
+
+import {
+  type SessionArtifact,
+  isGuidedClarificationAnswer,
+  parseGuidedAnswerToRefinedRequirement,
+  mergeArtifact,
+  artifactToContextText,
+  prismaJsonValue,
+} from "@/lib/chat/artifact";
+
+import { type CoachSuggestions, buildCoachSuggestionsFromCoach, buildFallbackCoachSuggestions } from "@/lib/chat/suggestions";
+import { repairJsonOnce } from "@/lib/chat/repair";
+import { loadOrCreateSession, refreshArtifact } from "@/lib/chat/sessionStore";
+import { persistUserMessageIdempotent, persistAssistantWithBillingTx, InsufficientCreditsError } from "@/lib/chat/persist";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * Execution modes (contract + validation behavior).
- * - review: strict ReviewResult JSON
- * - coach: strict CoachResult JSON (rendered to text)
- *
- * WHY: cases is a plain-text contract and does not use JSON repair/validation.
- */
-type ExecutionMode = "coach" | "review";
-
-/**
- * Session UX modes (persisted for cohesion + history rendering).
- * WHY (M6.1): session mode must be stable so users don't mix outputs across one thread.
- */
-type ClientMode = "coach" | "review" | "cases";
-
-type RateMeta = {
-  limit: number;
-  remaining: number;
-  resetSeconds: number;
-};
-
-type ChatBody = {
-  message?: string;
-  mode?: ClientMode;
-  sessionId?: string; // Reuse existing session
-  title?: string; // Optional (new session only)
-  sessionClientId?: string; // IDP: prevents duplicate sessions during creation
-};
-
-function responseHeaders(requestId: string, meta?: RateMeta, retryAfterSec?: number) {
-  const headers: Record<string, string> = { "X-Request-Id": requestId };
-
-  if (meta) {
-    headers["X-RateLimit-Limit"] = String(meta.limit);
-    headers["X-RateLimit-Remaining"] = String(meta.remaining);
-    headers["X-RateLimit-Reset"] = String(meta.resetSeconds);
-  }
-
-  if (retryAfterSec && retryAfterSec > 0) headers["Retry-After"] = String(retryAfterSec);
-
-  return headers;
-}
-
-// 1 credit per 1000 tokens (rounded up)
-function tokensToCredits(totalTokens: number) {
-  if (!Number.isFinite(totalTokens) || totalTokens <= 0) return 0;
-  return Math.max(1, Math.ceil(totalTokens / 1000));
-}
-
-/**
- * WHY (M4):
- * Internal-only cost estimate. Not used for billing, only for logs.
- * EUR conversion only happens if USD_TO_EUR is provided to avoid stale FX values.
- */
-function estimateCostUsd(args: { model: string; promptTokens: number; completionTokens: number }): number | null {
-  if (args.model !== "gpt-4.1-mini") return null;
-
-  const inCostPerToken = 0.4 / 1_000_000;
-  const outCostPerToken = 1.6 / 1_000_000;
-
-  const cost = args.promptTokens * inCostPerToken + args.completionTokens * outCostPerToken;
-  return Number(cost.toFixed(8));
-}
-
-function maybeConvertUsdToEur(costUsd: number): number | null {
-  const raw = process.env.USD_TO_EUR?.trim();
-  if (!raw) return null;
-
-  const rate = Number(raw);
-  if (!Number.isFinite(rate) || rate <= 0) return null;
-
-  return Number((costUsd * rate).toFixed(8));
-}
-
-/**
- * Prisma helper:
- * If a request is retried with the same unique key, ChatMessage create() can throw P2002.
- * Treat as idempotent replay and continue.
- */
-function isUniqueViolation(e: unknown) {
-  return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
-}
-
-/**
- * Extract first {...} JSON block from a mixed response.
- * This helps if the model leaks prose around JSON (coach/review only).
- */
-function stripCodeFences(s: string): string {
-  const t = s.trim();
-
-  // ```json ... ``` or ``` ... ```
-  if (t.startsWith("```")) {
-    return t
-      .replace(/^```[a-zA-Z]*\n?/, "")
-      .replace(/```$/, "")
-      .trim();
-  }
-
-  return t;
-}
-
-/**
- * Extract first {...} JSON block from a mixed response.
- * Tolerates:
- * - prose around JSON
- * - ```json fenced JSON
- * - trailing explanations
- */
-function extractJsonObject(raw: string): string {
-  const cleaned = stripCodeFences(raw).trim();
-
-  const start = cleaned.indexOf("{");
-  if (start < 0) return cleaned;
-
-  // Scan for matching closing brace
-  let depth = 0;
-  for (let i = start; i < cleaned.length; i++) {
-    const ch = cleaned[i];
-    if (ch === "{") depth++;
-    else if (ch === "}") depth--;
-
-    if (depth === 0) return cleaned.slice(start, i + 1);
-  }
-
-  // Fallback: last brace slice
-  const end = cleaned.lastIndexOf("}");
-  if (end > start) return cleaned.slice(start, end + 1);
-
-  return cleaned;
-}
-
-/**
- * Input quality heuristic:
- * Weak input => we instruct the model to assume + proceed (tests-first).
- */
-function isWeakInput(message: string): boolean {
-  const t = message.trim();
-  if (t.length < 60) return true;
-
-  const wordCount = t.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 12) return true;
-
-  const hasPunct = /[.?!:;]/.test(t);
-  if (!hasPunct && t.length < 120) return true;
-
-  return false;
-}
-
-/**
- * M7.4: Suggestions payload contract for Guided Strategy Interaction.
- * - No DB schema changes.
- * - Returned only when coach output includes optionalClarifications (clarification phase).
- * - Pure API contract addition; billing/session enforcement unaffected.
- */
-type CoachSuggestions = {
-  groups: { label: string; type: "single" | "multi"; options: string[] }[];
-  template: string;
-};
-
-/**
- * M7.4: Detect if the user is responding to the guided template (clarification round).
- * We keep this lightweight and deterministic (no history required).
- */
-function isGuidedClarificationAnswer(message: string): boolean {
-  const t = message.toLowerCase();
-  // Heuristic: if user used our template headings, treat as "clarification answered"
-  return (
-    t.includes("objective:") ||
-    t.includes("primary risk:") ||
-    t.includes("integrations:") ||
-    t.includes("constraints:") ||
-    t.includes("scope:")
-  );
-}
-
- /**
- * M7.4: Build suggestions dynamically from coach.optionalClarifications.
- * Each clarification becomes a group with generic answer options.
- * This removes hard-coded product-specific choices and keeps the flow conversational.
- */
-function buildCoachSuggestionsFromCoach(coach: CoachResult): CoachSuggestions | null {
-  const clarifications = (coach.optionalClarifications ?? [])
-    .map((q) => (q ?? "").trim())
-    .filter((q) => q.length > 0)
-    .slice(0, 3);
-
-  if (clarifications.length === 0) return null;
-
-  type ClarificationKind = "objective" | "risk" | "scope" | "success" | "env" | "other";
-
-  const classify = (q: string): ClarificationKind => {
-    const t = q.toLowerCase();
-
-    if (t.includes("objective") || t.includes("goal") || t.includes("outcome") || t.includes("priority")) return "objective";
-    if (t.includes("risk") || t.includes("failure") || t.includes("worst case") || t.includes("worst-case")) return "risk";
-    if (t.includes("scope") || t.includes("constraint") || t.includes("limit") || t.includes("in scope") || t.includes("out of scope")) {
-      return "scope";
-    }
-    if (t.includes("success") || t.includes("definition of done") || t.includes("acceptance")) return "success";
-    if (t.includes("environment") || t.includes("env") || t.includes("where run") || t.includes("which env")) return "env";
-    return "other";
-  };
-
-  const groups: CoachSuggestions["groups"] = clarifications.map((q) => {
-    const labelRaw = q.replace(/^[-•\d.)\s]+/, "").trim(); // strip bullets like "- " / "1. "
-    const label =
-      labelRaw.length > 64
-        ? labelRaw.slice(0, 61) + "..."
-        : labelRaw.length === 0
-          ? "Clarification"
-          : labelRaw;
-
-    const kind = classify(q);
-
-    let options: string[];
-
-    switch (kind) {
-      case "objective":
-        options = [
-          "Ship this feature safely in the next release",
-          "Stabilize critical paths and regressions",
-          "Explore unknown risk areas first",
-          "Validate key integrations and contracts",
-          "Not fully defined yet – I need your proposal",
-        ];
-        break;
-
-      case "risk":
-        options = [
-          "Auth / session / security",
-          "Permissions / RBAC / roles",
-          "Data integrity and migrations",
-          "External integrations / contracts",
-          "Performance / scalability / latency",
-          "UX / flows / accessibility",
-          "Not sure – highlight what you see as highest risk",
-        ];
-        break;
-
-      case "scope":
-        options = [
-          "Only this feature in isolation",
-          "End-to-end flows including dependencies",
-          "Happy-path plus a few critical edges",
-          "Full regression on impacted areas",
-          "Not decided yet – suggest a scope",
-        ];
-        break;
-
-      case "success":
-        options = [
-          "Ready for release with no critical issues",
-          "Key risks documented and mitigated",
-          "Smoke suite green and reliable in CI",
-          "Stakeholders sign off on coverage",
-          "I need help defining clear success criteria",
-        ];
-        break;
-
-      case "env":
-        options = [
-          "Local / dev only",
-          "Staging and pre-prod",
-          "Pre-prod mirroring production",
-          "Production shadow traffic only",
-          "Environments are not fixed yet",
-        ];
-        break;
-
-      case "other":
-      default:
-        options = [
-          "We already have this well defined",
-          "We have a rough idea but it’s fuzzy",
-          "We haven’t decided yet",
-          "Out of scope for now",
-          "I need you to propose a default",
-        ];
-        break;
-    }
-
-    return {
-      label,
-      type: "single",
-      options,
-    };
-  });
-
-  // Template wires each clarification label into a simple “answer sheet”
-  const lines: string[] = [];
-  lines.push("Answers to your clarifications (to refine the strategy):");
-
-  for (const g of groups) {
-    // buildGuidedReply will replace {label} with the selected chip values
-    lines.push(`- ${g.label}: {${g.label}}`);
-  }
-
-  lines.push("");
-  lines.push("Scope / Constraints (optional):");
-  lines.push("- ");
-  lines.push("Success Criteria (optional):");
-  lines.push("- ");
-
-  return {
-    groups,
-    template: lines.join("\n"),
-  };
-}
-
-/**
- * M7.4: Fallback generic suggestions (used only when we can't derive from clarifications).
- * Still generic (no product-specific integrations).
- */
-function buildFallbackCoachSuggestions(): CoachSuggestions {
-  return {
-    groups: [
-      {
-        label: "Objective",
-        type: "single",
-        options: [
-          "Ship safely in the next release",
-          "Reduce regression risk on critical flows",
-          "Explore unknown areas and edge cases",
-          "Prepare for beta / stakeholder sign-off",
-          "Not fully defined yet – need your proposal",
-        ],
-      },
-      {
-        label: "Risk focus",
-        type: "multi",
-        options: [
-          "Auth / session / security",
-          "Permissions / RBAC / roles",
-          "Data integrity and migrations",
-          "External integrations / contracts",
-          "Performance / scalability",
-          "UX / flows / accessibility",
-          "Not sure – highlight what you see as highest risk",
-        ],
-      },
-      {
-        label: "Constraints",
-        type: "multi",
-        options: [
-          "Tight deadline",
-          "Limited QA capacity",
-          "Limited environment access",
-          "No production data allowed",
-          "Change freeze window",
-        ],
-      },
-    ],
-    template: [
-      "Objective: {Objective}",
-      "Risk focus: {Risk focus}",
-      "Constraints (optional): {Constraints}",
-      "Scope / Constraints (optional):",
-      "- ",
-      "Success Criteria (optional):",
-      "- ",
-    ].join("\n"),
-  };
-}
-/**
- * Convert a CoachResult to UI-friendly plain text.
- *
- * WHY: UI is chat-like, and coach mode should be human-readable even though we store JSON.
- */
 function coachToText(coach: CoachResult): string {
   const lines: string[] = [];
 
@@ -415,131 +65,27 @@ function coachToText(coach: CoachResult): string {
     for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
   }
 
-  // NOTE:
-  // We intentionally DO NOT render coach.optionalClarifications here anymore.
-  // Clarification is handled via Guided Suggestions in the UI (chips + template),
-  // so the main coach answer stays focused on strategy, risks, and test ideas.
-
   return lines.join("\n");
-}
-
-/**
- * One-pass repair:
- * Ask the model to output ONLY valid JSON matching the mode schema.
- *
- * IMPORTANT:
- * - Used only for coach/review (JSON contracts).
- * - NOT used for cases mode because cases contract is plain-text test cases only.
- */
-async function repairJsonOnce(args: { mode: ExecutionMode; raw: string }): Promise<string> {
-  const schemaInstruction =
-    args.mode === "review"
-      ? [
-          "You must output ONLY valid JSON matching this schema (no markdown, no prose):",
-          "{",
-          '  "score": number (0-100),',
-          '  "verdict": string,',
-          '  "breakdown": {',
-          '    "businessRelevance": number (0-25),',
-          '    "riskCoverage": number (0-25),',
-          '    "designQuality": number (0-20),',
-          '    "levelAndScope": number (0-15),',
-          '    "diagnosticValue": number (0-15)',
-          "  },",
-          '  "riskGaps": string[],',
-          '  "antiPatterns": string[],',
-          '  "improvements": string[]',
-          "}",
-        ].join("\n")
-      : [
-          "You must output ONLY valid JSON matching this schema (no markdown, no prose):",
-          "{",
-          '  "assumptions": string[],',
-          '  "riskMatrix": [',
-          '    { "risk": string, "likelihood": "Low"|"Med"|"High", "impact": "Low"|"Med"|"High", "mitigation": string }',
-          "  ],",
-          '  "highSignalApproach": {',
-          '    "goals": string[],',
-          '    "testIdeas": string[],',
-          '    "minimalRepro"?: string[]',
-          "  },",
-          '  "optionalClarifications": string[] (max 3)',
-          "}",
-          "Rules:",
-          "- Provide immediate value; do NOT ask lots of questions.",
-          "- optionalClarifications must be <= 3 and placed last.",
-        ].join("\n");
-
-        const repaired = await openai.chat.completions.create({
-          model: "gpt-4.1-mini",
-          temperature: 0,
-          max_tokens: 900,
-          // ✅ Force JSON object output (prevents markdown/fences)
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content: "You are a strict JSON reformatter. Output ONLY a raw JSON object. No markdown. No code fences.",
-            },
-            { role: "system", content: schemaInstruction },
-            { role: "user", content: `Fix this into valid JSON only:\n\n${args.raw}` },
-          ],
-        });
-
-  return repaired.choices[0]?.message?.content ?? args.raw;
-}
-
-function normalizeClientMode(m: unknown): ClientMode {
-  return m === "review" || m === "cases" ? m : "coach";
-}
-
-/**
- * Normalize persisted session mode from DB into a safe ClientMode.
- */
-function normalizePersistedMode(m: unknown): ClientMode {
-  return m === "review" || m === "cases" ? m : "coach";
-}
-
-/**
- * Mode mismatch response helper (single source of truth).
- */
-function sessionModeMismatchResponse(args: {
-  requestId: string;
-  rateMeta: RateMeta | null;
-  sessionMode: unknown;
-  requestedMode: ClientMode;
-}) {
-  const sessionMode = normalizePersistedMode(args.sessionMode);
-
-  return NextResponse.json(
-    {
-      ok: false,
-      error: "SESSION_MODE_MISMATCH",
-      sessionMode,
-      requestedMode: args.requestedMode,
-    },
-    { status: 409, headers: responseHeaders(args.requestId, args.rateMeta ?? undefined) }
-  );
 }
 
 export async function POST(req: Request) {
   const inbound = req.headers.get("x-request-id");
   const requestId = inbound && inbound.length < 200 ? inbound : randomUUID();
-
   const startTime = Date.now();
 
-  // Keep these for logs/metrics (catch must not crash if early auth fails)
   let auth0SubForLog: string | undefined;
   let orgId: string | undefined;
   let sessionIdForLog: string | undefined;
   let modeForMetric: ChatMetricMode = "unknown";
   let rateMeta: RateMeta | null = null;
 
-  // OpenAI trace captured for end/error logs
+  let sessionArtifact: SessionArtifact | null = null;
+  let artifactUpdatedAtIso: string | null = null;
+
   let openaiModel: string | undefined;
   let openaiLatencyMs: number | undefined;
   let openaiErrorCode: string | undefined;
-  const retryCount = 0; // WHY (M4): no retries in this milestone.
+  const retryCount = 0;
 
   try {
     // 0) Require Auth0 session
@@ -554,18 +100,11 @@ export async function POST(req: Request) {
         meta: { path: "/api/chat" },
       });
 
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 401,
-        latencyMs: Date.now() - startTime,
-      });
-
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 401, latencyMs: Date.now() - startTime });
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: responseHeaders(requestId) });
     }
 
     const user = session.user;
-
     const sub = user.sub as string | undefined;
     if (!sub) {
       log("warn", {
@@ -577,131 +116,75 @@ export async function POST(req: Request) {
         meta: { reason: "missing_sub" },
       });
 
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 401,
-        latencyMs: Date.now() - startTime,
-      });
-
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 401, latencyMs: Date.now() - startTime });
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: responseHeaders(requestId) });
     }
 
     auth0SubForLog = sub;
-    const auth0Sub: string = sub;
+    const auth0Sub = sub;
 
-    // Prefer user-based rate limiting
     const identifier = `user:${auth0Sub}`;
 
-    // 1) Parse request body safely
+    // 1) Parse request body
     let body: ChatBody = {};
     try {
       body = (await req.json()) as ChatBody;
     } catch {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 400,
-        latencyMs: Date.now() - startTime,
-      });
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 400, latencyMs: Date.now() - startTime });
       return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400, headers: responseHeaders(requestId) });
     }
 
     const message = body?.message;
-
-    // 2) Validate input
     if (!message || typeof message !== "string") {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 400,
-        latencyMs: Date.now() - startTime,
-      });
-      return NextResponse.json(
-        { ok: false, error: "Missing 'message' (must be a string)" },
-        { status: 400, headers: responseHeaders(requestId) }
-      );
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 400, latencyMs: Date.now() - startTime });
+      return NextResponse.json({ ok: false, error: "Missing 'message' (must be a string)" }, { status: 400, headers: responseHeaders(requestId) });
     }
-
     if (message.length > 8000) {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 400,
-        latencyMs: Date.now() - startTime,
-      });
-      return NextResponse.json(
-        { ok: false, error: "Message too long (max 8000 characters)" },
-        { status: 400, headers: responseHeaders(requestId) }
-      );
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 400, latencyMs: Date.now() - startTime });
+      return NextResponse.json({ ok: false, error: "Message too long (max 8000 characters)" }, { status: 400, headers: responseHeaders(requestId) });
     }
 
-    // 3) Client mode selection (defaults to coach)
+    // 2) Mode selection
     const clientMode: ClientMode = normalizeClientMode(body?.mode);
-
     const wantCases = clientMode === "cases";
     const wantReview = clientMode === "review";
-
-    // Execution + validation modes remain coach|review (cases is plain-text).
     const executionMode: ExecutionMode = wantReview ? "review" : "coach";
 
     modeForMetric = clientMode;
-    const logMode: ClientMode = clientMode;
 
     const weakInput = isWeakInput(message);
 
-    // M7.4: Heuristic flag used to enforce "only one clarification round".
-    // If user is answering the guided template, we force the model to proceed with output (no more clarifications).
-    const guidedAnswer = executionMode === "coach" && !wantCases && isGuidedClarificationAnswer(message); // M7.4
+    // M7.4: guided clarification answer heuristic
+    const guidedAnswer = executionMode === "coach" && !wantCases && isGuidedClarificationAnswer(message);
 
-    // 4) RBAC: review is admin-only
+    // 3) RBAC: review is admin-only
     if (executionMode === "review") {
       const isAdmin = await isAdminFromAccessToken();
       if (!isAdmin) {
-        log("warn", {
-          event: "forbidden_review_access",
-          requestId,
-          auth0Sub,
-          mode: logMode,
-          durationMs: Date.now() - startTime,
-        });
-
-        await recordChatMetric({
-          nowMs: Date.now(),
-          mode: modeForMetric,
-          status: 403,
-          latencyMs: Date.now() - startTime,
-        });
-
+        log("warn", { event: "forbidden_review_access", requestId, auth0Sub, mode: clientMode, durationMs: Date.now() - startTime });
+        await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 403, latencyMs: Date.now() - startTime });
         return NextResponse.json({ ok: false, mode: clientMode, error: "Forbidden" }, { status: 403, headers: responseHeaders(requestId) });
       }
     }
 
-    // 5) Ensure org + wallet exist (billing preconditions)
+    // 4) Ensure org + wallet exist (billing preconditions)
     const orgState = await ensureOrgForUser({
       auth0Sub,
       name: (user.name as string | undefined) ?? null,
       email: (user.email as string | undefined) ?? null,
     });
 
-    const orgIdFromState = typeof orgState.organizationId === "string" ? orgState.organizationId : undefined;
-    const walletIdForOrg = orgState.wallet && typeof orgState.wallet.id === "string" ? orgState.wallet.id : undefined;
-    orgId = orgIdFromState;
+    orgId = typeof orgState.organizationId === "string" ? orgState.organizationId : undefined;
 
     if (!orgState.wallet || orgState.wallet.balance <= 0) {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 402,
-        latencyMs: Date.now() - startTime,
-      });
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 402, latencyMs: Date.now() - startTime });
 
       log("warn", {
         event: "billing_failure",
         requestId,
         auth0Sub,
         orgId,
-        mode: logMode,
+        mode: clientMode,
         errorType: "insufficient_credits_precheck",
         errorMessage: "Wallet balance <= 0 before OpenAI call",
         durationMs: Date.now() - startTime,
@@ -714,9 +197,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // 6) Rate limit
+    // 5) Rate limit
     const { success, remaining, reset } = await chatRatelimit.limit(identifier);
-
     const resetSeconds = typeof reset === "number" ? Math.max(1, Math.ceil((reset - Date.now()) / 1000)) : 60;
 
     rateMeta = {
@@ -731,18 +213,12 @@ export async function POST(req: Request) {
         requestId,
         auth0Sub,
         orgId,
-        mode: logMode,
+        mode: clientMode,
         durationMs: Date.now() - startTime,
         meta: { resetSeconds },
       });
 
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 429,
-        latencyMs: Date.now() - startTime,
-        rateLimited: true,
-      });
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 429, latencyMs: Date.now() - startTime, rateLimited: true });
 
       return NextResponse.json(
         {
@@ -751,134 +227,57 @@ export async function POST(req: Request) {
           details: `Too many requests. Try again in ~${resetSeconds}s.`,
           rate: { ...rateMeta, remaining: 0 },
         },
-        {
-          status: 429,
-          headers: responseHeaders(requestId, { ...rateMeta, remaining: 0 }, resetSeconds),
-        }
+        { status: 429, headers: responseHeaders(requestId, { ...rateMeta, remaining: 0 }, resetSeconds) }
       );
     }
 
-    // 7) Create or reuse ChatSession + enforce session-mode consistency (M6.1)
-    let sessionId = body?.sessionId;
+    // 6) Create/reuse session + hydrate artifact (signature must match your lib/chat/sessionStore.ts)
+    const sessionState = await loadOrCreateSession({
+      auth0Sub,
+      requestId,
+      body,
+      clientMode,
+      rateMeta,
+    });
 
-    if (sessionId) {
-      const existing = await prisma.chatSession.findFirst({
-        where: { id: sessionId, auth0Sub },
-        select: { id: true, mode: true },
-      });
-
-      if (!existing) {
-        sessionId = undefined;
-      } else if (existing.mode && normalizePersistedMode(existing.mode) !== clientMode) {
-        await recordChatMetric({
-          nowMs: Date.now(),
-          mode: modeForMetric,
-          status: 409,
-          latencyMs: Date.now() - startTime,
-        });
-
-        return sessionModeMismatchResponse({
-          requestId,
-          rateMeta,
-          sessionMode: existing.mode,
-          requestedMode: clientMode,
-        });
-      }
+    if (!sessionState.ok) {
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 409, latencyMs: Date.now() - startTime });
+      return sessionState.response;
     }
 
-    if (!sessionId) {
-      const rawClientId = typeof body?.sessionClientId === "string" ? body.sessionClientId.trim() : "";
-      const clientSessionId = rawClientId.length > 0 ? rawClientId : requestId;
-
-      const sessionRow = await prisma.chatSession.upsert({
-        where: { auth0Sub_clientSessionId: { auth0Sub, clientSessionId } },
-        create: {
-          auth0Sub,
-          mode: clientMode,
-          title: body?.title ?? null,
-          clientSessionId,
-        },
-        update: {
-          // WHY (M6.1): never overwrite a session's mode via retry; mode is canonical for the session.
-          // Leaving update empty keeps the session stable.
-        },
-        select: { id: true, mode: true },
-      });
-
-      if (sessionRow.mode && normalizePersistedMode(sessionRow.mode) !== clientMode) {
-        await recordChatMetric({
-          nowMs: Date.now(),
-          mode: modeForMetric,
-          status: 409,
-          latencyMs: Date.now() - startTime,
-        });
-
-        return sessionModeMismatchResponse({
-          requestId,
-          rateMeta,
-          sessionMode: sessionRow.mode,
-          requestedMode: clientMode,
-        });
-      }
-
-      sessionId = sessionRow.id;
-    }
-
+    const sessionId = sessionState.sessionId;
     sessionIdForLog = sessionId;
+
+    sessionArtifact = sessionState.sessionArtifact;
+    artifactUpdatedAtIso = sessionState.artifactUpdatedAtIso;
 
     log("info", {
       event: "chat_start",
       requestId,
       auth0Sub,
       orgId,
-      sessionId: sessionIdForLog,
-      mode: logMode,
-      meta: { messageChars: message.length, weakInput, clientMode, guidedAnswer }, // M7.4 (added guidedAnswer)
+      sessionId,
+      mode: clientMode,
+      meta: { messageChars: message.length, weakInput, clientMode, guidedAnswer, hasArtifact: !!sessionArtifact },
     });
 
-    // 8) Idempotent replay (serve stored assistant message)
+    // 7) Replay (serve stored assistant message if exists)
     const existingAssistant = await prisma.chatMessage.findFirst({
       where: { sessionId, requestId, role: "assistant", auth0Sub },
       select: { content: true, tokensIn: true, tokensOut: true },
     });
 
     if (existingAssistant) {
-      const charged = walletIdForOrg
-        ? await prisma.creditLedger.findFirst({
-            where: { walletId: walletIdForOrg, requestId, reason: "chat_usage" },
-            select: { delta: true, walletId: true },
-          })
-        : await prisma.creditLedger.findFirst({
-            where: { requestId, reason: "chat_usage" },
-            select: { delta: true, walletId: true },
-          });
-
-      const wallet = charged?.walletId
-        ? await prisma.creditWallet.findUnique({ where: { id: charged.walletId }, select: { balance: true } })
-        : null;
-
-      log("info", {
-        event: "chat_replay_served",
-        requestId,
+      const refreshed = await refreshArtifact({
         auth0Sub,
-        orgId,
-        sessionId: sessionIdForLog,
-        mode: logMode,
-        durationMs: Date.now() - startTime,
+        sessionId,
+        fallback: sessionArtifact,
       });
 
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 200,
-        latencyMs: Date.now() - startTime,
-      });
+        sessionArtifact = refreshed.artifact ?? sessionArtifact ?? null;
+        artifactUpdatedAtIso = refreshed.artifactUpdatedAtIso ?? artifactUpdatedAtIso ?? null;
 
-      // M7.4: On replay we can't reliably reconstruct prior suggestions (no schema/meta storage).
-      // We still provide a deterministic suggestions payload if the stored assistant content includes a clarification section.
-     const replayHasClarifications =
-    !wantCases && executionMode === "coach" && (existingAssistant.content ?? "").includes("If you want more detailed tests, answer:"); // M7.4
-    const replaySuggestions: CoachSuggestions | null = replayHasClarifications ? buildFallbackCoachSuggestions() : null; // M7.4
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 200, latencyMs: Date.now() - startTime });
 
       if (executionMode === "review") {
         const raw = existingAssistant.content ?? "";
@@ -891,8 +290,6 @@ export async function POST(req: Request) {
                 mode: clientMode,
                 review: parsed as ReviewResult,
                 sessionId,
-                creditsCharged: charged ? Math.abs(charged.delta) : null,
-                creditsRemaining: wallet?.balance ?? null,
                 usage: {
                   promptTokens: existingAssistant.tokensIn ?? 0,
                   completionTokens: existingAssistant.tokensOut ?? 0,
@@ -900,6 +297,8 @@ export async function POST(req: Request) {
                 },
                 rate: rateMeta,
                 replay: true,
+                artifact: sessionArtifact,
+                artifactUpdatedAt: artifactUpdatedAtIso,
               },
               { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
             );
@@ -914,8 +313,6 @@ export async function POST(req: Request) {
             mode: clientMode,
             raw,
             sessionId,
-            creditsCharged: charged ? Math.abs(charged.delta) : null,
-            creditsRemaining: wallet?.balance ?? null,
             usage: {
               promptTokens: existingAssistant.tokensIn ?? 0,
               completionTokens: existingAssistant.tokensOut ?? 0,
@@ -923,10 +320,16 @@ export async function POST(req: Request) {
             },
             rate: rateMeta,
             replay: true,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
           },
           { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
         );
       }
+
+      const replayHasClarifications =
+        !wantCases && executionMode === "coach" && (existingAssistant.content ?? "").includes("If you want more detailed tests, answer:");
+      const replaySuggestions: CoachSuggestions | null = replayHasClarifications ? buildFallbackCoachSuggestions() : null;
 
       return NextResponse.json(
         {
@@ -934,8 +337,6 @@ export async function POST(req: Request) {
           mode: clientMode,
           reply: existingAssistant.content,
           sessionId,
-          creditsCharged: charged ? Math.abs(charged.delta) : null,
-          creditsRemaining: wallet?.balance ?? null,
           usage: {
             promptTokens: existingAssistant.tokensIn ?? 0,
             completionTokens: existingAssistant.tokensOut ?? 0,
@@ -943,32 +344,48 @@ export async function POST(req: Request) {
           },
           rate: rateMeta,
           replay: true,
-          ...(replaySuggestions ? { suggestions: replaySuggestions } : {}), // M7.4 (new)
+          ...(replaySuggestions ? { suggestions: replaySuggestions } : {}),
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
         },
         { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
       );
     }
 
-    // 9) Persist user message (idempotent-safe)
-    await prisma.chatMessage
-      .create({
-        data: { sessionId, auth0Sub, role: "user", content: message, requestId },
-      })
-      .catch((e) => {
-        if (isUniqueViolation(e)) return null;
-        throw e;
-      });
+    // 8) Persist user message (signature in your error wants "content")
+    await persistUserMessageIdempotent({
+      sessionId,
+      auth0Sub,
+      requestId,
+      content: message,
+    });
 
-    // 10) Build mode instruction + system prompt
-    const model = "gpt-4.1-mini";
-    openaiModel = model;
+    // 9) Guided clarification answer -> update artifact now
+    if (guidedAnswer) {
+      const patch = parseGuidedAnswerToRefinedRequirement(message);
+      if (patch) {
+        const nextArtifact = mergeArtifact(sessionArtifact, patch);
+        const now = new Date();
 
+        await prisma.chatSession.update({
+          where: { id: sessionId },
+          data: {
+            artifactJson: prismaJsonValue(nextArtifact),
+            artifactUpdatedAt: now,
+          },
+          select: { id: true },
+        });
+
+        sessionArtifact = nextArtifact;
+        artifactUpdatedAtIso = now.toISOString();
+      }
+    }
+
+    // 10) Prompts
     const systemPrompt = wantCases ? CASES_SYSTEM_PROMPT : QA_SYSTEM_PROMPT;
 
     const modeInstruction = wantCases
-      ? [`INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`, "Generate the test cases for the user's feature. Follow the OUTPUT CONTRACT exactly."].join(
-          "\n"
-        )
+      ? [`INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`, "Generate the test cases for the user's feature. Follow the OUTPUT CONTRACT exactly."].join("\n")
       : executionMode === "review"
         ? [
             "MODE: REVIEW & SCORING",
@@ -1002,7 +419,6 @@ export async function POST(req: Request) {
             "Always provide: assumptions + riskMatrix + highSignalApproach + testIdeas.",
             "Clarifications are OPTIONAL and MUST be last (max 3).",
             "If you include clarifications, they must be phrased as an opt-in for deeper tests.",
-            // M7.4: Enforce "only one clarification round" when user is replying to the guided template.
             ...(guidedAnswer
               ? [
                   "GUIDED_CLARIFICATION_ANSWER: true",
@@ -1030,42 +446,32 @@ export async function POST(req: Request) {
             "- optionalClarifications: 0-3 items ONLY, and ONLY for more detailed tests.",
           ].join("\n");
 
+    const artifactContext = sessionArtifact ? artifactToContextText(sessionArtifact) : null;
+
+    const messagesForModel: { role: "system" | "user"; content: string }[] = [
+      { role: "system", content: systemPrompt },
+      { role: "system", content: modeInstruction },
+      ...(artifactContext ? [{ role: "system" as const, content: artifactContext }] : []),
+      { role: "user", content: message },
+    ];
+
+    // 11) OpenAI call
+    const model = "gpt-4.1-mini";
+    openaiModel = model;
+
     const { result: completion, trace } = await withOpenAITrace(
       () =>
-      openai.chat.completions.create({
-            model,
-            
-            // ✅ Lower drift for JSON modes; keep cases as-is
-            temperature: wantCases ? 0.2 : 0,
-
-            max_tokens: executionMode === "review" ? 650 : wantCases ? 1400 : 900,
-
-            // ✅ Force JSON for coach/review ONLY (cases is plain text contract)
-            response_format: wantCases ? undefined : { type: "json_object" },
-
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "system", content: modeInstruction },
-              { role: "user", content: message },
-            ],
-          }),
-                model
+        openai.chat.completions.create({
+          model,
+          temperature: wantCases ? 0.2 : 0,
+          max_tokens: executionMode === "review" ? 650 : wantCases ? 1400 : 900,
+          response_format: wantCases ? undefined : { type: "json_object" },
+          messages: messagesForModel,
+        }),
+      model
     );
 
     openaiLatencyMs = trace.latencyMs;
-
-    log("info", {
-      event: "openai_call",
-      requestId,
-      auth0Sub,
-      orgId,
-      sessionId: sessionIdForLog,
-      mode: clientMode,
-      model: trace.model,
-      openaiLatencyMs: trace.latencyMs,
-      retryCount: trace.retryCount,
-      meta: { clientMode, guidedAnswer }, // M7.4 (added guidedAnswer)
-    });
 
     const rawReply = completion.choices[0]?.message?.content ?? "No reply returned";
 
@@ -1078,24 +484,17 @@ export async function POST(req: Request) {
     const costUsd = estimateCostUsd({ model, promptTokens, completionTokens });
     const costEur = costUsd != null ? maybeConvertUsdToEur(costUsd) : null;
 
-    /**
-     * ✅ IMPORTANT FIX:
-     * For REVIEW, we MUST store the FINAL JSON (parsed/repaired), not the raw model text.
-     * Otherwise history replay cannot parse ReviewResult deterministically.
-     */
+    // 12) Parse/repair outputs
     let coachParsed: CoachResult | null = null;
     let replyTextForUser: string | null = null;
 
-    // REVIEW canonical object + string for storage
     let reviewObj: ReviewResult | null = null;
     let reviewStoredJson: string | null = null;
     let reviewRepaired = false;
 
-    // M7.4: suggestions payload returned only when coach output includes optionalClarifications.
     let suggestions: CoachSuggestions | null = null;
 
     if (executionMode === "review") {
-      // Parse or repair to get canonical ReviewResult
       const tryParse = (txt: string): ReviewResult | null => {
         try {
           const parsed = JSON.parse(extractJsonObject(txt)) as unknown;
@@ -1113,12 +512,9 @@ export async function POST(req: Request) {
         reviewRepaired = !!reviewObj;
       }
 
-      if (reviewObj) {
-        reviewStoredJson = JSON.stringify(reviewObj);
-      }
+      if (reviewObj) reviewStoredJson = JSON.stringify(reviewObj);
     }
 
-    // COACH parsing/repair (only if not cases)
     if (executionMode === "coach" && !wantCases) {
       try {
         const obj = JSON.parse(extractJsonObject(rawReply));
@@ -1138,122 +534,43 @@ export async function POST(req: Request) {
       }
 
       if (coachParsed) {
-        // Hard rule: max 3 clarifying prompts
         coachParsed.optionalClarifications = coachParsed.optionalClarifications.slice(0, 3);
-
-        // M7.4: If we detect the user answered the guided template, enforce "only one clarification round"
-        // by stripping optionalClarifications (server-side safety net).
-        if (guidedAnswer) coachParsed.optionalClarifications = []; // M7.4 (new)
+        if (guidedAnswer) coachParsed.optionalClarifications = [];
 
         replyTextForUser = coachToText(coachParsed);
 
-        // M7.4: Attach suggestions only when we actually have clarifications to guide.
-        // Build them dynamically from coachParsed, fallback to generic if needed.
-      if (coachParsed.optionalClarifications.length > 0) {
-        suggestions = buildCoachSuggestionsFromCoach(coachParsed) ?? buildFallbackCoachSuggestions();
-      }
+        if (coachParsed.optionalClarifications.length > 0) {
+          suggestions = buildCoachSuggestionsFromCoach(coachParsed) ?? buildFallbackCoachSuggestions();
+        }
       } else {
-        replyTextForUser =
-          "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
+        replyTextForUser = "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
       }
     }
 
-    // CASES mode: plain text contract
     if (wantCases) {
       replyTextForUser = rawReply.trim();
       coachParsed = null;
-      suggestions = null; // M7.4: never attach suggestions in cases mode
+      suggestions = null;
     }
 
-    // Decide what we persist as assistant content (single source of truth)
     const assistantContentToStore =
-      executionMode === "review"
-        ? // Store canonical JSON if available, else store raw (and response will be ok:false)
-          reviewStoredJson ?? rawReply
-        : replyTextForUser ?? "No reply returned";
+      executionMode === "review" ? reviewStoredJson ?? rawReply : replyTextForUser ?? "No reply returned";
 
+    // 13) Billing + assistant persistence (your helper returns a number)
     let creditsRemaining: number | null = null;
-
-    // 11) Billing + assistant message persistence (financially correct, serializable)
     try {
-      creditsRemaining = await prisma.$transaction(
-        async (tx) => {
-          const remainingBal = await chargeCreditsTx(tx, {
-            auth0Sub,
-            credits: creditsCharged,
-            requestId,
-          });
-
-          await tx.chatMessage
-            .create({
-              data: {
-                sessionId,
-                auth0Sub,
-                role: "assistant",
-                content: assistantContentToStore,
-                tokensIn: promptTokens,
-                tokensOut: completionTokens,
-                requestId,
-              },
-            })
-            .catch((e) => {
-              if (isUniqueViolation(e)) return null;
-              throw e;
-            });
-
-          return remainingBal;
-        },
-        {
-          isolationLevel: "Serializable",
-          maxWait: 5000,
-          timeout: 10000,
-        }
-      );
+      creditsRemaining = await persistAssistantWithBillingTx({
+        sessionId,
+        auth0Sub,
+        requestId,
+        creditsCharged,
+        assistantContentToStore,
+        promptTokens,
+        completionTokens,
+      });
     } catch (e) {
-      const walletId = walletIdForOrg;
-
-      const [walletSnap, ledgerSnap] = walletId
-        ? await Promise.all([
-            prisma.creditWallet.findUnique({ where: { id: walletId }, select: { balance: true } }),
-            prisma.creditLedger.findFirst({
-              where: { walletId },
-              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-              select: { id: true, delta: true, reason: true, requestId: true, createdAt: true },
-            }),
-          ])
-        : [null, null];
-
       if (e instanceof InsufficientCreditsError) {
-        log("warn", {
-          event: "billing_failure",
-          requestId,
-          auth0Sub,
-          orgId,
-          sessionId: sessionIdForLog,
-          mode: clientMode,
-          errorType: "insufficient_credits",
-          errorMessage: e.message,
-          durationMs: Date.now() - startTime,
-          meta: {
-            walletBalance: walletSnap?.balance ?? orgState.wallet?.balance ?? 0,
-            ledger: ledgerSnap
-              ? {
-                  id: ledgerSnap.id,
-                  delta: ledgerSnap.delta,
-                  reason: ledgerSnap.reason,
-                  requestId: ledgerSnap.requestId,
-                  createdAt: ledgerSnap.createdAt.toISOString(),
-                }
-              : null,
-          },
-        });
-
-        await recordChatMetric({
-          nowMs: Date.now(),
-          mode: modeForMetric,
-          status: 402,
-          latencyMs: Date.now() - startTime,
-        });
+        await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 402, latencyMs: Date.now() - startTime });
 
         return NextResponse.json(
           {
@@ -1265,67 +582,20 @@ export async function POST(req: Request) {
             creditsRemaining: orgState.wallet?.balance ?? 0,
             usage: { promptTokens, completionTokens, totalTokens },
             rate: rateMeta,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
           },
           { status: 402, headers: responseHeaders(requestId, rateMeta ?? undefined) }
         );
       }
-
-      log("error", {
-        event: "billing_failure",
-        requestId,
-        auth0Sub,
-        orgId,
-        sessionId: sessionIdForLog,
-        mode: clientMode,
-        errorType: "billing_tx_failed",
-        errorMessage: e instanceof Error ? e.message : String(e),
-        durationMs: Date.now() - startTime,
-        meta: {
-          walletBalance: walletSnap?.balance ?? orgState.wallet?.balance ?? 0,
-          ledger: ledgerSnap
-            ? {
-                id: ledgerSnap.id,
-                delta: ledgerSnap.delta,
-                reason: ledgerSnap.reason,
-                requestId: ledgerSnap.requestId,
-                createdAt: ledgerSnap.createdAt.toISOString(),
-              }
-            : null,
-        },
-      });
-
       throw e;
     }
 
-    // 12) REVIEW response path (structured JSON)
+    // 14) Responses
     if (executionMode === "review") {
-      log("info", {
-        event: "chat_completed",
-        requestId,
-        auth0Sub,
-        orgId,
-        sessionId: sessionIdForLog,
-        mode: clientMode,
-        durationMs: Date.now() - startTime,
-        model,
-        openaiLatencyMs,
-        openaiErrorCode,
-        retryCount,
-        tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
-        eurCost: costEur ?? undefined,
-        reviewUnits: 1,
-        meta: { repaired: reviewRepaired || undefined, costUsd: costUsd ?? undefined },
-      });
-
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 200,
-        latencyMs: Date.now() - startTime,
-      });
+      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 200, latencyMs: Date.now() - startTime });
 
       if (!reviewObj) {
-        // Keep behavior: return 200 but ok:false so UI can show parsing issue safely
         return NextResponse.json(
           {
             ok: false,
@@ -1337,6 +607,8 @@ export async function POST(req: Request) {
             creditsRemaining,
             usage: { promptTokens, completionTokens, totalTokens },
             rate: rateMeta,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
           },
           { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
         );
@@ -1353,48 +625,29 @@ export async function POST(req: Request) {
           usage: { promptTokens, completionTokens, totalTokens },
           rate: rateMeta,
           repaired: reviewRepaired || undefined,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
         },
         { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
       );
     }
 
-    // 13) COACH + CASES response (plain reply text)
-    log("info", {
-      event: "chat_completed",
-      requestId,
-      auth0Sub,
-      orgId,
-      sessionId: sessionIdForLog,
-      mode: clientMode,
-      durationMs: Date.now() - startTime,
-      model,
-      openaiLatencyMs,
-      openaiErrorCode,
-      retryCount,
-      tokenUsage: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
-      eurCost: costEur ?? undefined,
-      meta: { costUsd: costUsd ?? undefined, clientMode, guidedAnswer, suggestions: !!suggestions }, // M7.4
-    });
-
-    await recordChatMetric({
-      nowMs: Date.now(),
-      mode: modeForMetric,
-      status: 200,
-      latencyMs: Date.now() - startTime,
-    });
+    await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 200, latencyMs: Date.now() - startTime });
 
     return NextResponse.json(
       {
         ok: true,
         mode: clientMode,
         reply: replyTextForUser ?? "No reply returned",
-        coach: coachParsed, // null for cases; populated for coach (when parse succeeds)
+        coach: coachParsed,
         sessionId,
         creditsCharged,
         creditsRemaining,
         usage: { promptTokens, completionTokens, totalTokens },
         rate: rateMeta,
-        ...(suggestions ? { suggestions } : {}), // M7.4 (new): guided suggestions payload
+        ...(suggestions ? { suggestions } : {}),
+        artifact: sessionArtifact,
+        artifactUpdatedAt: artifactUpdatedAtIso,
       },
       { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
     );
@@ -1424,15 +677,17 @@ export async function POST(req: Request) {
       errorMessage: errMsg,
     });
 
-    await recordChatMetric({
-      nowMs: Date.now(),
-      mode: modeForMetric,
-      status: 500,
-      latencyMs: Date.now() - startTime,
-    });
+    await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 500, latencyMs: Date.now() - startTime });
 
     return NextResponse.json(
-      { ok: false, error: "Server error", details: errMsg, ...(rateMeta ? { rate: rateMeta } : {}) },
+      {
+        ok: false,
+        error: "Server error",
+        details: errMsg,
+        ...(rateMeta ? { rate: rateMeta } : {}),
+        artifact: sessionArtifact,
+        artifactUpdatedAt: artifactUpdatedAtIso,
+      },
       { status: 500, headers: responseHeaders(requestId, rateMeta ?? undefined) }
     );
   }
