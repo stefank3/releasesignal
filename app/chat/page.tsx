@@ -13,7 +13,7 @@ import ChatPanel from "./components/ChatPanel";
 export default function ChatPage() {
   const chat = useChatSession();
 
-  // Page-only: optional rerender tick (if you want to force a refresh/scroll behavior)
+  // Page-only: optional rerender tick (used to refresh layout-dependent UI state)
   const [uiTick, setUiTick] = useState(0);
   const bumpUiTickAction = () => setUiTick((v) => v + 1);
 
@@ -64,7 +64,10 @@ export default function ChatPage() {
       />
 
       <main style={{ ...mainStyle, flex: 1, overflow: "auto" }}>
-        <ChatHeader sidebarCollapsed={chat.sidebarCollapsed} onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)} />
+        <ChatHeader
+          sidebarCollapsed={chat.sidebarCollapsed}
+          onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)}
+        />
 
         <ChatToolbar
           chat={chat}
@@ -73,7 +76,6 @@ export default function ChatPage() {
           }}
         />
 
-        {/* NOTE (M7.7): ChatPanel now also renders pinned artifact when available */}
         <ChatPanel
           chat={chat}
           onAfterSendAction={() => {

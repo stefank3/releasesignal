@@ -54,6 +54,11 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * CHANGE (M7.6):
+ * Keep a normal exploratory coach response for early / loose prompts.
+ * This preserves the original "QA coach" feel before the requirement is refined.
+ */
 function coachToText(coach: CoachResult): string {
   const lines: string[] = [];
 
@@ -79,11 +84,102 @@ function coachToText(coach: CoachResult): string {
     for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
   }
 
+  if (coach.optionalClarifications?.length) {
+    lines.push("");
+    lines.push("Optional clarifications:");
+    for (const q of coach.optionalClarifications.slice(0, 3)) lines.push(`- ${q}`);
+  }
+
   return lines.join("\n");
 }
 
 /**
- * CHANGE (M7): Do not inject empty artifact context.
+ * CHANGE (M7.6):
+ * Refined coach responses should look like a reusable technical requirement artifact.
+ * This is the format the user can copy into Cases mode.
+ */
+function coachToTechnicalRequirementText(coach: CoachResult, artifact: SessionArtifact | null): string {
+  const lines: string[] = [];
+  const rr = artifact?.refinedRequirement;
+
+  lines.push("Refined Technical Requirement");
+  lines.push("");
+
+  if (rr?.objective?.trim()) {
+    lines.push("Objective:");
+    lines.push(rr.objective.trim());
+    lines.push("");
+  } else if (coach.highSignalApproach.goals[0]) {
+    // CHANGE: fallback so the format still works even if artifact is not fully populated yet
+    lines.push("Objective:");
+    lines.push(coach.highSignalApproach.goals[0]);
+    lines.push("");
+  }
+
+  if (rr?.context?.trim()) {
+    lines.push("Context / Constraints:");
+    lines.push(rr.context.trim());
+    lines.push("");
+  } else if (coach.assumptions.length) {
+    lines.push("Context / Assumptions:");
+    for (const a of coach.assumptions.slice(0, 6)) lines.push(`- ${a}`);
+    lines.push("");
+  }
+
+  if (rr?.inScope?.length) {
+    lines.push("In Scope:");
+    for (const s of rr.inScope.slice(0, 12)) lines.push(`- ${s}`);
+    lines.push("");
+  }
+
+  if (rr?.outOfScope?.length) {
+    lines.push("Out of Scope:");
+    for (const s of rr.outOfScope.slice(0, 12)) lines.push(`- ${s}`);
+    lines.push("");
+  }
+
+  if (rr?.integrations?.length) {
+    lines.push("Integrations:");
+    for (const s of rr.integrations.slice(0, 12)) lines.push(`- ${s}`);
+    lines.push("");
+  }
+
+  if (rr?.acceptanceCriteria?.length) {
+    lines.push("Acceptance Criteria:");
+    for (const s of rr.acceptanceCriteria.slice(0, 12)) lines.push(`- ${s}`);
+    lines.push("");
+  }
+
+  lines.push("Primary Risk Focus:");
+  if (rr?.riskFocus?.length) {
+    for (const s of rr.riskFocus.slice(0, 12)) lines.push(`- ${s}`);
+  } else {
+    for (const r of coach.riskMatrix.slice(0, 6)) {
+      lines.push(`- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact})`);
+    }
+  }
+  lines.push("");
+
+  lines.push("Recommended Test Strategy:");
+  for (const g of coach.highSignalApproach.goals.slice(0, 6)) lines.push(`- ${g}`);
+  lines.push("");
+
+  lines.push("High-Signal Test Ideas:");
+  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${t}`);
+  lines.push("");
+
+  if (coach.highSignalApproach.minimalRepro?.length) {
+    lines.push("Minimal Repro / Diagnostic Path:");
+    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * CHANGE (M7):
+ * Do not inject empty artifact context.
  * We only consider the artifact "meaningful" if it has at least one non-empty field.
  */
 function hasMeaningfulRefinedRequirement(artifact: SessionArtifact | null): boolean {
@@ -102,6 +198,18 @@ function hasMeaningfulRefinedRequirement(artifact: SessionArtifact | null): bool
     hasList(rr.riskFocus) ||
     hasList(rr.acceptanceCriteria)
   );
+}
+
+/**
+ * CHANGE (M7.6):
+ * Refined requirement format should be the normal response AFTER refinement,
+ * not for every early exploratory coach reply.
+ */
+function shouldReturnTechnicalRequirement(args: {
+  guidedAnswer: boolean;
+  artifact: SessionArtifact | null;
+}): boolean {
+  return args.guidedAnswer || hasMeaningfulRefinedRequirement(args.artifact);
 }
 
 export async function POST(req: Request) {
@@ -586,7 +694,16 @@ export async function POST(req: Request) {
         coachParsed.optionalClarifications = coachParsed.optionalClarifications.slice(0, 3);
         if (guidedAnswer) coachParsed.optionalClarifications = [];
 
-        replyTextForUser = coachToText(coachParsed);
+        /**
+         * CHANGE (M7.6):
+         * - exploratory coach reply stays in normal QA-coach format
+         * - refined coach reply becomes a reusable technical requirement artifact
+         */
+        if (shouldReturnTechnicalRequirement({ guidedAnswer, artifact: sessionArtifact })) {
+          replyTextForUser = coachToTechnicalRequirementText(coachParsed, sessionArtifact);
+        } else {
+          replyTextForUser = coachToText(coachParsed);
+        }
 
         if (coachParsed.optionalClarifications.length > 0) {
           suggestions = buildCoachSuggestionsFromCoach(coachParsed) ?? buildFallbackCoachSuggestions();

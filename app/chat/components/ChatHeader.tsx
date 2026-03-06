@@ -1,5 +1,9 @@
 // app/chat/components/ChatHeader.tsx
 // M7: Extract header row from page.tsx (title + sidebar collapse + UserBar)
+//
+// CHANGE (M7.6 Branding):
+// - product naming updated to Release Signal
+// - subtitle clarified to better reflect the product's purpose
 
 "use client";
 
@@ -37,9 +41,11 @@ export default function ChatHeader({ sidebarCollapsed, onToggleSidebarAction }: 
 
       <div style={{ minWidth: 0, flex: 1 }}>
         <h1 style={{ fontSize: 20, fontWeight: 900, margin: 0, lineHeight: 1.15 }}>
-          AI-Assisted Quality Review & Coaching
+          Release Signal
         </h1>
-        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Coach · Review · Cases (mode is session-locked)</div>
+        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+          AI-assisted QA review, strategy refinement, and test design
+        </div>
       </div>
 
       <div style={{ flex: "0 0 auto" }}>

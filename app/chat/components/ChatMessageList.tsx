@@ -11,6 +11,7 @@ import type { ChatItem, Mode, ReviewResult, CasesResult } from "../chat.types";
 import ReviewCard from "../cards/ReviewCard";
 import CasesTextCard from "../cards/CasesTextCard";
 import CasesLegacyCard from "../cards/CasesLegacyCard";
+import RequirementCard from "../cards/RequirementCard";
 
 /** Minimal markdown safety for list items (Jira/Confluence paste). */
 function mdSafe(s: string) {
@@ -98,107 +99,138 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
   return (
     <div style={{ display: "grid", gap: 18 }}>
       {items.map((it, idx) => {
-        // CHANGE: stable-ish key prevents flicker during repair/reorder.
-        // Prefer requestId; fallback keeps deterministic uniqueness.
-        const key = it.requestId ? `${it.kind}-${it.requestId}` : `${it.kind}-${idx}`;
+        /**
+         * FIX:
+         * requestId alone is NOT unique enough.
+         * We can have multiple items with the same requestId (user + bot, replay, retry, repair).
+         *
+         * So we always include:
+         * - kind
+         * - role-ish discriminator
+         * - requestId if present
+         * - idx as final uniqueness guard
+         */
+        const rolePart =
+          it.kind === "text" ||
+          it.kind === "review" ||
+          it.kind === "casesText" ||
+          it.kind === "casesLegacy" ||
+          it.kind === "error"
+            ? it.role
+            : "item";
 
+        const reqPart = it.requestId ?? "no-rid";
+        const key = `${it.kind}-${rolePart}-${reqPart}-${idx}`;
+
+        // ---------------- TEXT ----------------
         if (it.kind === "text") {
           const isUser = it.role === "user";
 
-          // CHANGE: Only apply coach JSON prettifier in coach mode.
-          // Prevents accidental JSON prettifying in other modes (review/cases/errors).
           const textToShow =
             !isUser && mode === "coach" && looksLikeJson(it.text)
               ? tryFormatCoachJson(it.text) ?? it.text
               : it.text;
 
+          // CHANGE (M7.6): render refined coach output as a dedicated copyable requirement card
+          const isRequirement =
+            !isUser &&
+            mode === "coach" &&
+            typeof textToShow === "string" &&
+            textToShow.startsWith("Refined Technical Requirement");
+
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
-                <div
-                  style={{
-                    maxWidth: "78%",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 16,
-                    padding: 16,
+                {isRequirement ? (
+                  <div style={{ width: "100%", maxWidth: "100%" }}>
+                    <RequirementCard text={textToShow} />
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      maxWidth: "78%",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      borderRadius: 16,
+                      padding: 16,
+                      background: isUser ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.06)",
+                      color: "#fff",
+                      whiteSpace: "pre-wrap",
+                      fontSize: 13,
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    {textToShow}
 
-                    // CHANGE: dark-friendly bubble styling for both user + assistant
-                    background: isUser ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.06)",
-                    color: "#fff",
-
-                    whiteSpace: "pre-wrap",
-                    fontSize: 13,
-                    lineHeight: 1.55,
-                    boxShadow: "none",
-                  }}
-                >
-                  {textToShow}
-                  {it.requestId && (
-                    <div style={{ marginTop: 10, fontSize: 10, opacity: 0.55 }}>
-                      requestId: {it.requestId.slice(0, 8)}…
-                    </div>
-                  )}
-                </div>
+                    {it.requestId && (
+                      <div style={{ marginTop: 10, fontSize: 10, opacity: 0.55 }}>
+                        requestId: {it.requestId.slice(0, 8)}…
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {/* CHANGE: keep traceability visible even for requirement card renders */}
+              {isRequirement && it.requestId ? (
+                <div style={{ fontSize: 10, opacity: 0.55, color: "#fff" }}>
+                  requestId: {it.requestId.slice(0, 8)}…
+                </div>
+              ) : null}
             </div>
           );
         }
 
+        // ---------------- REVIEW ----------------
         if (it.kind === "review") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               <ReviewCard review={it.review as ReviewResult} />
-              {it.requestId && (
-                <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
-              )}
             </div>
           );
         }
 
+        // ---------------- CASES TEXT ----------------
         if (it.kind === "casesText") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               <CasesTextCard text={it.text} />
-              {it.requestId && (
-                <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
-              )}
             </div>
           );
         }
 
+        // ---------------- LEGACY CASES ----------------
         if (it.kind === "casesLegacy") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               <CasesLegacyCard cases={it.cases as CasesResult} />
-              {it.requestId && (
-                <div style={{ fontSize: 10, opacity: 0.6, color: "#fff" }}>requestId: {it.requestId}</div>
-              )}
             </div>
           );
         }
 
-        // it.kind === "error"
-        return (
-          <div
-            key={key}
-            style={{
-              // CHANGE: dark-friendly error card (consistent with the app)
-              border: "1px solid rgba(255,80,200,0.55)",
-              borderRadius: 16,
-              padding: 16,
-              background: "rgba(255,255,255,0.06)",
-              color: "#fff",
-              boxShadow: "none",
-            }}
-          >
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>{it.title}</div>
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.45 }}>{it.details}</pre>
+        // ---------------- ERROR ----------------
+        if (it.kind === "error") {
+          return (
+            <div
+              key={key}
+              style={{
+                border: "1px solid rgba(255,80,200,0.55)",
+                borderRadius: 16,
+                padding: 16,
+                background: "rgba(255,255,255,0.06)",
+                color: "#fff",
+              }}
+            >
+              <div style={{ fontWeight: 950, marginBottom: 10 }}>{it.title}</div>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.45 }}>
+                {it.details}
+              </pre>
+            </div>
+          );
+        }
 
-            {it.requestId && (
-              <div style={{ marginTop: 10, fontSize: 11, opacity: 0.75, fontWeight: 800 }}>
-                requestId: <span style={{ fontFamily: "monospace" }}>{it.requestId}</span>
-              </div>
-            )}
+        return (
+          <div key={key} style={{ fontSize: 12, opacity: 0.7 }}>
+            Unknown message type
           </div>
         );
       })}

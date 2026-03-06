@@ -8,10 +8,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-
-  // CHANGE: Prisma needs a URL to run `prisma generate` / migrations.
-  // If you have a different env var name in your real repo, keep that instead.
-  url = env("DATABASE_URL")
 }
 
 model Organization {

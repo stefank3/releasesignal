@@ -1,5 +1,15 @@
 // app/chat/components/ChatPanel.tsx
 // M7: Extract chat body (messages + guided suggestions + input) from page.tsx.
+//
+// CHANGE (M7.5 UX Polish):
+// - unify message list + input into one left-side surface
+// - reduce visual separation between chat and strategy panel
+// - improve proportions on desktop
+// - keep responsive stacking on narrow screens
+//
+// CHANGE (M7.7 Onboarding):
+// - add a lightweight first-run hint for empty sessions
+// - guide users toward the intended Coach → Strategy Panel → Cases workflow
 
 "use client";
 
@@ -9,20 +19,49 @@ import { isNearBottom } from "../hooks/useChatSession";
 
 import ChatMessageList from "./ChatMessageList";
 import ChatInput from "./ChatInput";
-
-// CHANGE (M7 Locked): StrategyPanel consolidates guided stepper + pinned artifact
 import StrategyPanel from "./StrategyPanel";
 
 type Props = {
   chat: UseChatSessionReturn;
-  onAfterSendAction?: () => void; // optional: page can force scroll-to-bottom, etc.
+  onAfterSendAction?: () => void;
 };
+
+function OnboardingHint({ showStrategyHint }: { showStrategyHint: boolean }) {
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 14,
+        padding: 12,
+        background: "rgba(255,255,255,0.04)",
+        color: "#fff",
+        display: "grid",
+        gap: 6,
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.92 }}>Getting started</div>
+
+      <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45 }}>
+        Describe a feature or paste a requirement.
+        {showStrategyHint ? " Use the Strategy Panel to refine it before generating cases." : ""}
+      </div>
+
+      <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
+        Example:
+        <br />
+        <span style={{ opacity: 0.88 }}>
+          Create a test strategy for login with MFA and then generate test cases.
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export default function ChatPanel({ chat, onAfterSendAction }: Props) {
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // CHANGE (M7 Locked, responsive): stack StrategyPanel under chat on narrow screens
   const [isNarrow, setIsNarrow] = useState(false);
 
   useEffect(() => {
@@ -56,64 +95,84 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
     }
   }, [chat.items, chat]);
 
-  const chatBoxStyle: React.CSSProperties = {
-    border: "1px solid rgba(255,255,255,0.10)",
-    borderRadius: 18,
-    padding: 14,
-    height: "52vh",
-    overflow: "auto",
-    background: "rgba(255,255,255,0.04)",
-  };
-
-  // CHANGE (M7 Locked): show StrategyPanel only for coach sessions
   const isCoachSession = chat.mode === "coach" && chat.activeSessionMode === "coach";
 
-  // CHANGE (M7 Locked): avoid hard 2-col layout on narrow widths
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
-    if (isNarrow) return "1fr"; // stack
-    return "1fr 360px"; // desktop split
+    if (isNarrow) return "1fr";
+    // CHANGE: slightly wider strategy area felt too detached at 360px; tighten balance a bit
+    return "minmax(0, 1fr) 340px";
   }, [isCoachSession, isNarrow]);
 
+  // CHANGE: left side becomes one unified chat surface
+  const leftPanelStyle: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.10)",
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.04)",
+    overflow: "hidden",
+    display: "grid",
+    gridTemplateRows: "1fr auto",
+    minHeight: isNarrow ? "60vh" : "68vh",
+  };
+
+  const chatBoxStyle: React.CSSProperties = {
+    padding: 14,
+    overflow: "auto",
+    minHeight: 0,
+  };
+
+  // CHANGE: visually attach input to the chat panel instead of floating below
+  const inputWrapStyle: React.CSSProperties = {
+    borderTop: "1px solid rgba(255,255,255,0.10)",
+    padding: 12,
+    background: "rgba(0,0,0,0.16)",
+  };
+
+  // CHANGE (M7.7): onboarding hint shows only on empty sessions / first interaction
+  const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
+
   return (
-    <>
-      <div
-        style={{
-          display: "grid",
-          gap: 12,
-          alignItems: "start",
-          gridTemplateColumns,
-        }}
-      >
-        {/* Chat messages */}
-        <div>
+    <div
+      style={{
+        display: "grid",
+        gap: 10,
+        alignItems: "start",
+        gridTemplateColumns,
+      }}
+    >
+      {/* Left: unified chat surface (messages + input) */}
+      <div>
+        {showOnboardingHint ? <OnboardingHint showStrategyHint={isCoachSession} /> : null}
+
+        <div style={leftPanelStyle}>
           <div ref={chatBoxRef} style={chatBoxStyle}>
             <ChatMessageList items={chat.items} mode={chat.mode} />
           </div>
-        </div>
 
-        {/* Strategy panel (coach only) */}
-        {isCoachSession ? (
-          <div>
-            <StrategyPanel chat={chat} />
+          <div style={inputWrapStyle}>
+            <ChatInput
+              ref={inputRef}
+              mode={chat.mode}
+              value={chat.input}
+              disabled={chat.isSending}
+              onChangeAction={(next: string) => chat.setInput(next)}
+              onSendAction={() => {
+                void (async () => {
+                  await chat.send();
+                  onAfterSendAction?.();
+                })();
+              }}
+            />
           </div>
-        ) : null}
+        </div>
       </div>
 
-      {/* Input row */}
-      <ChatInput
-        ref={inputRef}
-        mode={chat.mode}
-        value={chat.input}
-        disabled={chat.isSending}
-        onChangeAction={(next: string) => chat.setInput(next)}
-        onSendAction={() => {
-          void (async () => {
-            await chat.send();
-            onAfterSendAction?.();
-          })();
-        }}
-      />
-    </>
+      {/* Right: strategy panel */}
+      {isCoachSession ? (
+        <div>
+          <StrategyPanel chat={chat} />
+        </div>
+      ) : null}
+    </div>
   );
 }
