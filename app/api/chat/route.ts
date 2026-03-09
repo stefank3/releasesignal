@@ -109,11 +109,13 @@ function buildCoachContinuityArtifactPatch(args: {
   latestUserMessage: string;
   guidedAnswer: boolean;
   weakInput: boolean;
-}): SessionArtifact | null {
+}): ReturnType<typeof parseGuidedAnswerToRefinedRequirement> | null {
   const existing = args.existingArtifact?.refinedRequirement;
   const latestMessage = args.latestUserMessage.trim();
 
-  const existingContext = typeof existing?.context === "string" ? existing.context.trim() : "";
+  const existingContext =
+    typeof existing?.context === "string" ? existing.context.trim() : "";
+
   let nextContext = existingContext;
 
   const shouldAppendLatestMessage =
@@ -124,7 +126,9 @@ function buildCoachContinuityArtifactPatch(args: {
     !existingContext.toLowerCase().includes(latestMessage.toLowerCase());
 
   if (shouldAppendLatestMessage) {
-    nextContext = nextContext ? `${nextContext}\n\nLatest refinement: ${latestMessage}` : latestMessage;
+    nextContext = nextContext
+      ? `${nextContext}\n\nLatest refinement: ${latestMessage}`
+      : latestMessage;
   }
 
   const objective =
@@ -137,27 +141,24 @@ function buildCoachContinuityArtifactPatch(args: {
     12
   );
 
-  const patch: SessionArtifact = {
-    refinedRequirement: {
-      objective: objective || undefined,
-      context: nextContext || existing?.context || undefined,
-      inScope: existing?.inScope ?? [],
-      outOfScope: existing?.outOfScope ?? [],
-      integrations: existing?.integrations ?? [],
-      riskFocus,
-      acceptanceCriteria: existing?.acceptanceCriteria ?? [],
-    },
+  const patch = {
+    objective: objective || undefined,
+    context: nextContext || existing?.context || undefined,
+    inScope: existing?.inScope ?? [],
+    outOfScope: existing?.outOfScope ?? [],
+    integrations: existing?.integrations ?? [],
+    riskFocus,
+    acceptanceCriteria: existing?.acceptanceCriteria ?? [],
   };
 
-  const rr = patch.refinedRequirement;
   const hasMeaningfulPatch =
-    !!rr.objective ||
-    !!rr.context ||
-    (Array.isArray(rr.inScope) && rr.inScope.length > 0) ||
-    (Array.isArray(rr.outOfScope) && rr.outOfScope.length > 0) ||
-    (Array.isArray(rr.integrations) && rr.integrations.length > 0) ||
-    (Array.isArray(rr.riskFocus) && rr.riskFocus.length > 0) ||
-    (Array.isArray(rr.acceptanceCriteria) && rr.acceptanceCriteria.length > 0);
+    !!patch.objective ||
+    !!patch.context ||
+    patch.inScope.length > 0 ||
+    patch.outOfScope.length > 0 ||
+    patch.integrations.length > 0 ||
+    patch.riskFocus.length > 0 ||
+    patch.acceptanceCriteria.length > 0;
 
   return hasMeaningfulPatch ? patch : null;
 }
@@ -946,12 +947,14 @@ export async function POST(req: Request) {
         hasArtifact &&
         !explicitRegenerationRequest);
 
+    const artifactForContext: SessionArtifact | null = wantCases
+      ? sessionArtifact
+      : effectiveArtifactForCoach;
+
     const artifactContext =
-      includeArtifactContext && (wantCases ? sessionArtifact : effectiveArtifactForCoach)
-        ? artifactToContextText(
-            wantCases ? sessionArtifact : (effectiveArtifactForCoach as SessionArtifact)
-          )
-        : null;
+      includeArtifactContext && artifactForContext
+      ? artifactToContextText(artifactForContext)
+      : null;
 
     const messagesForModel: { role: "system" | "user"; content: string }[] = [
       { role: "system", content: systemPrompt },
