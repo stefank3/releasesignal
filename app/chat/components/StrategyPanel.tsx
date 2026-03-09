@@ -5,6 +5,12 @@
 // - tighter spacing and clearer visual hierarchy
 // - form block + preview block + pinned requirement block
 // - same structured artifact pipeline, no backend contract changes
+//
+// CHANGE (M8.5 Strategy Panel Alignment):
+// - removes heavy outer framing so the panel fits cleanly inside ChatPanel
+// - aligns visible naming with Strategy / Refined Requirement terminology
+// - improves helper text for beta workflow clarity
+// - keeps all existing behavior and artifact usage intact
 
 "use client";
 
@@ -163,7 +169,7 @@ function ArtifactMiniCard(props: {
   return (
     <Surface>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ fontWeight: 950, fontSize: 12 }}>Pinned requirement</div>
+        <div style={{ fontWeight: 950, fontSize: 12 }}>Refined Requirement</div>
         <span style={{ fontSize: 11, opacity: 0.72 }}>{updated ? `Updated ${updated}` : "Pinned"}</span>
       </div>
 
@@ -229,7 +235,7 @@ function ArtifactMiniCard(props: {
       ) : null}
 
       <div style={{ marginTop: 10, fontSize: 11, opacity: 0.72, lineHeight: 1.35 }}>
-        Cases mode will use this pinned requirement as context for aligned TC-001…TC-012 output.
+        Test Design will use this pinned requirement as context for aligned test generation.
       </div>
     </Surface>
   );
@@ -287,19 +293,21 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
   return (
     <div
       style={{
-        border: "1px solid rgba(255,255,255,0.10)",
-        borderRadius: 18,
-        padding: 12,
-        background: "rgba(255,255,255,0.04)",
         color: "#fff",
         display: "grid",
         gap: 12,
       }}
     >
+      {/* M8.5:
+          Outer border/background removed here because ChatPanel now provides
+          the workspace shell for the Strategy area. This avoids double framing.
+      */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ display: "grid", gap: 3 }}>
-          <div style={{ fontWeight: 950 }}>Strategy panel</div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>Refine the requirement, then pin it into this session.</div>
+          <div style={{ fontWeight: 950 }}>Strategy</div>
+          <div style={{ fontSize: 11, opacity: 0.7 }}>
+            Refine the requirement and keep the session artifact aligned as scope evolves.
+          </div>
         </div>
         <Pill>{hasPinned ? "Pinned ✓" : "Not pinned"}</Pill>
       </div>
@@ -308,8 +316,8 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
         <SectionTitle>Refine requirement</SectionTitle>
 
         <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45, marginBottom: 10 }}>
-          Fill the fields below, then paste them into the main input and send. This will create or update the pinned
-          refined requirement.
+          Fill the fields below, then paste them into the main input and send. This creates or updates the pinned
+          Refined Requirement for the current session.
         </div>
 
         <div style={{ display: "grid", gap: 9 }}>
@@ -349,7 +357,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             label="Scope"
             value={scope}
             onChange={setScope}
-            placeholder='Use format like: In: login, MFA challenge / Out: admin portal, audit exports'
+            placeholder="In: login, MFA challenge / Out: admin portal, audit exports"
             rows={2}
           />
 
@@ -407,7 +415,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
       </Surface>
 
       <div>
-        <SectionTitle>Pinned requirement</SectionTitle>
+        <SectionTitle>Refined Requirement</SectionTitle>
         {hasPinned ? (
           <ArtifactMiniCard artifact={chat.sessionArtifact} artifactUpdatedAt={chat.artifactUpdatedAt} />
         ) : (

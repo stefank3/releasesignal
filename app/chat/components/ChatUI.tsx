@@ -3,6 +3,11 @@
 // CHANGE: extracted small UI primitives from page.tsx (no behavior change).
 //
 // NOTE: File name standardized to ChatUI.tsx (capital UI) to avoid case-sensitivity issues on Vercel/Linux.
+//
+// CHANGE (M8.3 Workflow Terminology Alignment):
+// - visible mode labels updated from COACH / REVIEW / CASES
+// - new UI labels are STRATEGY / TEST REVIEW / TEST DESIGN
+// - internal Mode values remain unchanged
 
 "use client";
 
@@ -39,6 +44,12 @@ export function Chip({ children }: { children: React.ReactNode }) {
 /**
  * ✅ Milestone 6.1:
  * Mode identity must be visually strong and consistent everywhere (sidebar + header).
+ *
+ * M8.3:
+ * Visible UI terminology now follows the workflow language:
+ * coach  -> STRATEGY
+ * review -> TEST REVIEW
+ * cases  -> TEST DESIGN
  */
 export function ModeBadge({
   mode,
@@ -51,10 +62,22 @@ export function ModeBadge({
 }) {
   const meta =
     mode === "coach"
-      ? { label: "COACH", bg: "rgba(56,189,248,0.16)", border: "rgba(56,189,248,0.35)" }
+      ? {
+          label: "STRATEGY",
+          bg: "rgba(56,189,248,0.16)",
+          border: "rgba(56,189,248,0.35)",
+        }
       : mode === "review"
-        ? { label: "REVIEW", bg: "rgba(34,197,94,0.16)", border: "rgba(34,197,94,0.35)" }
-        : { label: "CASES", bg: "rgba(168,85,247,0.16)", border: "rgba(168,85,247,0.35)" };
+        ? {
+            label: "TEST REVIEW",
+            bg: "rgba(34,197,94,0.16)",
+            border: "rgba(34,197,94,0.35)",
+          }
+        : {
+            label: "TEST DESIGN",
+            bg: "rgba(168,85,247,0.16)",
+            border: "rgba(168,85,247,0.35)",
+          };
 
   return (
     <span
@@ -80,7 +103,7 @@ export function ModeBadge({
   );
 }
 
-/** Header button style for Coach/Review/Cases/Clear and demo actions. */
+/** Header button style for toolbar actions and workflow-related controls. */
 export function HeaderButton({
   active,
   children,
@@ -116,7 +139,13 @@ export function HeaderButton({
 }
 
 /** Layout helpers (toolbar + grouping) */
-export function Toolbar({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
+export function Toolbar({
+  children,
+  right,
+}: {
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
   return (
     <div
       style={{
@@ -130,7 +159,16 @@ export function Toolbar({ children, right }: { children: React.ReactNode; right?
         background: "rgba(255,255,255,0.05)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0, flex: 1 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+          minWidth: 0,
+          flex: 1,
+        }}
+      >
         {children}
       </div>
       {right ? (

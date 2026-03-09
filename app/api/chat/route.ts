@@ -7,7 +7,12 @@ import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
 
 import { QA_SYSTEM_PROMPT, CASES_SYSTEM_PROMPT } from "@/lib/framework/systemPrompt";
-import { isCoachResult, isReviewResult, type CoachResult, type ReviewResult } from "@/lib/framework/reviewSchema";
+import {
+  isCoachResult,
+  isReviewResult,
+  type CoachResult,
+  type ReviewResult,
+} from "@/lib/framework/reviewSchema";
 
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics";
@@ -55,6 +60,157 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
+ * CHANGE (M8.7):
+ * Explicit user escape hatch for "start fresh" behavior.
+ * This is used for Strategy continuity and Test Design continuity.
+ */
+function isExplicitRegenerationRequest(message: string): boolean {
+  return /\b(regenerate|restart|start over|from scratch|fresh start|ignore previous|ignore the previous|discard previous|replace the suite|new suite)\b/i.test(
+    message
+  );
+}
+
+function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of values) {
+    const value = String(raw ?? "").trim();
+    if (!value) continue;
+
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    out.push(value);
+
+    if (out.length >= max) break;
+  }
+
+  return out;
+}
+
+/**
+ * CHANGE (M8.7):
+ * Very lightweight artifact enrichment for Strategy continuity.
+ *
+ * Goal:
+ * - keep the Refined Requirement evolving across Strategy prompts
+ * - avoid backend contract changes
+ * - preserve existing guided-answer merge behavior
+ *
+ * Notes:
+ * - guided structured answers are still the strongest artifact update path
+ * - this helper adds continuity value for normal free-text refinements
+ */
+function buildCoachContinuityArtifactPatch(args: {
+  existingArtifact: SessionArtifact | null;
+  coach: CoachResult;
+  latestUserMessage: string;
+  guidedAnswer: boolean;
+  weakInput: boolean;
+}): SessionArtifact | null {
+  const existing = args.existingArtifact?.refinedRequirement;
+  const latestMessage = args.latestUserMessage.trim();
+
+  const existingContext = typeof existing?.context === "string" ? existing.context.trim() : "";
+  let nextContext = existingContext;
+
+  const shouldAppendLatestMessage =
+    !args.guidedAnswer &&
+    !args.weakInput &&
+    latestMessage.length > 0 &&
+    latestMessage.length <= 600 &&
+    !existingContext.toLowerCase().includes(latestMessage.toLowerCase());
+
+  if (shouldAppendLatestMessage) {
+    nextContext = nextContext ? `${nextContext}\n\nLatest refinement: ${latestMessage}` : latestMessage;
+  }
+
+  const objective =
+    (typeof existing?.objective === "string" && existing.objective.trim()) ||
+    args.coach.highSignalApproach.goals[0] ||
+    "";
+
+  const riskFocus = uniqueNonEmpty(
+    [...(existing?.riskFocus ?? []), ...args.coach.riskMatrix.map((r) => r.risk)],
+    12
+  );
+
+  const patch: SessionArtifact = {
+    refinedRequirement: {
+      objective: objective || undefined,
+      context: nextContext || existing?.context || undefined,
+      inScope: existing?.inScope ?? [],
+      outOfScope: existing?.outOfScope ?? [],
+      integrations: existing?.integrations ?? [],
+      riskFocus,
+      acceptanceCriteria: existing?.acceptanceCriteria ?? [],
+    },
+  };
+
+  const rr = patch.refinedRequirement;
+  const hasMeaningfulPatch =
+    !!rr.objective ||
+    !!rr.context ||
+    (Array.isArray(rr.inScope) && rr.inScope.length > 0) ||
+    (Array.isArray(rr.outOfScope) && rr.outOfScope.length > 0) ||
+    (Array.isArray(rr.integrations) && rr.integrations.length > 0) ||
+    (Array.isArray(rr.riskFocus) && rr.riskFocus.length > 0) ||
+    (Array.isArray(rr.acceptanceCriteria) && rr.acceptanceCriteria.length > 0);
+
+  return hasMeaningfulPatch ? patch : null;
+}
+
+/**
+ * CHANGE (M8.7):
+ * Parse existing TC headers from prior assistant output so Test Design can continue
+ * numbering and avoid obvious duplicates.
+ */
+function extractCaseHeadersFromText(text: string): {
+  headers: string[];
+  maxCaseNumber: number;
+} {
+  const headers: string[] = [];
+  let maxCaseNumber = 0;
+
+  const regex = /^\s*TC-(\d{1,4})\s*[-–:]\s*(.+)$/gim;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    const num = Number(match[1] || 0);
+    const title = String(match[2] || "").trim();
+
+    if (num > maxCaseNumber) maxCaseNumber = num;
+    if (title) headers.push(`TC-${String(num).padStart(3, "0")} - ${title}`);
+  }
+
+  return { headers, maxCaseNumber };
+}
+
+function buildExistingCasesBaseline(existingAssistantContents: string[]): {
+  suiteSummary: string | null;
+  maxCaseNumber: number;
+  existingCount: number;
+} {
+  const headers: string[] = [];
+  let maxCaseNumber = 0;
+
+  for (const content of existingAssistantContents) {
+    const parsed = extractCaseHeadersFromText(content);
+    headers.push(...parsed.headers);
+    if (parsed.maxCaseNumber > maxCaseNumber) maxCaseNumber = parsed.maxCaseNumber;
+  }
+
+  const dedupedHeaders = uniqueNonEmpty(headers, 120);
+  return {
+    suiteSummary: dedupedHeaders.length ? dedupedHeaders.join("\n") : null,
+    maxCaseNumber,
+    existingCount: dedupedHeaders.length,
+  };
+}
+
+/**
  * CHANGE (M7.6):
  * Keep a normal exploratory coach response for early / loose prompts.
  * This preserves the original "QA coach" feel before the requirement is refined.
@@ -68,7 +224,9 @@ function coachToText(coach: CoachResult): string {
   lines.push("");
   lines.push("Risk matrix:");
   for (const r of coach.riskMatrix.slice(0, 6)) {
-    lines.push(`- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact}) — Mitigation: ${r.mitigation}`);
+    lines.push(
+      `- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact}) — Mitigation: ${r.mitigation}`
+    );
   }
 
   lines.push("");
@@ -98,7 +256,10 @@ function coachToText(coach: CoachResult): string {
  * Refined coach responses should look like a reusable technical requirement artifact.
  * This is the format the user can copy into Cases mode.
  */
-function coachToTechnicalRequirementText(coach: CoachResult, artifact: SessionArtifact | null): string {
+function coachToTechnicalRequirementText(
+  coach: CoachResult,
+  artifact: SessionArtifact | null
+): string {
   const lines: string[] = [];
   const rr = artifact?.refinedRequirement;
 
@@ -110,7 +271,6 @@ function coachToTechnicalRequirementText(coach: CoachResult, artifact: SessionAr
     lines.push(rr.objective.trim());
     lines.push("");
   } else if (coach.highSignalApproach.goals[0]) {
-    // CHANGE: fallback so the format still works even if artifact is not fully populated yet
     lines.push("Objective:");
     lines.push(coach.highSignalApproach.goals[0]);
     lines.push("");
@@ -187,7 +347,8 @@ function hasMeaningfulRefinedRequirement(artifact: SessionArtifact | null): bool
   if (!rr) return false;
 
   const hasText = (v?: string) => typeof v === "string" && v.trim().length > 0;
-  const hasList = (v?: string[]) => Array.isArray(v) && v.some((x) => String(x ?? "").trim().length > 0);
+  const hasList = (v?: string[]) =>
+    Array.isArray(v) && v.some((x) => String(x ?? "").trim().length > 0);
 
   return (
     hasText(rr.objective) ||
@@ -244,8 +405,16 @@ export async function POST(req: Request) {
         meta: { path: "/api/chat" },
       });
 
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 401, latencyMs: Date.now() - startTime });
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: responseHeaders(requestId) });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 401,
+        latencyMs: Date.now() - startTime,
+      });
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401, headers: responseHeaders(requestId) }
+      );
     }
 
     const user = session.user;
@@ -260,8 +429,16 @@ export async function POST(req: Request) {
         meta: { reason: "missing_sub" },
       });
 
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 401, latencyMs: Date.now() - startTime });
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers: responseHeaders(requestId) });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 401,
+        latencyMs: Date.now() - startTime,
+      });
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401, headers: responseHeaders(requestId) }
+      );
     }
 
     auth0SubForLog = sub;
@@ -274,18 +451,42 @@ export async function POST(req: Request) {
     try {
       body = (await req.json()) as ChatBody;
     } catch {
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 400, latencyMs: Date.now() - startTime });
-      return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400, headers: responseHeaders(requestId) });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 400,
+        latencyMs: Date.now() - startTime,
+      });
+      return NextResponse.json(
+        { ok: false, error: "Invalid JSON body" },
+        { status: 400, headers: responseHeaders(requestId) }
+      );
     }
 
     const message = body?.message;
     if (!message || typeof message !== "string") {
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 400, latencyMs: Date.now() - startTime });
-      return NextResponse.json({ ok: false, error: "Missing 'message' (must be a string)" }, { status: 400, headers: responseHeaders(requestId) });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 400,
+        latencyMs: Date.now() - startTime,
+      });
+      return NextResponse.json(
+        { ok: false, error: "Missing 'message' (must be a string)" },
+        { status: 400, headers: responseHeaders(requestId) }
+      );
     }
     if (message.length > 8000) {
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 400, latencyMs: Date.now() - startTime });
-      return NextResponse.json({ ok: false, error: "Message too long (max 8000 characters)" }, { status: 400, headers: responseHeaders(requestId) });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 400,
+        latencyMs: Date.now() - startTime,
+      });
+      return NextResponse.json(
+        { ok: false, error: "Message too long (max 8000 characters)" },
+        { status: 400, headers: responseHeaders(requestId) }
+      );
     }
 
     // 2) Mode selection
@@ -297,17 +498,33 @@ export async function POST(req: Request) {
     modeForMetric = clientMode;
 
     const weakInput = isWeakInput(message);
+    const explicitRegenerationRequest = isExplicitRegenerationRequest(message);
 
     // M7.4: guided clarification answer heuristic
-    const guidedAnswer = executionMode === "coach" && !wantCases && isGuidedClarificationAnswer(message);
+    const guidedAnswer =
+      executionMode === "coach" && !wantCases && isGuidedClarificationAnswer(message);
 
     // 3) RBAC: review is admin-only
     if (executionMode === "review") {
       const isAdmin = await isAdminFromAccessToken();
       if (!isAdmin) {
-        log("warn", { event: "forbidden_review_access", requestId, auth0Sub, mode: clientMode, durationMs: Date.now() - startTime });
-        await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 403, latencyMs: Date.now() - startTime });
-        return NextResponse.json({ ok: false, mode: clientMode, error: "Forbidden" }, { status: 403, headers: responseHeaders(requestId) });
+        log("warn", {
+          event: "forbidden_review_access",
+          requestId,
+          auth0Sub,
+          mode: clientMode,
+          durationMs: Date.now() - startTime,
+        });
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: modeForMetric,
+          status: 403,
+          latencyMs: Date.now() - startTime,
+        });
+        return NextResponse.json(
+          { ok: false, mode: clientMode, error: "Forbidden" },
+          { status: 403, headers: responseHeaders(requestId) }
+        );
       }
     }
 
@@ -318,10 +535,18 @@ export async function POST(req: Request) {
       email: (user.email as string | undefined) ?? null,
     });
 
-    orgId = typeof orgState.organizationId === "string" ? orgState.organizationId : undefined;
+    orgId =
+      typeof orgState.organizationId === "string"
+        ? orgState.organizationId
+        : undefined;
 
     if (!orgState.wallet || orgState.wallet.balance <= 0) {
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 402, latencyMs: Date.now() - startTime });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 402,
+        latencyMs: Date.now() - startTime,
+      });
 
       log("warn", {
         event: "billing_failure",
@@ -336,14 +561,22 @@ export async function POST(req: Request) {
       });
 
       return NextResponse.json(
-        { ok: false, mode: clientMode, error: "Insufficient credits", creditsRemaining: orgState.wallet?.balance ?? 0 },
+        {
+          ok: false,
+          mode: clientMode,
+          error: "Insufficient credits",
+          creditsRemaining: orgState.wallet?.balance ?? 0,
+        },
         { status: 402, headers: responseHeaders(requestId) }
       );
     }
 
     // 5) Rate limit
     const { success, remaining, reset } = await chatRatelimit.limit(identifier);
-    const resetSeconds = typeof reset === "number" ? Math.max(1, Math.ceil((reset - Date.now()) / 1000)) : 60;
+    const resetSeconds =
+      typeof reset === "number"
+        ? Math.max(1, Math.ceil((reset - Date.now()) / 1000))
+        : 60;
 
     rateMeta = {
       limit: CHAT_RATE_LIMIT.limit,
@@ -362,7 +595,13 @@ export async function POST(req: Request) {
         meta: { resetSeconds },
       });
 
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 429, latencyMs: Date.now() - startTime, rateLimited: true });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 429,
+        latencyMs: Date.now() - startTime,
+        rateLimited: true,
+      });
 
       return NextResponse.json(
         {
@@ -371,7 +610,14 @@ export async function POST(req: Request) {
           details: `Too many requests. Try again in ~${resetSeconds}s.`,
           rate: { ...rateMeta, remaining: 0 },
         },
-        { status: 429, headers: responseHeaders(requestId, { ...rateMeta, remaining: 0 }, resetSeconds) }
+        {
+          status: 429,
+          headers: responseHeaders(
+            requestId,
+            { ...rateMeta, remaining: 0 },
+            resetSeconds
+          ),
+        }
       );
     }
 
@@ -385,7 +631,12 @@ export async function POST(req: Request) {
     });
 
     if (!sessionState.ok) {
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 409, latencyMs: Date.now() - startTime });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 409,
+        latencyMs: Date.now() - startTime,
+      });
       return sessionState.response;
     }
 
@@ -402,7 +653,14 @@ export async function POST(req: Request) {
       orgId,
       sessionId,
       mode: clientMode,
-      meta: { messageChars: message.length, weakInput, clientMode, guidedAnswer, hasArtifact: !!sessionArtifact },
+      meta: {
+        messageChars: message.length,
+        weakInput,
+        clientMode,
+        guidedAnswer,
+        explicitRegenerationRequest,
+        hasArtifact: !!sessionArtifact,
+      },
     });
 
     // 7) Replay
@@ -418,11 +676,16 @@ export async function POST(req: Request) {
         fallback: sessionArtifact,
       });
 
-      // CHANGE: fixed indentation/style (your pasted block was misaligned)
       sessionArtifact = refreshed.artifact ?? sessionArtifact ?? null;
-      artifactUpdatedAtIso = refreshed.artifactUpdatedAtIso ?? artifactUpdatedAtIso ?? null;
+      artifactUpdatedAtIso =
+        refreshed.artifactUpdatedAtIso ?? artifactUpdatedAtIso ?? null;
 
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 200, latencyMs: Date.now() - startTime });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 200,
+        latencyMs: Date.now() - startTime,
+      });
 
       if (executionMode === "review") {
         const raw = existingAssistant.content ?? "";
@@ -438,7 +701,9 @@ export async function POST(req: Request) {
                 usage: {
                   promptTokens: existingAssistant.tokensIn ?? 0,
                   completionTokens: existingAssistant.tokensOut ?? 0,
-                  totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+                  totalTokens:
+                    (existingAssistant.tokensIn ?? 0) +
+                    (existingAssistant.tokensOut ?? 0),
                 },
                 rate: rateMeta,
                 replay: true,
@@ -461,7 +726,9 @@ export async function POST(req: Request) {
             usage: {
               promptTokens: existingAssistant.tokensIn ?? 0,
               completionTokens: existingAssistant.tokensOut ?? 0,
-              totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+              totalTokens:
+                (existingAssistant.tokensIn ?? 0) +
+                (existingAssistant.tokensOut ?? 0),
             },
             rate: rateMeta,
             replay: true,
@@ -473,8 +740,12 @@ export async function POST(req: Request) {
       }
 
       const replayHasClarifications =
-        !wantCases && executionMode === "coach" && (existingAssistant.content ?? "").includes("If you want more detailed tests, answer:");
-      const replaySuggestions: CoachSuggestions | null = replayHasClarifications ? buildFallbackCoachSuggestions() : null;
+        !wantCases &&
+        executionMode === "coach" &&
+        (existingAssistant.content ?? "").includes("If you want more detailed tests, answer:");
+      const replaySuggestions: CoachSuggestions | null = replayHasClarifications
+        ? buildFallbackCoachSuggestions()
+        : null;
 
       return NextResponse.json(
         {
@@ -485,7 +756,9 @@ export async function POST(req: Request) {
           usage: {
             promptTokens: existingAssistant.tokensIn ?? 0,
             completionTokens: existingAssistant.tokensOut ?? 0,
-            totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+            totalTokens:
+              (existingAssistant.tokensIn ?? 0) +
+              (existingAssistant.tokensOut ?? 0),
           },
           rate: rateMeta,
           replay: true,
@@ -526,13 +799,66 @@ export async function POST(req: Request) {
       }
     }
 
+    /**
+     * CHANGE (M8.7):
+     * Test Design continuity baseline:
+     * - load prior assistant outputs for the session
+     * - extract existing TC numbering/title headers
+     * - pass that baseline back into the model
+     *
+     * This is intentionally lightweight for beta and does not require a new artifact type yet.
+     */
+    let existingCasesSuiteSummary: string | null = null;
+    let nextAvailableCaseNumber = 1;
+    let existingCasesCount = 0;
+
+    if (wantCases && !explicitRegenerationRequest) {
+      const priorAssistantMessages = await prisma.chatMessage.findMany({
+        where: {
+          sessionId,
+          auth0Sub,
+          role: "assistant",
+        },
+        select: {
+          content: true,
+        },
+      });
+
+      const baseline = buildExistingCasesBaseline(
+        priorAssistantMessages.map((m) => m.content ?? "")
+      );
+
+      existingCasesSuiteSummary = baseline.suiteSummary;
+      existingCasesCount = baseline.existingCount;
+      nextAvailableCaseNumber = Math.max(1, baseline.maxCaseNumber + 1);
+    }
+
     // 10) Prompts
     const systemPrompt = wantCases ? CASES_SYSTEM_PROMPT : QA_SYSTEM_PROMPT;
+
+    const effectiveArtifactForCoach =
+      executionMode === "coach" && !wantCases && explicitRegenerationRequest
+        ? null
+        : sessionArtifact;
 
     const modeInstruction = wantCases
       ? [
           `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
-          "Generate the test cases for the user's feature. Follow the OUTPUT CONTRACT exactly.",
+          existingCasesCount > 0 && !explicitRegenerationRequest
+            ? "SESSION_CONTINUITY: true"
+            : "SESSION_CONTINUITY: false",
+          existingCasesCount > 0 && !explicitRegenerationRequest
+            ? `NEXT_AVAILABLE_TEST_CASE_ID: TC-${String(nextAvailableCaseNumber).padStart(3, "0")}`
+            : "NEXT_AVAILABLE_TEST_CASE_ID: TC-001",
+          existingCasesCount > 0 && !explicitRegenerationRequest
+            ? "Treat previously generated test cases as the baseline suite for this session."
+            : "Generate a fresh test suite for the user's feature.",
+          existingCasesCount > 0 && !explicitRegenerationRequest
+            ? "Generate ONLY missing tests requested by the user or implied by missing coverage."
+            : "Generate the initial structured test suite for the user's feature.",
+          "Avoid both exact duplicates and semantic duplicates.",
+          "Do NOT repeat, rephrase, or renumber existing tests when continuity is active.",
+          "Follow the OUTPUT CONTRACT exactly.",
         ].join("\n")
       : executionMode === "review"
         ? [
@@ -562,6 +888,15 @@ export async function POST(req: Request) {
             "MODE: COACH (TESTS-FIRST, LOW-FRICTION)",
             "Return ONLY valid JSON. No markdown. No prose outside JSON.",
             `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
+            explicitRegenerationRequest
+              ? "SESSION_CONTINUITY_RESET: true"
+              : "SESSION_CONTINUITY: true",
+            explicitRegenerationRequest
+              ? "Treat this Strategy request as a fresh analysis and ignore prior refined requirement context for this response."
+              : "Treat the user's new message as a refinement to the current session requirement unless they explicitly asked to regenerate.",
+            explicitRegenerationRequest
+              ? "Do a clean re-analysis from the current user message."
+              : "Update and extend the evolving requirement when new scope, constraints, or risks are introduced.",
             "Primary rule: Do NOT start by asking questions.",
             "If input is weak: make reasonable assumptions and proceed.",
             "Always provide: assumptions + riskMatrix + highSignalApproach + testIdeas.",
@@ -595,20 +930,49 @@ export async function POST(req: Request) {
           ].join("\n");
 
     /**
-     * CHANGE (M7): Artifact injection rules
-     * - Cases: ALWAYS include pinned artifact (if meaningful) to align the 8–12 tests.
-     * - Coach: include only when it helps (guided answer or weak input), to avoid over-biasing normal coach runs.
+     * CHANGE (M8.7):
+     * Artifact injection rules after advisor continuity update:
+     * - Cases: ALWAYS include pinned artifact (if meaningful) to align generation.
+     * - Coach: include existing artifact by default unless the user explicitly asked to regenerate.
      */
-    const hasArtifact = hasMeaningfulRefinedRequirement(sessionArtifact);
-    const includeArtifactContext =
-      (wantCases && hasArtifact) || (!wantCases && executionMode === "coach" && hasArtifact && (guidedAnswer || weakInput));
+    const hasArtifact = hasMeaningfulRefinedRequirement(
+      wantCases ? sessionArtifact : effectiveArtifactForCoach
+    );
 
-    const artifactContext = includeArtifactContext && sessionArtifact ? artifactToContextText(sessionArtifact) : null;
+    const includeArtifactContext =
+      (wantCases && hasArtifact) ||
+      (!wantCases &&
+        executionMode === "coach" &&
+        hasArtifact &&
+        !explicitRegenerationRequest);
+
+    const artifactContext =
+      includeArtifactContext && (wantCases ? sessionArtifact : effectiveArtifactForCoach)
+        ? artifactToContextText(
+            wantCases ? sessionArtifact : (effectiveArtifactForCoach as SessionArtifact)
+          )
+        : null;
 
     const messagesForModel: { role: "system" | "user"; content: string }[] = [
       { role: "system", content: systemPrompt },
       { role: "system", content: modeInstruction },
-      ...(artifactContext ? [{ role: "system" as const, content: artifactContext }] : []),
+      ...(artifactContext
+        ? [{ role: "system" as const, content: artifactContext }]
+        : []),
+      ...(wantCases && existingCasesSuiteSummary && !explicitRegenerationRequest
+        ? [
+            {
+              role: "system" as const,
+              content: [
+                "EXISTING_TEST_SUITE_BASELINE:",
+                "The following test cases already exist in this session.",
+                "Use them to continue numbering and avoid duplicates.",
+                "",
+                existingCasesSuiteSummary,
+              ].join("\n"),
+            },
+          ]
+        : []),
       { role: "user", content: message },
     ];
 
@@ -634,7 +998,8 @@ export async function POST(req: Request) {
 
     const promptTokens = completion.usage?.prompt_tokens ?? 0;
     const completionTokens = completion.usage?.completion_tokens ?? 0;
-    const totalTokens = completion.usage?.total_tokens ?? promptTokens + completionTokens;
+    const totalTokens =
+      completion.usage?.total_tokens ?? promptTokens + completionTokens;
 
     const creditsCharged = tokensToCredits(totalTokens);
 
@@ -691,25 +1056,76 @@ export async function POST(req: Request) {
       }
 
       if (coachParsed) {
-        coachParsed.optionalClarifications = coachParsed.optionalClarifications.slice(0, 3);
+        coachParsed.optionalClarifications =
+          coachParsed.optionalClarifications.slice(0, 3);
         if (guidedAnswer) coachParsed.optionalClarifications = [];
 
         /**
-         * CHANGE (M7.6):
+         * CHANGE (M8.7):
+         * Strategy continuity artifact enrichment.
+         *
+         * Guided answers already update the artifact strongly before the model call.
+         * This additional step keeps free-text Strategy refinements evolving across the session.
+         */
+        if (!explicitRegenerationRequest) {
+          const continuityPatch = buildCoachContinuityArtifactPatch({
+            existingArtifact: sessionArtifact,
+            coach: coachParsed,
+            latestUserMessage: message,
+            guidedAnswer,
+            weakInput,
+          });
+
+          if (continuityPatch) {
+            const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
+            const now = new Date();
+
+            await prisma.chatSession.update({
+              where: { id: sessionId },
+              data: {
+                artifactJson: prismaJsonValue(nextArtifact),
+                artifactUpdatedAt: now,
+              },
+              select: { id: true },
+            });
+
+            sessionArtifact = nextArtifact;
+            artifactUpdatedAtIso = now.toISOString();
+          }
+        }
+
+        /**
+         * CHANGE (M7.6 + M8.7):
          * - exploratory coach reply stays in normal QA-coach format
          * - refined coach reply becomes a reusable technical requirement artifact
+         * - explicit regeneration request suppresses old artifact-driven formatting for this reply
          */
-        if (shouldReturnTechnicalRequirement({ guidedAnswer, artifact: sessionArtifact })) {
-          replyTextForUser = coachToTechnicalRequirementText(coachParsed, sessionArtifact);
+        const effectiveArtifactForReply = explicitRegenerationRequest
+          ? null
+          : sessionArtifact;
+
+        if (
+          shouldReturnTechnicalRequirement({
+            guidedAnswer,
+            artifact: effectiveArtifactForReply,
+          })
+        ) {
+          replyTextForUser = coachToTechnicalRequirementText(
+            coachParsed,
+            effectiveArtifactForReply
+          );
         } else {
           replyTextForUser = coachToText(coachParsed);
         }
 
         if (coachParsed.optionalClarifications.length > 0) {
-          suggestions = buildCoachSuggestionsFromCoach(coachParsed) ?? buildFallbackCoachSuggestions();
+          suggestions =
+            buildCoachSuggestionsFromCoach(coachParsed) ??
+            buildFallbackCoachSuggestions();
         }
       } else {
-        replyTextForUser = "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
+        replyTextForUser =
+          "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
       }
     }
 
@@ -720,7 +1136,9 @@ export async function POST(req: Request) {
     }
 
     const assistantContentToStore =
-      executionMode === "review" ? reviewStoredJson ?? rawReply : replyTextForUser ?? "No reply returned";
+      executionMode === "review"
+        ? reviewStoredJson ?? rawReply
+        : replyTextForUser ?? "No reply returned";
 
     // 13) Billing + assistant persistence
     let creditsRemaining: number | null = null;
@@ -736,7 +1154,12 @@ export async function POST(req: Request) {
       });
     } catch (e) {
       if (e instanceof InsufficientCreditsError) {
-        await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 402, latencyMs: Date.now() - startTime });
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: modeForMetric,
+          status: 402,
+          latencyMs: Date.now() - startTime,
+        });
 
         return NextResponse.json(
           {
@@ -759,7 +1182,12 @@ export async function POST(req: Request) {
 
     // 14) Responses
     if (executionMode === "review") {
-      await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 200, latencyMs: Date.now() - startTime });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 200,
+        latencyMs: Date.now() - startTime,
+      });
 
       if (!reviewObj) {
         return NextResponse.json(
@@ -798,7 +1226,38 @@ export async function POST(req: Request) {
       );
     }
 
-    await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 200, latencyMs: Date.now() - startTime });
+    await recordChatMetric({
+      nowMs: Date.now(),
+      mode: modeForMetric,
+      status: 200,
+      latencyMs: Date.now() - startTime,
+    });
+
+    log("info", {
+      event: "chat_completed",
+      requestId,
+      auth0Sub,
+      orgId,
+      sessionId,
+      mode: clientMode,
+      durationMs: Date.now() - startTime,
+      model,
+      openaiLatencyMs,
+      retryCount,
+      meta: {
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        creditsCharged,
+        creditsRemaining,
+        costUsd,
+        costEur,
+        explicitRegenerationRequest,
+        existingCasesCount,
+        nextAvailableCaseNumber,
+        hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
+      },
+    });
 
     return NextResponse.json(
       {
@@ -833,7 +1292,12 @@ export async function POST(req: Request) {
       auth0Sub: auth0SubForLog,
       orgId,
       sessionId: sessionIdForLog,
-      mode: modeForMetric === "coach" || modeForMetric === "review" || modeForMetric === "cases" ? modeForMetric : undefined,
+      mode:
+        modeForMetric === "coach" ||
+        modeForMetric === "review" ||
+        modeForMetric === "cases"
+          ? modeForMetric
+          : undefined,
       durationMs: Date.now() - startTime,
       model: openaiModel,
       openaiLatencyMs,
@@ -843,7 +1307,12 @@ export async function POST(req: Request) {
       errorMessage: errMsg,
     });
 
-    await recordChatMetric({ nowMs: Date.now(), mode: modeForMetric, status: 500, latencyMs: Date.now() - startTime });
+    await recordChatMetric({
+      nowMs: Date.now(),
+      mode: modeForMetric,
+      status: 500,
+      latencyMs: Date.now() - startTime,
+    });
 
     return NextResponse.json(
       {

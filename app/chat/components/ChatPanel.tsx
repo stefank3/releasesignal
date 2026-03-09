@@ -10,6 +10,12 @@
 // CHANGE (M7.7 Onboarding):
 // - add a lightweight first-run hint for empty sessions
 // - guide users toward the intended Coach → Strategy Panel → Cases workflow
+//
+// CHANGE (M8.4 Workflow Clarity):
+// - align visible onboarding language with Strategy / Test Design / Test Review
+// - make the Strategy area visually more distinct from the chat
+// - slightly increase Strategy panel presence on desktop
+// - clarify the intended workflow in the empty state
 
 "use client";
 
@@ -42,16 +48,18 @@ function OnboardingHint({ showStrategyHint }: { showStrategyHint: boolean }) {
     >
       <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.92 }}>Getting started</div>
 
-      <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45 }}>
-        Describe a feature or paste a requirement.
-        {showStrategyHint ? " Use the Strategy Panel to refine it before generating cases." : ""}
+      <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.5 }}>
+        Describe the feature, system, or requirement you want to test.
+        {showStrategyHint
+          ? " Start with Strategy to clarify scope and risks, then continue to Test Design."
+          : ""}
       </div>
 
       <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
         Example:
         <br />
         <span style={{ opacity: 0.88 }}>
-          Create a test strategy for login with MFA and then generate test cases.
+          Clarify the login flow with MFA, identify risks, then generate a structured test suite.
         </span>
       </div>
     </div>
@@ -100,11 +108,13 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
     if (isNarrow) return "1fr";
-    // CHANGE: slightly wider strategy area felt too detached at 360px; tighten balance a bit
-    return "minmax(0, 1fr) 340px";
+
+    // M8.4:
+    // Give the Strategy area slightly more presence during beta so the workflow is easier to understand.
+    return "minmax(0, 1fr) 400px";
   }, [isCoachSession, isNarrow]);
 
-  // CHANGE: left side becomes one unified chat surface
+  // Left side: unified chat surface
   const leftPanelStyle: React.CSSProperties = {
     border: "1px solid rgba(255,255,255,0.10)",
     borderRadius: 18,
@@ -121,21 +131,32 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
     minHeight: 0,
   };
 
-  // CHANGE: visually attach input to the chat panel instead of floating below
+  // Input stays visually attached to the chat panel
   const inputWrapStyle: React.CSSProperties = {
     borderTop: "1px solid rgba(255,255,255,0.10)",
     padding: 12,
     background: "rgba(0,0,0,0.16)",
   };
 
-  // CHANGE (M7.7): onboarding hint shows only on empty sessions / first interaction
+  // M7.7 / M8.4:
+  // Show the onboarding hint only for empty sessions before the first interaction.
   const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
+
+  // M8.4:
+  // Strategy becomes a more distinct panel during beta, closer to a workflow workspace.
+  const strategyPanelWrapStyle: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.12)",
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.05)",
+    padding: 12,
+    minHeight: isNarrow ? undefined : "68vh",
+  };
 
   return (
     <div
       style={{
         display: "grid",
-        gap: 10,
+        gap: 12,
         alignItems: "start",
         gridTemplateColumns,
       }}
@@ -167,9 +188,9 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
         </div>
       </div>
 
-      {/* Right: strategy panel */}
+      {/* Right: Strategy panel */}
       {isCoachSession ? (
-        <div>
+        <div style={strategyPanelWrapStyle}>
           <StrategyPanel chat={chat} />
         </div>
       ) : null}

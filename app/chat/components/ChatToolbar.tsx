@@ -1,5 +1,12 @@
 // app/chat/components/ChatToolbar.tsx
 // M7: Extract toolbars + banners (demo toolbar, mode toolbar, session meta, rate limit, mode lock banner)
+//
+// CHANGE (M8.2 Workflow UI Alignment):
+// - aligns visible UI naming with the new workflow terminology
+// - internal modes remain unchanged: coach / cases / review
+// - removes redundant mode switcher buttons from the toolbar
+// - keeps ChatHeader as the primary workflow selector
+// - preserves session-lock rules and demo behavior
 
 "use client";
 
@@ -9,13 +16,18 @@ import type { UseChatSessionReturn } from "../hooks/useChatSession";
 
 import { Chip, Group, HeaderButton, ModeBadge, Toolbar } from "./ChatUI";
 
-import { DEMO_CASES_LOGIN, DEMO_COACH_LOGIN, DEMO_REVIEW_EXPORT, DEMO_REVIEW_LOGIN } from "../demoPrompts";
+import {
+  DEMO_CASES_LOGIN,
+  DEMO_COACH_LOGIN,
+  DEMO_REVIEW_EXPORT,
+  DEMO_REVIEW_LOGIN,
+} from "../demoPrompts";
 
 /** Local storage key (so reload keeps the demo context). */
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 
 function modeLabel(m: Mode) {
-  return m === "coach" ? "Coach" : m === "review" ? "Review" : "Cases";
+  return m === "coach" ? "Strategy" : m === "review" ? "Test Review" : "Test Design";
 }
 
 type Props = {
@@ -59,26 +71,38 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
       >
         <Chip>Demo</Chip>
 
-        <HeaderButton onClickAction={() => loadDemoAction("coach", DEMO_COACH_LOGIN)} disabled={chat.isSending}>
-          Login + MFA (Coach)
+        <HeaderButton
+          onClickAction={() => loadDemoAction("coach", DEMO_COACH_LOGIN)}
+          disabled={chat.isSending}
+        >
+          Login + MFA (Strategy)
         </HeaderButton>
 
-        <HeaderButton onClickAction={() => loadDemoAction("review", DEMO_REVIEW_LOGIN)} disabled={chat.isSending}>
-          Login + MFA (Review)
+        <HeaderButton
+          onClickAction={() => loadDemoAction("review", DEMO_REVIEW_LOGIN)}
+          disabled={chat.isSending}
+        >
+          Login + MFA (Test Review)
         </HeaderButton>
 
-        <HeaderButton onClickAction={() => loadDemoAction("review", DEMO_REVIEW_EXPORT)} disabled={chat.isSending}>
-          Export CSV (Review)
+        <HeaderButton
+          onClickAction={() => loadDemoAction("review", DEMO_REVIEW_EXPORT)}
+          disabled={chat.isSending}
+        >
+          Export CSV (Test Review)
         </HeaderButton>
 
-        <HeaderButton onClickAction={() => loadDemoAction("cases", DEMO_CASES_LOGIN)} disabled={chat.isSending}>
-          Login + MFA (Cases)
+        <HeaderButton
+          onClickAction={() => loadDemoAction("cases", DEMO_CASES_LOGIN)}
+          disabled={chat.isSending}
+        >
+          Login + MFA (Test Design)
         </HeaderButton>
       </Toolbar>
 
       <div style={{ height: 10 }} />
 
-      {/* Mode toolbar */}
+      {/* Session actions toolbar */}
       <Toolbar>
         <Group>
           <ModeBadge mode={chat.mode} />
@@ -99,19 +123,10 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
           )}
         </Group>
 
-        <Group>
-          <HeaderButton active={chat.mode === "coach"} onClickAction={() => chat.trySetMode("coach")} disabled={chat.isSending}>
-            Coach
-          </HeaderButton>
-
-          <HeaderButton active={chat.mode === "review"} onClickAction={() => chat.trySetMode("review")} disabled={chat.isSending}>
-            Review
-          </HeaderButton>
-
-          <HeaderButton active={chat.mode === "cases"} onClickAction={() => chat.trySetMode("cases")} disabled={chat.isSending}>
-            Cases
-          </HeaderButton>
-        </Group>
+        {/* M8.2:
+            Removed redundant mode switcher buttons from the toolbar.
+            ChatHeader is now the primary workflow selector.
+        */}
 
         <Group>
           <Chip>New session</Chip>
@@ -122,7 +137,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
             }}
             disabled={chat.isSending}
           >
-            Coach
+            Strategy
           </HeaderButton>
           <HeaderButton
             onClickAction={() => {
@@ -131,7 +146,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
             }}
             disabled={chat.isSending}
           >
-            Review
+            Test Review
           </HeaderButton>
           <HeaderButton
             onClickAction={() => {
@@ -140,7 +155,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
             }}
             disabled={chat.isSending}
           >
-            Cases
+            Test Design
           </HeaderButton>
         </Group>
       </Toolbar>
@@ -169,8 +184,8 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
               }}
             >
               <div style={{ lineHeight: 1.35 }}>
-                This session is locked to <b>{modeLabel(lock.sessionMode)}</b>. To use <b>{modeLabel(lock.requestedMode)}</b>, start a
-                new session.
+                This session is locked to <b>{modeLabel(lock.sessionMode)}</b>. To use{" "}
+                <b>{modeLabel(lock.requestedMode)}</b>, start a new session.
               </div>
 
               <button
@@ -195,7 +210,15 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
         })()}
 
       {/* Session meta row */}
-      <div style={{ display: "flex", gap: 10, margin: "12px 0 10px", flexWrap: "wrap", alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          margin: "12px 0 10px",
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
         <Chip>{chat.activeSessionId ? `Session: ${chat.activeSessionId.slice(0, 8)}…` : "Session: (new)"}</Chip>
 
         {chat.activeSessionId ? <ModeBadge mode={chat.activeSessionMode} locked /> : null}
@@ -204,7 +227,11 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
           <HeaderButton
             onClickAction={() => {
               void (async () => {
-                await chat.loadSessionMessages(chat.activeSessionId!, false, chat.activeSessionMode);
+                await chat.loadSessionMessages(
+                  chat.activeSessionId!,
+                  false,
+                  chat.activeSessionMode
+                );
               })();
             }}
             disabled={chat.messagesLoading}
@@ -214,7 +241,9 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
         )}
 
         {chat.activeSessionId ? (
-          <div style={{ fontSize: 12, opacity: 0.72 }}>Mode is session-locked. Start a new session to switch modes.</div>
+          <div style={{ fontSize: 12, opacity: 0.72 }}>
+            Mode is session-locked. Start a new session to switch workflow steps.
+          </div>
         ) : null}
       </div>
 

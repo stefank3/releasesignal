@@ -12,6 +12,11 @@
 // 4) ADD: sessionArtifact + artifactUpdatedAt in state + return type
 // 5) ADD: hydrate artifact from /api/chat response + /api/chat/history/:sessionId response
 // 6) ADD: reset artifact on newChat / startNewSessionInMode
+//
+// CHANGE (M8.6 Continuity Groundwork):
+// 7) ALIGN: visible workflow labels now use Strategy / Test Design / Test Review
+// 8) ADD: derived flags for strategy/design continuity-aware UI behavior
+// 9) KEEP: no backend contract change here; actual advisor continuity will be implemented in /api/chat/route.ts
 
 "use client";
 
@@ -29,7 +34,7 @@ import type {
   SessionListItem,
   HistoryMessage,
   CoachSuggestions,
-  SessionArtifact, // CHANGE (M7.7)
+  SessionArtifact,
 } from "../chat.types";
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
@@ -50,12 +55,13 @@ function readArtifactFromResponse(
 ): { artifact: SessionArtifact | null; artifactUpdatedAt: string | null } | null {
   if (!isRecord(data)) return null;
 
-  // Only hydrate when the server actually included these fields
+  // Only hydrate when the server actually included these fields.
   const hasArtifactField = "artifact" in data || "artifactUpdatedAt" in data;
   if (!hasArtifactField) return null;
 
   const artifact = (data["artifact"] ?? null) as SessionArtifact | null;
-  const artifactUpdatedAt = typeof data["artifactUpdatedAt"] === "string" ? data["artifactUpdatedAt"] : null;
+  const artifactUpdatedAt =
+    typeof data["artifactUpdatedAt"] === "string" ? data["artifactUpdatedAt"] : null;
 
   return { artifact, artifactUpdatedAt };
 }
@@ -67,13 +73,17 @@ function mdSafe(s: string) {
 
 /** Generate a client-side request id for correlation. */
 function createRequestId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as Crypto).randomUUID();
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return (crypto as Crypto).randomUUID();
+  }
   return `rid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 /** IDP: generate a stable client-side id for new-session creation. */
 function createSessionClientId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as Crypto).randomUUID();
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return (crypto as Crypto).randomUUID();
+  }
   return `sid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
@@ -84,21 +94,29 @@ function createSessionClientId(): string {
  */
 async function fetchJSONWithMeta<T>(
   input: RequestInfo,
-  init?: RequestInit,
+  init?: RequestInit
 ): Promise<{ status: number; headers: Headers; data: T }> {
   const res = await fetch(input, init);
 
   const text = await res.text().catch(() => "");
   const ct = (res.headers.get("content-type") || "").toLowerCase();
 
-  const first = text.trimStart().slice(0, 200).replace(/\s+/g, " ");
+  const first = text
+    .trimStart()
+    .slice(0, 200)
+    .replace(/\s+/g, " ");
   const looksHtml =
-    ct.includes("text/html") || first.startsWith("<!doctype") || first.startsWith("<html") || first.startsWith("<");
+    ct.includes("text/html") ||
+    first.startsWith("<!doctype") ||
+    first.startsWith("<html") ||
+    first.startsWith("<");
 
   const looksJson = ct.includes("application/json") || first.startsWith("{") || first.startsWith("[");
 
   if (!looksJson) {
-    const hint = looksHtml ? "Expected JSON but got HTML (redirect/login/error page)" : "Expected JSON but got non-JSON";
+    const hint = looksHtml
+      ? "Expected JSON but got HTML (redirect/login/error page)"
+      : "Expected JSON but got non-JSON";
     throw new Error(`${hint} (HTTP ${res.status}). content-type=${ct || "(none)"} first=${first}`);
   }
 
@@ -106,7 +124,7 @@ async function fetchJSONWithMeta<T>(
   return { status: res.status, headers: res.headers, data: data as T };
 }
 
-/** Wrapper that throws on non-2xx */
+/** Wrapper that throws on non-2xx. */
 async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const { status, data } = await fetchJSONWithMeta<T>(input, init);
   if (status >= 200 && status < 300) return data;
@@ -139,7 +157,12 @@ function tryParseReview(text: string): ReviewResult | null {
 function tryParseCasesLegacy(text: string): CasesResult | null {
   try {
     const obj = JSON.parse(text);
-    if (obj && typeof obj.suiteTitle === "string" && Array.isArray(obj.assumptions) && Array.isArray(obj.testCases)) {
+    if (
+      obj &&
+      typeof obj.suiteTitle === "string" &&
+      Array.isArray(obj.assumptions) &&
+      Array.isArray(obj.testCases)
+    ) {
       return obj as CasesResult;
     }
   } catch {
@@ -210,18 +233,27 @@ export function tryFormatCoachJson(text: string): string | null {
         const id = mdSafe(tc.id ?? "");
         const title = mdSafe(tc.title ?? "");
         const meta = [tc.priority, tc.level].filter(Boolean).join(" · ");
-        lines.push(`- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim());
+        lines.push(
+          `- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim()
+        );
       }
       lines.push("");
-    } else if (Array.isArray(obj.highSignalApproach?.testIdeas) && obj.highSignalApproach.testIdeas?.length) {
+    } else if (
+      Array.isArray(obj.highSignalApproach?.testIdeas) &&
+      obj.highSignalApproach.testIdeas?.length
+    ) {
       lines.push("Draft test ideas:");
-      for (const t of obj.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${mdSafe(t)}`);
+      for (const t of obj.highSignalApproach.testIdeas.slice(0, 12)) {
+        lines.push(`- ${mdSafe(t)}`);
+      }
       lines.push("");
     }
 
     if (Array.isArray(obj.optionalClarifications) && obj.optionalClarifications.length) {
       lines.push("Optional clarifications:");
-      for (const q of obj.optionalClarifications.slice(0, 3)) lines.push(`- ${mdSafe(q)}`);
+      for (const q of obj.optionalClarifications.slice(0, 3)) {
+        lines.push(`- ${mdSafe(q)}`);
+      }
       lines.push("");
     }
 
@@ -232,7 +264,7 @@ export function tryFormatCoachJson(text: string): string | null {
 }
 
 function modeLabel(m: Mode) {
-  return m === "coach" ? "Coach" : m === "review" ? "Review" : "Cases";
+  return m === "coach" ? "Strategy" : m === "review" ? "Test Review" : "Test Design";
 }
 
 /** Track the last request payload needed to “Retry” safely. */
@@ -290,9 +322,15 @@ export type UseChatSessionReturn = {
   setSidebarCollapsed: Dispatch<SetStateAction<boolean>>;
   sidebarWidth: number;
 
-  // CHANGE (M7.7): session artifact
+  // M7.7: session artifact
   sessionArtifact: SessionArtifact | null;
   artifactUpdatedAt: string | null;
+
+  // M8.6: derived continuity/workflow flags
+  isStrategySession: boolean;
+  isTestDesignSession: boolean;
+  isTestReviewSession: boolean;
+  hasPinnedRequirement: boolean;
 
   // derived
   latestCoachSuggestions: CoachSuggestions | null;
@@ -326,7 +364,10 @@ export function useChatSession(): UseChatSessionReturn {
   const [rate, setRate] = useState<RateMeta | null>(null);
   const [lastRequestId, setLastRequestId] = useState<string | null>(null);
 
-  const [modeLockMsg, setModeLockMsg] = useState<{ sessionMode: Mode; requestedMode: Mode } | null>(null);
+  const [modeLockMsg, setModeLockMsg] = useState<{
+    sessionMode: Mode;
+    requestedMode: Mode;
+  } | null>(null);
 
   const [lastPending, setLastPending] = useState<LastPending | null>(null);
 
@@ -343,7 +384,7 @@ export function useChatSession(): UseChatSessionReturn {
   const [messagesLoading, setMessagesLoading] = useState(false);
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState<string>(""); // (default empty)
+  const [renameValue, setRenameValue] = useState<string>("");
   const [renameSaving, setRenameSaving] = useState(false);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -352,15 +393,15 @@ export function useChatSession(): UseChatSessionReturn {
   // Scroll preference should remain stable even if UI re-renders.
   const shouldAutoScrollRef = useRef(true);
 
-  // hydration-safe
+  // Hydration-safe.
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const sidebarWidth = sidebarCollapsed ? 72 : 320;
 
-  // CHANGE (M7.7): artifact state
+  // M7.7: artifact state
   const [sessionArtifact, setSessionArtifact] = useState<SessionArtifact | null>(null);
   const [artifactUpdatedAt, setArtifactUpdatedAt] = useState<string | null>(null);
 
-  // Load sidebar collapse state
+  // Load sidebar collapse state.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SIDEBAR_KEY);
@@ -378,7 +419,7 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [sidebarCollapsed]);
 
-  // Load persisted chat (mode/items/input)
+  // Load persisted chat (mode/items/input).
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -419,7 +460,9 @@ export function useChatSession(): UseChatSessionReturn {
       url.searchParams.set("limit", "25");
       if (!reset && sessionsCursor) url.searchParams.set("cursor", sessionsCursor);
 
-      const data = await fetchJSON<{ items: SessionListItem[]; nextCursor: string | null }>(url.toString());
+      const data = await fetchJSON<{ items: SessionListItem[]; nextCursor: string | null }>(
+        url.toString()
+      );
 
       setSessions((prev) => (reset ? data.items : [...prev, ...data.items]));
       setSessionsCursor(data.nextCursor);
@@ -451,12 +494,12 @@ export function useChatSession(): UseChatSessionReturn {
         sessionMode?: Mode;
         effectiveMode?: Mode;
 
-        // CHANGE (M7.7): artifact hydration from history GET
+        // M7.7: artifact hydration from history GET
         artifact?: SessionArtifact | null;
         artifactUpdatedAt?: string | null;
       }>(url.toString());
 
-      // CHANGE (M7.7): hydrate artifact on reset (select session)
+      // M7.7: hydrate artifact on reset (select session).
       if (reset) {
         setSessionArtifact(data.artifact ?? null);
         setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
@@ -471,16 +514,20 @@ export function useChatSession(): UseChatSessionReturn {
         }
       }
 
-      // Upgrade mis-labeled sessions to cases if content strongly suggests it
+      // Upgrade mis-labeled sessions to cases if content strongly suggests it.
       let effectiveSessionMode: Mode = sessionMode;
       if (sessionMode !== "cases") {
-        const assistantMsgs = data.items.filter((m) => m.role === "assistant").map((m) => m.content);
+        const assistantMsgs = data.items
+          .filter((m) => m.role === "assistant")
+          .map((m) => m.content);
 
         const anyReviewJson = assistantMsgs.some((t) => !!tryParseReview(t));
         const anyLegacyCasesJson = assistantMsgs.some((t) => !!tryParseCasesLegacy(t));
         const anyCasesText = assistantMsgs.some((t) => !!looksLikeCasesPlainText(t));
 
-        if (!anyReviewJson && (anyLegacyCasesJson || anyCasesText)) effectiveSessionMode = "cases";
+        if (!anyReviewJson && (anyLegacyCasesJson || anyCasesText)) {
+          effectiveSessionMode = "cases";
+        }
       }
 
       const mapped: ChatItem[] = data.items
@@ -491,7 +538,9 @@ export function useChatSession(): UseChatSessionReturn {
 
           if (effectiveSessionMode === "cases") {
             const maybeCasesLegacy = tryParseCasesLegacy(m.content);
-            if (maybeCasesLegacy) return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
+            if (maybeCasesLegacy) {
+              return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
+            }
             return { kind: "casesText", role: "bot", text: m.content };
           }
 
@@ -529,7 +578,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
-    // CHANGE (M7.7): artifact will be hydrated by loadSessionMessages(reset=true)
+    // M7.7: artifact will be hydrated by loadSessionMessages(reset=true).
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -556,7 +605,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
-    // CHANGE (M7.7): new chat has no pinned artifact until the user clarifies
+    // M7.7: new chat has no pinned artifact until the user clarifies.
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -580,7 +629,7 @@ export function useChatSession(): UseChatSessionReturn {
     setLastRequestId(null);
     setLastPending(null);
 
-    // CHANGE (M7.7)
+    // M7.7
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -600,7 +649,9 @@ export function useChatSession(): UseChatSessionReturn {
     const nextTitle = title.trim();
     if (!nextTitle || nextTitle.length > 80) return;
 
-    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s))
+    );
 
     try {
       setRenameSaving(true);
@@ -638,7 +689,7 @@ export function useChatSession(): UseChatSessionReturn {
         setLastRequestId(null);
         setLastPending(null);
 
-        // CHANGE (M7.7)
+        // M7.7
         setSessionArtifact(null);
         setArtifactUpdatedAt(null);
       }
@@ -665,7 +716,9 @@ export function useChatSession(): UseChatSessionReturn {
 
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
 
-    const sessionIdForRequest = replay ? lastPending?.sessionId ?? activeSessionId : activeSessionId;
+    const sessionIdForRequest = replay
+      ? lastPending?.sessionId ?? activeSessionId
+      : activeSessionId;
 
     if (sessionIdForRequest && effectiveMode !== activeSessionMode) {
       setModeLockMsg({ sessionMode: activeSessionMode, requestedMode: effectiveMode });
@@ -675,13 +728,19 @@ export function useChatSession(): UseChatSessionReturn {
     const sessionClientIdForRequest =
       sessionIdForRequest
         ? null
-        : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ?? createSessionClientId();
+        : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ??
+          createSessionClientId();
 
     if (!sessionIdForRequest && !pendingSessionClientId && !replay) {
       setPendingSessionClientId(sessionClientIdForRequest);
     }
 
-    if (!sessionIdForRequest && replay && !pendingSessionClientId && lastPending?.sessionClientId) {
+    if (
+      !sessionIdForRequest &&
+      replay &&
+      !pendingSessionClientId &&
+      lastPending?.sessionClientId
+    ) {
       setPendingSessionClientId(lastPending.sessionClientId);
     }
 
@@ -693,7 +752,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     setIsSending(true);
 
-    // ✅ this is what “Retry” reuses
+    // ✅ this is what Retry reuses.
     setLastPending({
       requestId,
       text,
@@ -719,16 +778,24 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.rate) setRate(data.rate);
 
-      // CHANGE (M7.7): hydrate artifact from /api/chat response (success or replay)
-      // (This supports StrategyPanel: pinned card must update immediately after guided answers)
+      // M7.7: hydrate artifact from /api/chat response (success or replay).
+      // This supports the Strategy panel: the pinned card must update immediately after guided answers.
       const artifactPayload = readArtifactFromResponse(data);
       if (artifactPayload) {
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
       }
 
-      if (status === 409 && data?.error === "SESSION_MODE_MISMATCH" && data.sessionMode && data.requestedMode) {
-        setModeLockMsg({ sessionMode: data.sessionMode, requestedMode: data.requestedMode });
+      if (
+        status === 409 &&
+        data?.error === "SESSION_MODE_MISMATCH" &&
+        data.sessionMode &&
+        data.requestedMode
+      ) {
+        setModeLockMsg({
+          sessionMode: data.sessionMode,
+          requestedMode: data.requestedMode,
+        });
         setItems((prev) => [
           ...prev,
           {
@@ -743,7 +810,9 @@ export function useChatSession(): UseChatSessionReturn {
       }
 
       if (status === 429) {
-        setRateLimitMsg(`${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`);
+        setRateLimitMsg(
+          `${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`
+        );
         return;
       }
 
@@ -771,7 +840,15 @@ export function useChatSession(): UseChatSessionReturn {
       setRateLimitMsg(null);
 
       if (data?.mode === "review" && data?.review) {
-        setItems((prev) => [...prev, { kind: "review", role: "bot", review: data.review as ReviewResult, requestId: serverRequestId }]);
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "review",
+            role: "bot",
+            review: data.review as ReviewResult,
+            requestId: serverRequestId,
+          },
+        ]);
         void loadSessions(true);
         setLastPending(null);
         return;
@@ -779,7 +856,15 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.mode === "cases") {
         const reply = typeof data?.reply === "string" ? data.reply : "";
-        setItems((prev) => [...prev, { kind: "casesText", role: "bot", text: reply || "No reply returned", requestId: serverRequestId }]);
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "casesText",
+            role: "bot",
+            text: reply || "No reply returned",
+            requestId: serverRequestId,
+          },
+        ]);
         void loadSessions(true);
         setLastPending(null);
         return;
@@ -801,22 +886,30 @@ export function useChatSession(): UseChatSessionReturn {
         return;
       }
 
-      // Default “text” reply (coach mode can include suggestions)
+      // Default text reply (coach mode can include suggestions).
       const rawValue =
         isRecord(data) && typeof data["raw"] === "string"
           ? (data["raw"] as string)
           : undefined;
 
-      const textToShow = !data?.reply && typeof rawValue === "string" ? rawValue : data?.reply ?? "No reply returned";
+      const textToShow =
+        !data?.reply && typeof rawValue === "string"
+          ? rawValue
+          : data?.reply ?? "No reply returned";
 
       const finalText =
-        effectiveMode === "coach" && looksLikeJson(textToShow) ? tryFormatCoachJson(textToShow) ?? textToShow : textToShow;
+        effectiveMode === "coach" && looksLikeJson(textToShow)
+          ? tryFormatCoachJson(textToShow) ?? textToShow
+          : textToShow;
 
       let suggestions: CoachSuggestions | null = null;
       if (isRecord(data)) {
         if (data["suggestions"]) {
           suggestions = data["suggestions"] as CoachSuggestions;
-        } else if (isRecord(data["coach"]) && (data["coach"] as Record<string, unknown>)["suggestions"]) {
+        } else if (
+          isRecord(data["coach"]) &&
+          (data["coach"] as Record<string, unknown>)["suggestions"]
+        ) {
           suggestions = (data["coach"] as Record<string, unknown>)["suggestions"] as CoachSuggestions;
         }
       }
@@ -838,7 +931,16 @@ export function useChatSession(): UseChatSessionReturn {
       const message = e instanceof Error ? e.message : String(e);
 
       setLastRequestId(requestId);
-      setItems((prev) => [...prev, { kind: "error", role: "bot", title: "Network/Client error", details: message, requestId }]);
+      setItems((prev) => [
+        ...prev,
+        {
+          kind: "error",
+          role: "bot",
+          title: "Network/Client error",
+          details: message,
+          requestId,
+        },
+      ]);
     } finally {
       setIsSending(false);
     }
@@ -860,6 +962,12 @@ export function useChatSession(): UseChatSessionReturn {
     }
     return null;
   }, [items]);
+
+  // M8.6: lightweight workflow/continuity flags for UI components.
+  const isStrategySession = mode === "coach" && activeSessionMode === "coach";
+  const isTestDesignSession = mode === "cases" && activeSessionMode === "cases";
+  const isTestReviewSession = mode === "review" && activeSessionMode === "review";
+  const hasPinnedRequirement = !!sessionArtifact?.refinedRequirement;
 
   return {
     mode,
@@ -906,9 +1014,15 @@ export function useChatSession(): UseChatSessionReturn {
     setSidebarCollapsed,
     sidebarWidth,
 
-    // CHANGE (M7.7)
+    // M7.7
     sessionArtifact,
     artifactUpdatedAt,
+
+    // M8.6
+    isStrategySession,
+    isTestDesignSession,
+    isTestReviewSession,
+    hasPinnedRequirement,
 
     latestCoachSuggestions,
     modeLabel,
