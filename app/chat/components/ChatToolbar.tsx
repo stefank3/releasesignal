@@ -141,21 +141,21 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
           </HeaderButton>
           <HeaderButton
             onClickAction={() => {
-              chat.startNewSessionInMode("review");
-              onAfterUiAction?.();
-            }}
-            disabled={chat.isSending}
-          >
-            Test Review
-          </HeaderButton>
-          <HeaderButton
-            onClickAction={() => {
               chat.startNewSessionInMode("cases");
               onAfterUiAction?.();
             }}
             disabled={chat.isSending}
           >
             Test Design
+          </HeaderButton>
+          <HeaderButton
+            onClickAction={() => {
+              chat.startNewSessionInMode("review");
+              onAfterUiAction?.();
+            }}
+            disabled={chat.isSending}
+          >
+            Test Review
           </HeaderButton>
         </Group>
       </Toolbar>

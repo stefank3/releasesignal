@@ -11,6 +11,11 @@
 // - aligns visible naming with Strategy / Refined Requirement terminology
 // - improves helper text for beta workflow clarity
 // - keeps all existing behavior and artifact usage intact
+//
+// CHANGE (M8.10 Strategy Screen Cleanup):
+// - removes duplicated Refined Requirement block from the right panel
+// - keeps the center-column requirement as the single source of truth
+// - keeps the panel focused on refinement inputs + preview only
 
 "use client";
 
@@ -143,104 +148,6 @@ function Surface({
   );
 }
 
-function ArtifactMiniCard(props: {
-  artifact: UseChatSessionReturn["sessionArtifact"];
-  artifactUpdatedAt: UseChatSessionReturn["artifactUpdatedAt"];
-}) {
-  const a = props.artifact;
-  if (!a?.refinedRequirement) return null;
-
-  const rr = a.refinedRequirement;
-  const updated = props.artifactUpdatedAt ? new Date(props.artifactUpdatedAt).toLocaleString() : null;
-
-  const item: React.CSSProperties = {
-    fontSize: 12,
-    opacity: 0.92,
-    marginTop: 4,
-    lineHeight: 1.35,
-  };
-  const label: React.CSSProperties = {
-    fontSize: 11,
-    fontWeight: 950,
-    opacity: 0.75,
-    marginTop: 10,
-  };
-
-  return (
-    <Surface>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ fontWeight: 950, fontSize: 12 }}>Refined Requirement</div>
-        <span style={{ fontSize: 11, opacity: 0.72 }}>{updated ? `Updated ${updated}` : "Pinned"}</span>
-      </div>
-
-      {rr.objective ? (
-        <>
-          <div style={label}>Objective</div>
-          <div style={item}>{rr.objective}</div>
-        </>
-      ) : null}
-
-      {rr.context ? (
-        <>
-          <div style={label}>Context / constraints</div>
-          <div style={item}>{rr.context}</div>
-        </>
-      ) : null}
-
-      {rr.integrations?.length ? (
-        <>
-          <div style={label}>Integrations</div>
-          <div style={item}>{rr.integrations.slice(0, 12).join(", ")}</div>
-        </>
-      ) : null}
-
-      {rr.riskFocus?.length ? (
-        <>
-          <div style={label}>Risk focus</div>
-          <div style={item}>{rr.riskFocus.slice(0, 12).join(", ")}</div>
-        </>
-      ) : null}
-
-      {rr.inScope?.length ? (
-        <>
-          <div style={label}>In scope</div>
-          {rr.inScope.slice(0, 8).map((s, i) => (
-            <div key={`inscope-${i}`} style={item}>
-              • {s}
-            </div>
-          ))}
-        </>
-      ) : null}
-
-      {rr.outOfScope?.length ? (
-        <>
-          <div style={label}>Out of scope</div>
-          {rr.outOfScope.slice(0, 6).map((s, i) => (
-            <div key={`outscope-${i}`} style={item}>
-              • {s}
-            </div>
-          ))}
-        </>
-      ) : null}
-
-      {rr.acceptanceCriteria?.length ? (
-        <>
-          <div style={label}>Acceptance criteria</div>
-          {rr.acceptanceCriteria.slice(0, 8).map((s, i) => (
-            <div key={`ac-${i}`} style={item}>
-              • {s}
-            </div>
-          ))}
-        </>
-      ) : null}
-
-      <div style={{ marginTop: 10, fontSize: 11, opacity: 0.72, lineHeight: 1.35 }}>
-        Test Design will use this pinned requirement as context for aligned test generation.
-      </div>
-    </Surface>
-  );
-}
-
 function focusChatInputBestEffort() {
   const el = document.querySelector("input:not([disabled]), textarea:not([disabled])") as
     | HTMLInputElement
@@ -298,15 +205,12 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
         gap: 12,
       }}
     >
-      {/* M8.5:
-          Outer border/background removed here because ChatPanel now provides
-          the workspace shell for the Strategy area. This avoids double framing.
-      */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ display: "grid", gap: 3 }}>
           <div style={{ fontWeight: 950 }}>Strategy</div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Refine the requirement and keep the session artifact aligned as scope evolves.
+          <div style={{ fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
+            Refine the requirement as the scope evolves. This updates the pinned Refined Requirement used for test
+            generation.
           </div>
         </div>
         <Pill>{hasPinned ? "Pinned ✓" : "Not pinned"}</Pill>
@@ -316,8 +220,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
         <SectionTitle>Refine requirement</SectionTitle>
 
         <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45, marginBottom: 10 }}>
-          Fill the fields below, then paste them into the main input and send. This creates or updates the pinned
-          Refined Requirement for the current session.
+          Fill the fields below, then paste them into the main input and send.
         </div>
 
         <div style={{ display: "grid", gap: 9 }}>
@@ -408,24 +311,22 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             lineHeight: 1.45,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
+            minHeight: 84,
           }}
         >
           {generatedStructuredText}
         </div>
       </Surface>
 
-      <div>
-        <SectionTitle>Refined Requirement</SectionTitle>
-        {hasPinned ? (
-          <ArtifactMiniCard artifact={chat.sessionArtifact} artifactUpdatedAt={chat.artifactUpdatedAt} />
-        ) : (
-          <Surface>
-            <div style={{ fontSize: 12, opacity: 0.72, lineHeight: 1.45 }}>
-              Nothing pinned yet. Fill the form, click “Paste into input”, then send the message.
-            </div>
-          </Surface>
-        )}
-      </div>
+      {hasPinned ? (
+        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.4 }}>
+          The latest Refined Requirement is shown in the main conversation area and will be reused by Test Design.
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.4 }}>
+          Nothing is pinned yet. Fill the form, paste it into the input, and send to create the Refined Requirement.
+        </div>
+      )}
     </div>
   );
 }

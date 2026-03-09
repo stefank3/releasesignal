@@ -16,6 +16,12 @@
 // - make the Strategy area visually more distinct from the chat
 // - slightly increase Strategy panel presence on desktop
 // - clarify the intended workflow in the empty state
+//
+// CHANGE (M8.8 Use Refined Requirement):
+// - adds a helper action in Test Design mode
+// - lets users prefill the input from the pinned Refined Requirement
+// - reduces copy/paste friction during beta
+// - does not auto-send; user can still adjust before generation
 
 "use client";
 
@@ -66,6 +72,55 @@ function OnboardingHint({ showStrategyHint }: { showStrategyHint: boolean }) {
   );
 }
 
+function buildRefinedRequirementInput(
+  artifact: UseChatSessionReturn["sessionArtifact"]
+): string | null {
+  const rr = artifact?.refinedRequirement;
+  if (!rr) return null;
+
+  const lines: string[] = [];
+
+  if (rr.objective?.trim()) {
+    lines.push(`Objective: ${rr.objective.trim()}`);
+  }
+
+  if (rr.context?.trim()) {
+    lines.push(`Context / Constraints: ${rr.context.trim()}`);
+  }
+
+  if (rr.inScope?.length) {
+    lines.push(`In Scope: ${rr.inScope.join(", ")}`);
+  }
+
+  if (rr.outOfScope?.length) {
+    lines.push(`Out of Scope: ${rr.outOfScope.join(", ")}`);
+  }
+
+  if (rr.integrations?.length) {
+    lines.push(`Integrations: ${rr.integrations.join(", ")}`);
+  }
+
+  if (rr.riskFocus?.length) {
+    lines.push(`Risk Focus: ${rr.riskFocus.join(", ")}`);
+  }
+
+  if (rr.acceptanceCriteria?.length) {
+    lines.push("Acceptance Criteria:");
+    for (const item of rr.acceptanceCriteria) {
+      lines.push(`- ${item}`);
+    }
+  }
+
+  if (!lines.length) return null;
+
+  lines.push("");
+  lines.push(
+    "Generate structured test cases based on this Refined Requirement. Avoid duplicates with any existing tests in this session."
+  );
+
+  return lines.join("\n");
+}
+
 export default function ChatPanel({ chat, onAfterSendAction }: Props) {
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -104,6 +159,7 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
   }, [chat.items, chat]);
 
   const isCoachSession = chat.mode === "coach" && chat.activeSessionMode === "coach";
+  const isTestDesignSession = chat.mode === "cases" && chat.activeSessionMode === "cases";
 
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
@@ -131,7 +187,6 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
     minHeight: 0,
   };
 
-  // Input stays visually attached to the chat panel
   const inputWrapStyle: React.CSSProperties = {
     borderTop: "1px solid rgba(255,255,255,0.10)",
     padding: 12,
@@ -152,6 +207,11 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
     minHeight: isNarrow ? undefined : "68vh",
   };
 
+  // M8.8:
+  // Enable quick transfer from Strategy artifact to Test Design input.
+  const canUseRefinedRequirement =
+    isTestDesignSession && chat.hasPinnedRequirement && !!buildRefinedRequirementInput(chat.sessionArtifact);
+
   return (
     <div
       style={{
@@ -171,6 +231,55 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
           </div>
 
           <div style={inputWrapStyle}>
+            {canUseRefinedRequirement ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  marginBottom: 10,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.04)",
+                }}
+              >
+                <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.4 }}>
+                  Use the pinned <strong style={{ fontWeight: 900 }}>Refined Requirement</strong> as
+                  the starting point for test generation.
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextInput = buildRefinedRequirementInput(chat.sessionArtifact);
+                    if (!nextInput) return;
+
+                    chat.setInput(nextInput);
+
+                    requestAnimationFrame(() => {
+                      inputRef.current?.focus();
+                    });
+                  }}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.16)",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#fff",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Use Refined Requirement
+                </button>
+              </div>
+            ) : null}
+
             <ChatInput
               ref={inputRef}
               mode={chat.mode}

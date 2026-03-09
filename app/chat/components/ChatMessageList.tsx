@@ -1,6 +1,11 @@
 // app/chat/components/ChatMessageList.tsx
 // M7 Phase 2 (Structural Refactor)
 // CHANGE: extracted chat message rendering from page.tsx (no behavior change).
+//
+// CHANGE (M8.9 Copy Actions Cleanup):
+// - removes duplicate wrapper-level copy buttons
+// - relies on card-native copy actions where available
+// - keeps rendering behavior clean and consistent
 
 "use client";
 
@@ -88,10 +93,10 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
     return (
       <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 1.55 }}>
         {mode === "coach"
-          ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately (assumptions included), then ask up to 3 optional clarifications."
+          ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately, then refine the requirement as the session evolves."
           : mode === "review"
-            ? "Paste test cases or a test plan. I’ll return a score + breakdown + improvements."
-            : "Describe the feature + acceptance criteria. I’ll generate STRICT plain-text Jira/Xray-ready test cases (no JSON)."}
+            ? "Paste test cases or a test plan. I’ll return a score, breakdown, and prioritized improvements."
+            : "Describe the feature or use the Refined Requirement. I’ll generate STRICT plain-text Jira/Xray-ready test cases."}
       </div>
     );
   }
@@ -99,17 +104,6 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
   return (
     <div style={{ display: "grid", gap: 18 }}>
       {items.map((it, idx) => {
-        /**
-         * FIX:
-         * requestId alone is NOT unique enough.
-         * We can have multiple items with the same requestId (user + bot, replay, retry, repair).
-         *
-         * So we always include:
-         * - kind
-         * - role-ish discriminator
-         * - requestId if present
-         * - idx as final uniqueness guard
-         */
         const rolePart =
           it.kind === "text" ||
           it.kind === "review" ||
@@ -131,7 +125,6 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
               ? tryFormatCoachJson(it.text) ?? it.text
               : it.text;
 
-          // CHANGE (M7.6): render refined coach output as a dedicated copyable requirement card
           const isRequirement =
             !isUser &&
             mode === "coach" &&
@@ -170,7 +163,6 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
                 )}
               </div>
 
-              {/* CHANGE: keep traceability visible even for requirement card renders */}
               {isRequirement && it.requestId ? (
                 <div style={{ fontSize: 10, opacity: 0.55, color: "#fff" }}>
                   requestId: {it.requestId.slice(0, 8)}…

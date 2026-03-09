@@ -43,11 +43,6 @@ import {
   prismaJsonValue,
 } from "@/lib/chat/artifact";
 
-import {
-  type CoachSuggestions,
-  buildCoachSuggestionsFromCoach,
-  buildFallbackCoachSuggestions,
-} from "@/lib/chat/suggestions";
 import { repairJsonOnce } from "@/lib/chat/repair";
 import { loadOrCreateSession, refreshArtifact } from "@/lib/chat/sessionStore";
 import {
@@ -256,6 +251,10 @@ function coachToText(coach: CoachResult): string {
  * CHANGE (M7.6):
  * Refined coach responses should look like a reusable technical requirement artifact.
  * This is the format the user can copy into Cases mode.
+ *
+ * CHANGE (M8 final polish):
+ * Optional clarifications are appended to the visible reply text instead of being returned
+ * only as separate suggestions payloads.
  */
 function coachToTechnicalRequirementText(
   coach: CoachResult,
@@ -332,6 +331,12 @@ function coachToTechnicalRequirementText(
   if (coach.highSignalApproach.minimalRepro?.length) {
     lines.push("Minimal Repro / Diagnostic Path:");
     for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
+    lines.push("");
+  }
+
+  if (coach.optionalClarifications?.length) {
+    lines.push("Optional Clarifications:");
+    for (const q of coach.optionalClarifications.slice(0, 3)) lines.push(`- ${q}`);
     lines.push("");
   }
 
@@ -740,14 +745,6 @@ export async function POST(req: Request) {
         );
       }
 
-      const replayHasClarifications =
-        !wantCases &&
-        executionMode === "coach" &&
-        (existingAssistant.content ?? "").includes("If you want more detailed tests, answer:");
-      const replaySuggestions: CoachSuggestions | null = replayHasClarifications
-        ? buildFallbackCoachSuggestions()
-        : null;
-
       return NextResponse.json(
         {
           ok: true,
@@ -763,7 +760,6 @@ export async function POST(req: Request) {
           },
           rate: rateMeta,
           replay: true,
-          ...(replaySuggestions ? { suggestions: replaySuggestions } : {}),
           artifact: sessionArtifact,
           artifactUpdatedAt: artifactUpdatedAtIso,
         },
@@ -1017,7 +1013,6 @@ export async function POST(req: Request) {
     let reviewStoredJson: string | null = null;
     let reviewRepaired = false;
 
-    let suggestions: CoachSuggestions | null = null;
 
     if (executionMode === "review") {
       const tryParse = (txt: string): ReviewResult | null => {
@@ -1058,84 +1053,74 @@ export async function POST(req: Request) {
         }
       }
 
-      if (coachParsed) {
-        coachParsed.optionalClarifications =
-          coachParsed.optionalClarifications.slice(0, 3);
-        if (guidedAnswer) coachParsed.optionalClarifications = [];
+if (coachParsed) {
+  // M8 final polish:
+  // Allow optional clarifications even after refinement.
+  // Keep them capped to 3 so Strategy stays lightweight.
+  coachParsed.optionalClarifications =
+    coachParsed.optionalClarifications?.slice(0, 3) ?? [];
 
-        /**
-         * CHANGE (M8.7):
-         * Strategy continuity artifact enrichment.
-         *
-         * Guided answers already update the artifact strongly before the model call.
-         * This additional step keeps free-text Strategy refinements evolving across the session.
-         */
-        if (!explicitRegenerationRequest) {
-          const continuityPatch = buildCoachContinuityArtifactPatch({
-            existingArtifact: sessionArtifact,
-            coach: coachParsed,
-            latestUserMessage: message,
-            guidedAnswer,
-            weakInput,
-          });
+  /**
+   * CHANGE (M8.7):
+   * Strategy continuity artifact enrichment.
+   *
+   * Guided answers already update the artifact strongly before the model call.
+   * This additional step keeps free-text Strategy refinements evolving across the session.
+   */
+  if (!explicitRegenerationRequest) {
+    const continuityPatch = buildCoachContinuityArtifactPatch({
+      existingArtifact: sessionArtifact,
+      coach: coachParsed,
+      latestUserMessage: message,
+      guidedAnswer,
+      weakInput,
+    });
 
-          if (continuityPatch) {
-            const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
-            const now = new Date();
+    if (continuityPatch) {
+      const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
+      const now = new Date();
 
-            await prisma.chatSession.update({
-              where: { id: sessionId },
-              data: {
-                artifactJson: prismaJsonValue(nextArtifact),
-                artifactUpdatedAt: now,
-              },
-              select: { id: true },
-            });
+      await prisma.chatSession.update({
+        where: { id: sessionId },
+        data: {
+          artifactJson: prismaJsonValue(nextArtifact),
+          artifactUpdatedAt: now,
+        },
+        select: { id: true },
+      });
 
-            sessionArtifact = nextArtifact;
-            artifactUpdatedAtIso = now.toISOString();
-          }
-        }
+      sessionArtifact = nextArtifact;
+      artifactUpdatedAtIso = now.toISOString();
+    }
+  }
 
-        /**
-         * CHANGE (M7.6 + M8.7):
-         * - exploratory coach reply stays in normal QA-coach format
-         * - refined coach reply becomes a reusable technical requirement artifact
-         * - explicit regeneration request suppresses old artifact-driven formatting for this reply
-         */
-        const effectiveArtifactForReply = explicitRegenerationRequest
-          ? null
-          : sessionArtifact;
+  const effectiveArtifactForReply = explicitRegenerationRequest
+    ? null
+    : sessionArtifact;
 
-        if (
-          shouldReturnTechnicalRequirement({
-            guidedAnswer,
-            artifact: effectiveArtifactForReply,
-          })
-        ) {
-          replyTextForUser = coachToTechnicalRequirementText(
-            coachParsed,
-            effectiveArtifactForReply
-          );
-        } else {
-          replyTextForUser = coachToText(coachParsed);
-        }
-
-        if (coachParsed.optionalClarifications.length > 0) {
-          suggestions =
-            buildCoachSuggestionsFromCoach(coachParsed) ??
-            buildFallbackCoachSuggestions();
-        }
-      } else {
-        replyTextForUser =
-          "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
-      }
+  if (
+    shouldReturnTechnicalRequirement({
+      guidedAnswer,
+      artifact: effectiveArtifactForReply,
+    })
+  ) {
+    replyTextForUser = coachToTechnicalRequirementText(
+      coachParsed,
+      effectiveArtifactForReply
+    );
+  } else {
+    replyTextForUser = coachToText(coachParsed);
+  }
+} else {
+  replyTextForUser =
+    "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
+}
     }
 
     if (wantCases) {
       replyTextForUser = rawReply.trim();
       coachParsed = null;
-      suggestions = null;
+  
     }
 
     const assistantContentToStore =
@@ -1273,7 +1258,6 @@ export async function POST(req: Request) {
         creditsRemaining,
         usage: { promptTokens, completionTokens, totalTokens },
         rate: rateMeta,
-        ...(suggestions ? { suggestions } : {}),
         artifact: sessionArtifact,
         artifactUpdatedAt: artifactUpdatedAtIso,
       },

@@ -2,6 +2,11 @@
 // M7 Phase 2 (Structural Refactor)
 // CHANGE: extract the input row (textbox + send button + placeholder + Enter-to-send)
 // NOTE: no behavior change intended.
+//
+// CHANGE (M8.3 Input UX Alignment):
+// - align placeholders with Strategy / Test Design / Test Review terminology
+// - use mode-aware primary button labels for stronger workflow clarity
+// - keep behavior unchanged and lightweight for beta
 
 "use client";
 
@@ -18,16 +23,32 @@ type Props = {
   onSendAction: () => void;
 };
 
+function getPlaceholder(mode: Mode): string {
+  if (mode === "review") {
+    return "Paste a test suite or test plan to evaluate coverage...";
+  }
+
+  if (mode === "cases") {
+    return "Describe the feature, refined requirement, or additional coverage you want to generate...";
+  }
+
+  return "Describe the feature, workflow, scope, or new requirement refinement...";
+}
+
+function getButtonLabel(mode: Mode, disabled?: boolean): string {
+  if (disabled) return "Sending...";
+
+  if (mode === "review") return "Review";
+  if (mode === "cases") return "Generate Tests";
+  return "Refine";
+}
+
 const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
   { mode, value, disabled, onChangeAction, onSendAction },
-  ref,
+  ref
 ) {
-  const placeholder =
-    mode === "review"
-      ? "Paste test cases / test plan…"
-      : mode === "cases"
-        ? "Describe feature + acceptance criteria (or user story)…"
-        : "Describe the feature / workflow…";
+  const placeholder = getPlaceholder(mode);
+  const buttonLabel = getButtonLabel(mode, disabled);
 
   return (
     <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
@@ -61,10 +82,11 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
           fontWeight: 950,
           opacity: disabled ? 0.7 : 1,
           cursor: disabled ? "not-allowed" : "pointer",
+          whiteSpace: "nowrap",
         }}
         disabled={!!disabled}
       >
-        {disabled ? "Sending…" : "Send"}
+        {buttonLabel}
       </button>
     </div>
   );

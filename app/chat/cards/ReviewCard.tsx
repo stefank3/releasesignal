@@ -1,6 +1,12 @@
 // app/chat/cards/ReviewCard.tsx
 // M7 Phase 2 (Structural Refactor)
 // CHANGE: extracted ReviewCard + helpers from page.tsx (no behavior change).
+//
+// CHANGE (M8.11 Review Empty State):
+// - detect "no tests provided" / empty review scenarios
+// - show a guided empty state instead of a misleading scored review card
+// - direct the user to paste test cases into the input box
+// - keep normal review rendering unchanged for valid reviews
 
 "use client";
 
@@ -127,7 +133,77 @@ function Section({ title, items }: { title: string; items: string[] }) {
   );
 }
 
+/**
+ * M8.11:
+ * Detects "empty review" scenarios returned by the backend when the user did not
+ * actually paste a test suite for evaluation.
+ */
+function isEmptyReview(review: ReviewResult): boolean {
+  const verdict = String(review.verdict ?? "").toLowerCase().trim();
+
+  return (
+    review.score === 0 &&
+    review.breakdown.businessRelevance === 0 &&
+    review.breakdown.riskCoverage === 0 &&
+    review.breakdown.designQuality === 0 &&
+    review.breakdown.levelAndScope === 0 &&
+    review.breakdown.diagnosticValue === 0 &&
+    (verdict.includes("no tests provided") || verdict.includes("no test cases provided"))
+  );
+}
+
+function ReviewEmptyState() {
+  return (
+    <div
+      style={{
+        border: "1px solid #e6e6e6",
+        borderRadius: 18,
+        padding: 20,
+        background: "#fff",
+        boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
+        color: "#111",
+        display: "grid",
+        gap: 14,
+      }}
+    >
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: 0.2 }}>Paste Test Cases to Review</div>
+        <div style={{ fontSize: 13, color: "#444", lineHeight: 1.5 }}>
+          Test Review evaluates an existing test suite and returns a coverage score, risk gaps, anti-patterns, and
+          prioritized improvements.
+        </div>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid #f0f0f0",
+          borderRadius: 16,
+          padding: 14,
+          background: "#fafafa",
+          display: "grid",
+          gap: 8,
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>What to do next</div>
+        <div style={{ fontSize: 13, color: "#444", lineHeight: 1.45 }}>
+          • Paste test cases to review (from Test Design or your existing suite)
+          <br />
+          • Then send the request again to generate the review
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, color: "#666", lineHeight: 1.45 }}>
+        Tip: Generate a suite in <strong>Test Design</strong> and paste it here for evaluation.
+      </div>
+    </div>
+  );
+}
+
 export default function ReviewCard({ review }: { review: ReviewResult }) {
+  if (isEmptyReview(review)) {
+    return <ReviewEmptyState />;
+  }
+
   const score = clamp(Number(review.score) || 0, 0, 100);
   const grade =
     score >= 90 ? "Excellent" : score >= 75 ? "Good" : score >= 60 ? "Fair" : score >= 40 ? "Weak" : "Poor";
