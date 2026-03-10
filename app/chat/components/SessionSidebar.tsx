@@ -7,6 +7,11 @@
 // - lighter action row
 // - more compact pinned badge/timestamp layout
 // - better visual rhythm with ChatPanel + StrategyPanel
+//
+// CHANGE (M9):
+// - sidebar is now ready to surface persistent test-suite metadata
+// - keeps backward compatibility if history API does not yet return suite fields
+// - adds a compact suite badge when available
 
 "use client";
 
@@ -44,6 +49,63 @@ function PinnedBadge({ updatedAt }: { updatedAt?: string | null }) {
     >
       <span aria-hidden="true">📌</span>
       Pinned
+    </span>
+  );
+}
+
+/**
+ * M9 CHANGE:
+ * Future-safe suite badge support.
+ * This component stays backward-compatible even before SessionListItem is formally extended.
+ */
+function getSuiteMeta(
+  session: SessionListItem
+): { hasSuite: boolean; version: number | null; totalCases: number | null } {
+  const raw = session as unknown as Record<string, unknown>;
+
+  const hasSuite = raw["hasPersistentTestSuite"] === true;
+  const version =
+    typeof raw["testSuiteVersion"] === "number" ? (raw["testSuiteVersion"] as number) : null;
+  const totalCases =
+    typeof raw["testSuiteCount"] === "number" ? (raw["testSuiteCount"] as number) : null;
+
+  return { hasSuite, version, totalCases };
+}
+
+function SuiteBadge({
+  version,
+  totalCases,
+}: {
+  version?: number | null;
+  totalCases?: number | null;
+}) {
+  const title =
+    typeof version === "number" || typeof totalCases === "number"
+      ? `Persistent test suite${typeof version === "number" ? ` v${version}` : ""}${
+          typeof totalCases === "number" ? ` • ${totalCases} cases` : ""
+        }`
+      : "Persistent test suite exists";
+
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "2px 7px",
+        borderRadius: 999,
+        border: "1px solid rgba(255,255,255,0.16)",
+        background: "rgba(255,255,255,0.05)",
+        color: "#fff",
+        fontSize: 10,
+        fontWeight: 900,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span aria-hidden="true">🧪</span>
+      {typeof version === "number" ? `Suite v${version}` : "Suite"}
+      {typeof totalCases === "number" ? ` · ${totalCases}` : ""}
     </span>
   );
 }
@@ -150,12 +212,16 @@ export default function SessionSidebar({
           const effectiveMode = (s.effectiveMode ?? s.mode) as Mode;
           const hasPinned = !!s.hasPinnedRequirement;
 
+          // M9 CHANGE: future-safe session metadata for persisted suite.
+          const suiteMeta = getSuiteMeta(s);
+          const hasSuite = suiteMeta.hasSuite;
+
           if (sidebarCollapsed) {
             return (
               <button
                 key={s.id}
                 onClick={() => onSelectSessionAction(s.id, effectiveMode)}
-                title={`${title} • ${effectiveMode.toUpperCase()}${hasPinned ? " • PINNED" : ""}`}
+                title={`${title} • ${effectiveMode.toUpperCase()}${hasPinned ? " • PINNED" : ""}${hasSuite ? " • SUITE" : ""}`}
                 style={{
                   width: "100%",
                   borderRadius: 14,
@@ -185,7 +251,19 @@ export default function SessionSidebar({
                   {sessionGlyph(title)}
                 </div>
 
-                {hasPinned ? <div style={{ marginTop: 5, fontSize: 10, opacity: 0.85 }}>📌</div> : null}
+                <div
+                  style={{
+                    marginTop: 5,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    fontSize: 10,
+                    opacity: 0.85,
+                  }}
+                >
+                  {hasPinned ? <span title="Pinned requirement">📌</span> : null}
+                  {hasSuite ? <span title="Persistent test suite">🧪</span> : null}
+                </div>
               </button>
             );
           }
@@ -249,7 +327,7 @@ export default function SessionSidebar({
                   {preview}
                 </div>
 
-                {hasPinned ? (
+                {hasPinned || hasSuite ? (
                   <div
                     style={{
                       marginTop: 7,
@@ -259,7 +337,15 @@ export default function SessionSidebar({
                       flexWrap: "wrap",
                     }}
                   >
-                    <PinnedBadge updatedAt={s.artifactUpdatedAt ?? null} />
+                    {hasPinned ? <PinnedBadge updatedAt={s.artifactUpdatedAt ?? null} /> : null}
+
+                    {hasSuite ? (
+                      <SuiteBadge
+                        version={suiteMeta.version}
+                        totalCases={suiteMeta.totalCases}
+                      />
+                    ) : null}
+
                     {s.artifactUpdatedAt ? (
                       <span style={{ fontSize: 10, opacity: 0.68 }}>
                         {new Date(s.artifactUpdatedAt).toLocaleString()}

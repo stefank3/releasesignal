@@ -36,11 +36,14 @@ import { tokensToCredits, estimateCostUsd, maybeConvertUsdToEur } from "@/lib/ch
 
 import {
   type SessionArtifact,
+  type TestCase,
+  type TestSuiteArtifact,
   isGuidedClarificationAnswer,
   parseGuidedAnswerToRefinedRequirement,
   mergeArtifact,
   artifactToContextText,
   prismaJsonValue,
+  getTestSuite,
 } from "@/lib/chat/artifact";
 
 import { repairJsonOnce } from "@/lib/chat/repair";
@@ -159,51 +162,235 @@ function buildCoachContinuityArtifactPatch(args: {
 }
 
 /**
- * CHANGE (M8.7):
- * Parse existing TC headers from prior assistant output so Test Design can continue
- * numbering and avoid obvious duplicates.
+ * M9 CHANGE:
+ * Normalize titles for lightweight duplicate filtering during beta.
+ * We intentionally keep this simple for now:
+ * - case-insensitive
+ * - punctuation-insensitive
+ * - whitespace-normalized
  */
-function extractCaseHeadersFromText(text: string): {
-  headers: string[];
-  maxCaseNumber: number;
-} {
-  const headers: string[] = [];
-  let maxCaseNumber = 0;
-
-  const regex = /^\s*TC-(\d{1,4})\s*[-–:]\s*(.+)$/gim;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(text)) !== null) {
-    const num = Number(match[1] || 0);
-    const title = String(match[2] || "").trim();
-
-    if (num > maxCaseNumber) maxCaseNumber = num;
-    if (title) headers.push(`TC-${String(num).padStart(3, "0")} - ${title}`);
-  }
-
-  return { headers, maxCaseNumber };
+function normalizeCaseTitle(title: string): string {
+  return String(title ?? "")
+    .toLowerCase()
+    .replace(/^tc-\d{1,4}\s*[-–:]\s*/i, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function buildExistingCasesBaseline(existingAssistantContents: string[]): {
+/**
+ * M9 CHANGE:
+ * Parse generated plain-text test cases from the model reply.
+ * Expected format starts each case with:
+ *   TC-001 - Title
+ * or
+ *   TC-001: Title
+ */
+function parseGeneratedTestCases(text: string): Array<{ title: string; body: string }> {
+  const raw = String(text ?? "").replace(/\r/g, "").trim();
+  if (!raw) return [];
+
+  const matches = [...raw.matchAll(/^\s*TC-(\d{1,4})\s*[-–:]\s*(.+)$/gim)];
+  if (!matches.length) return [];
+
+  const out: Array<{ title: string; body: string }> = [];
+
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    const start = match.index ?? 0;
+    const end = i + 1 < matches.length ? matches[i + 1].index ?? raw.length : raw.length;
+
+    const block = raw.slice(start, end).trim();
+    const title = String(match[2] ?? "").trim();
+
+    if (!title || !block) continue;
+    out.push({ title, body: block });
+  }
+
+  return out;
+}
+
+/**
+ * M9 CHANGE:
+ * Rebuild a case body so numbering is deterministic even if the model returns
+ * a wrong or repeated TC id.
+ */
+function buildNormalizedCaseBody(caseId: string, title: string, rawBody: string): string {
+  const cleaned = String(rawBody ?? "").replace(/\r/g, "").trim();
+  const lines = cleaned.split("\n");
+  const normalizedHeader = `${caseId} - ${title}`;
+
+  if (lines.length === 0) return normalizedHeader;
+
+  if (/^\s*TC-\d{1,4}\s*[-–:]\s*/i.test(lines[0] ?? "")) {
+    lines[0] = normalizedHeader;
+    return lines.join("\n").trim();
+  }
+
+  return `${normalizedHeader}\n${cleaned}`.trim();
+}
+
+/**
+ * M9 CHANGE:
+ * Build a compact existing-suite baseline directly from the persisted artifact.
+ * This replaces the old "scan prior assistant messages" approach.
+ */
+function buildExistingSuiteBaselineFromArtifact(suite: TestSuiteArtifact | null): {
   suiteSummary: string | null;
   maxCaseNumber: number;
   existingCount: number;
 } {
-  const headers: string[] = [];
-  let maxCaseNumber = 0;
-
-  for (const content of existingAssistantContents) {
-    const parsed = extractCaseHeadersFromText(content);
-    headers.push(...parsed.headers);
-    if (parsed.maxCaseNumber > maxCaseNumber) maxCaseNumber = parsed.maxCaseNumber;
+  if (!suite?.cases?.length) {
+    return {
+      suiteSummary: null,
+      maxCaseNumber: 0,
+      existingCount: 0,
+    };
   }
 
-  const dedupedHeaders = uniqueNonEmpty(headers, 120);
+  const headers = suite.cases.map((c) => `${c.id} - ${c.title}`);
+  const maxCaseNumber = suite.cases.reduce((max, c) => {
+    const match = /^TC-(\d{1,4})$/i.exec(String(c.id ?? "").trim());
+    const n = match ? Number(match[1]) : 0;
+    return Math.max(max, n);
+  }, 0);
+
   return {
-    suiteSummary: dedupedHeaders.length ? dedupedHeaders.join("\n") : null,
+    suiteSummary: headers.join("\n"),
     maxCaseNumber,
-    existingCount: dedupedHeaders.length,
+    existingCount: suite.cases.length,
   };
+}
+
+/**
+ * M9 CHANGE:
+ * Merge newly generated cases into the persisted suite.
+ *
+ * Rules:
+ * - explicit regeneration -> replace suite with v1
+ * - continuation -> append only new unique titles
+ * - numbering is always rebuilt from next available id
+ * - version increments only when new unique cases were actually added
+ */
+function mergeGeneratedCasesIntoSuite(args: {
+  existingSuite: TestSuiteArtifact | null;
+  generatedText: string;
+  explicitReset: boolean;
+}): {
+  nextSuite: TestSuiteArtifact | null;
+  addedCount: number;
+} {
+  const parsed = parseGeneratedTestCases(args.generatedText);
+  if (!parsed.length) {
+    return {
+      nextSuite: args.explicitReset ? null : args.existingSuite,
+      addedCount: 0,
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+
+  if (args.explicitReset || !args.existingSuite) {
+    const freshCases: TestCase[] = parsed.map((c, idx) => {
+      const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
+      return {
+        id: caseId,
+        title: c.title,
+        body: buildNormalizedCaseBody(caseId, c.title, c.body),
+      };
+    });
+
+    return {
+      nextSuite: {
+        version: 1,
+        cases: freshCases,
+        createdAt: nowIso,
+        lastUpdatedAt: nowIso,
+      },
+      addedCount: freshCases.length,
+    };
+  }
+
+  const existingSuite = args.existingSuite;
+  const existingKeys = new Set(existingSuite.cases.map((c) => normalizeCaseTitle(c.title)));
+
+  let nextNumber = existingSuite.cases.reduce((max, c) => {
+    const match = /^TC-(\d{1,4})$/i.exec(String(c.id ?? "").trim());
+    const n = match ? Number(match[1]) : 0;
+    return Math.max(max, n);
+  }, 0) + 1;
+
+  const appended: TestCase[] = [];
+
+  for (const generated of parsed) {
+    const key = normalizeCaseTitle(generated.title);
+    if (!key) continue;
+    if (existingKeys.has(key)) continue;
+
+    const caseId = `TC-${String(nextNumber).padStart(3, "0")}`;
+    nextNumber += 1;
+    existingKeys.add(key);
+
+    appended.push({
+      id: caseId,
+      title: generated.title,
+      body: buildNormalizedCaseBody(caseId, generated.title, generated.body),
+    });
+  }
+
+  if (!appended.length) {
+    return {
+      nextSuite: existingSuite,
+      addedCount: 0,
+    };
+  }
+
+  return {
+    nextSuite: {
+      ...existingSuite,
+      version: existingSuite.version + 1,
+      cases: [...existingSuite.cases, ...appended],
+      lastUpdatedAt: nowIso,
+    },
+    addedCount: appended.length,
+  };
+}
+
+/**
+ * M9 CHANGE:
+ * Preserve refinedRequirement while writing back an updated test suite.
+ */
+function withUpdatedTestSuiteArtifact(
+  existingArtifact: SessionArtifact | null,
+  testSuite: TestSuiteArtifact
+): SessionArtifact {
+  const prev: SessionArtifact =
+    existingArtifact && typeof existingArtifact === "object" ? existingArtifact : {};
+
+  return {
+    ...(prev.refinedRequirement ? { refinedRequirement: prev.refinedRequirement } : {}),
+    testSuite,
+  };
+}
+
+/**
+ * M9 CHANGE:
+ * Render the persisted suite for the user instead of only the delta.
+ * This makes the workspace feel persistent and versioned.
+ */
+function renderTestSuiteForUser(suite: TestSuiteArtifact): string {
+  const lines: string[] = [];
+
+  lines.push(`Test Suite v${suite.version}`);
+  lines.push(`Total test cases: ${suite.cases.length}`);
+  lines.push("");
+
+  for (let i = 0; i < suite.cases.length; i++) {
+    lines.push(suite.cases[i].body.trim());
+    if (i < suite.cases.length - 1) lines.push("");
+  }
+
+  return lines.join("\n").trim();
 }
 
 /**
@@ -666,6 +853,7 @@ export async function POST(req: Request) {
         guidedAnswer,
         explicitRegenerationRequest,
         hasArtifact: !!sessionArtifact,
+        hasTestSuite: !!getTestSuite(sessionArtifact),
       },
     });
 
@@ -797,34 +985,19 @@ export async function POST(req: Request) {
     }
 
     /**
-     * CHANGE (M8.7):
-     * Test Design continuity baseline:
-     * - load prior assistant outputs for the session
-     * - extract existing TC numbering/title headers
-     * - pass that baseline back into the model
-     *
-     * This is intentionally lightweight for beta and does not require a new artifact type yet.
+     * M9 CHANGE:
+     * Test Design continuity now uses the persisted artifact testSuite
+     * instead of scanning prior assistant messages.
      */
     let existingCasesSuiteSummary: string | null = null;
     let nextAvailableCaseNumber = 1;
     let existingCasesCount = 0;
 
-    if (wantCases && !explicitRegenerationRequest) {
-      const priorAssistantMessages = await prisma.chatMessage.findMany({
-        where: {
-          sessionId,
-          auth0Sub,
-          role: "assistant",
-        },
-        select: {
-          content: true,
-        },
-      });
+    const existingTestSuite =
+      wantCases && !explicitRegenerationRequest ? getTestSuite(sessionArtifact) : null;
 
-      const baseline = buildExistingCasesBaseline(
-        priorAssistantMessages.map((m) => m.content ?? "")
-      );
-
+    if (wantCases && existingTestSuite) {
+      const baseline = buildExistingSuiteBaselineFromArtifact(existingTestSuite);
       existingCasesSuiteSummary = baseline.suiteSummary;
       existingCasesCount = baseline.existingCount;
       nextAvailableCaseNumber = Math.max(1, baseline.maxCaseNumber + 1);
@@ -848,7 +1021,7 @@ export async function POST(req: Request) {
             ? `NEXT_AVAILABLE_TEST_CASE_ID: TC-${String(nextAvailableCaseNumber).padStart(3, "0")}`
             : "NEXT_AVAILABLE_TEST_CASE_ID: TC-001",
           existingCasesCount > 0 && !explicitRegenerationRequest
-            ? "Treat previously generated test cases as the baseline suite for this session."
+            ? "Treat the persisted session test suite as the baseline suite."
             : "Generate a fresh test suite for the user's feature.",
           existingCasesCount > 0 && !explicitRegenerationRequest
             ? "Generate ONLY missing tests requested by the user or implied by missing coverage."
@@ -949,8 +1122,8 @@ export async function POST(req: Request) {
 
     const artifactContext =
       includeArtifactContext && artifactForContext
-      ? artifactToContextText(artifactForContext)
-      : null;
+        ? artifactToContextText(artifactForContext)
+        : null;
 
     const messagesForModel: { role: "system" | "user"; content: string }[] = [
       { role: "system", content: systemPrompt },
@@ -964,7 +1137,7 @@ export async function POST(req: Request) {
               role: "system" as const,
               content: [
                 "EXISTING_TEST_SUITE_BASELINE:",
-                "The following test cases already exist in this session.",
+                "The following test cases already exist in this session artifact.",
                 "Use them to continue numbering and avoid duplicates.",
                 "",
                 existingCasesSuiteSummary,
@@ -1013,6 +1186,13 @@ export async function POST(req: Request) {
     let reviewStoredJson: string | null = null;
     let reviewRepaired = false;
 
+    /**
+     * M9 CHANGE:
+     * Stage the next suite update in memory first.
+     * We persist it only after billing + assistant persistence succeeds.
+     */
+    let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
+    let testSuiteAddedCount = 0;
 
     if (executionMode === "review") {
       const tryParse = (txt: string): ReviewResult | null => {
@@ -1053,74 +1233,92 @@ export async function POST(req: Request) {
         }
       }
 
-if (coachParsed) {
-  // M8 final polish:
-  // Allow optional clarifications even after refinement.
-  // Keep them capped to 3 so Strategy stays lightweight.
-  coachParsed.optionalClarifications =
-    coachParsed.optionalClarifications?.slice(0, 3) ?? [];
+      if (coachParsed) {
+        // M8 final polish:
+        // Allow optional clarifications even after refinement.
+        // Keep them capped to 3 so Strategy stays lightweight.
+        coachParsed.optionalClarifications =
+          coachParsed.optionalClarifications?.slice(0, 3) ?? [];
 
-  /**
-   * CHANGE (M8.7):
-   * Strategy continuity artifact enrichment.
-   *
-   * Guided answers already update the artifact strongly before the model call.
-   * This additional step keeps free-text Strategy refinements evolving across the session.
-   */
-  if (!explicitRegenerationRequest) {
-    const continuityPatch = buildCoachContinuityArtifactPatch({
-      existingArtifact: sessionArtifact,
-      coach: coachParsed,
-      latestUserMessage: message,
-      guidedAnswer,
-      weakInput,
-    });
+        /**
+         * CHANGE (M8.7):
+         * Strategy continuity artifact enrichment.
+         *
+         * Guided answers already update the artifact strongly before the model call.
+         * This additional step keeps free-text Strategy refinements evolving across the session.
+         */
+        if (!explicitRegenerationRequest) {
+          const continuityPatch = buildCoachContinuityArtifactPatch({
+            existingArtifact: sessionArtifact,
+            coach: coachParsed,
+            latestUserMessage: message,
+            guidedAnswer,
+            weakInput,
+          });
 
-    if (continuityPatch) {
-      const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
-      const now = new Date();
+          if (continuityPatch) {
+            const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
+            const now = new Date();
 
-      await prisma.chatSession.update({
-        where: { id: sessionId },
-        data: {
-          artifactJson: prismaJsonValue(nextArtifact),
-          artifactUpdatedAt: now,
-        },
-        select: { id: true },
-      });
+            await prisma.chatSession.update({
+              where: { id: sessionId },
+              data: {
+                artifactJson: prismaJsonValue(nextArtifact),
+                artifactUpdatedAt: now,
+              },
+              select: { id: true },
+            });
 
-      sessionArtifact = nextArtifact;
-      artifactUpdatedAtIso = now.toISOString();
-    }
-  }
+            sessionArtifact = nextArtifact;
+            artifactUpdatedAtIso = now.toISOString();
+          }
+        }
 
-  const effectiveArtifactForReply = explicitRegenerationRequest
-    ? null
-    : sessionArtifact;
+        const effectiveArtifactForReply = explicitRegenerationRequest
+          ? null
+          : sessionArtifact;
 
-  if (
-    shouldReturnTechnicalRequirement({
-      guidedAnswer,
-      artifact: effectiveArtifactForReply,
-    })
-  ) {
-    replyTextForUser = coachToTechnicalRequirementText(
-      coachParsed,
-      effectiveArtifactForReply
-    );
-  } else {
-    replyTextForUser = coachToText(coachParsed);
-  }
-} else {
-  replyTextForUser =
-    "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
-}
+        if (
+          shouldReturnTechnicalRequirement({
+            guidedAnswer,
+            artifact: effectiveArtifactForReply,
+          })
+        ) {
+          replyTextForUser = coachToTechnicalRequirementText(
+            coachParsed,
+            effectiveArtifactForReply
+          );
+        } else {
+          replyTextForUser = coachToText(coachParsed);
+        }
+      } else {
+        replyTextForUser =
+          "I couldn't format the coach output this time. Please retry, or add a bit more context (workflow + expected behavior + edge cases).";
+      }
     }
 
     if (wantCases) {
-      replyTextForUser = rawReply.trim();
+      const existingSuiteForMerge = explicitRegenerationRequest
+        ? null
+        : getTestSuite(sessionArtifact);
+
+      const merged = mergeGeneratedCasesIntoSuite({
+        existingSuite: existingSuiteForMerge,
+        generatedText: rawReply.trim(),
+        explicitReset: explicitRegenerationRequest,
+      });
+
+      nextTestSuiteArtifact = merged.nextSuite;
+      testSuiteAddedCount = merged.addedCount;
+
+      if (nextTestSuiteArtifact) {
+        replyTextForUser = renderTestSuiteForUser(nextTestSuiteArtifact);
+      } else {
+        // Fallback if parsing failed or the model returned something malformed.
+        replyTextForUser = rawReply.trim();
+      }
+
       coachParsed = null;
-  
     }
 
     const assistantContentToStore =
@@ -1166,6 +1364,27 @@ if (coachParsed) {
         );
       }
       throw e;
+    }
+
+    /**
+     * M9 CHANGE:
+     * Persist updated test suite only after assistant persistence + billing succeed.
+     */
+    if (wantCases && nextTestSuiteArtifact) {
+      const nextArtifact = withUpdatedTestSuiteArtifact(sessionArtifact, nextTestSuiteArtifact);
+      const now = new Date();
+
+      await prisma.chatSession.update({
+        where: { id: sessionId },
+        data: {
+          artifactJson: prismaJsonValue(nextArtifact),
+          artifactUpdatedAt: now,
+        },
+        select: { id: true },
+      });
+
+      sessionArtifact = nextArtifact;
+      artifactUpdatedAtIso = now.toISOString();
     }
 
     // 14) Responses
@@ -1243,7 +1462,9 @@ if (coachParsed) {
         explicitRegenerationRequest,
         existingCasesCount,
         nextAvailableCaseNumber,
+        testSuiteAddedCount,
         hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
+        hasTestSuite: !!getTestSuite(sessionArtifact),
       },
     });
 

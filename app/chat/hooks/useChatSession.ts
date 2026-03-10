@@ -17,6 +17,10 @@
 // 7) ALIGN: visible workflow labels now use Strategy / Test Design / Test Review
 // 8) ADD: derived flags for strategy/design continuity-aware UI behavior
 // 9) KEEP: no backend contract change here; actual advisor continuity will be implemented in /api/chat/route.ts
+//
+// CHANGE (M9):
+// 10) ADD: derived flag for persisted test suite presence
+// 11) KEEP: artifact hydration logic unchanged; expanded SessionArtifact now carries testSuite automatically
 
 "use client";
 
@@ -332,6 +336,9 @@ export type UseChatSessionReturn = {
   isTestReviewSession: boolean;
   hasPinnedRequirement: boolean;
 
+  // M9 CHANGE: derived persistent suite flag
+  hasPersistentTestSuite: boolean;
+
   // derived
   latestCoachSuggestions: CoachSuggestions | null;
   modeLabel: (m: Mode) => string;
@@ -499,7 +506,8 @@ export function useChatSession(): UseChatSessionReturn {
         artifactUpdatedAt?: string | null;
       }>(url.toString());
 
-      // M7.7: hydrate artifact on reset (select session).
+      // M7.7 / M9:
+      // hydrate artifact on reset (select session).
       if (reset) {
         setSessionArtifact(data.artifact ?? null);
         setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
@@ -578,7 +586,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
-    // M7.7: artifact will be hydrated by loadSessionMessages(reset=true).
+    // M7.7 / M9: artifact will be hydrated by loadSessionMessages(reset=true).
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -605,7 +613,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
-    // M7.7: new chat has no pinned artifact until the user clarifies.
+    // M7.7 / M9: new chat has no artifact until the server returns one.
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -629,7 +637,7 @@ export function useChatSession(): UseChatSessionReturn {
     setLastRequestId(null);
     setLastPending(null);
 
-    // M7.7
+    // M7.7 / M9
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -689,7 +697,7 @@ export function useChatSession(): UseChatSessionReturn {
         setLastRequestId(null);
         setLastPending(null);
 
-        // M7.7
+        // M7.7 / M9
         setSessionArtifact(null);
         setArtifactUpdatedAt(null);
       }
@@ -778,8 +786,9 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.rate) setRate(data.rate);
 
-      // M7.7: hydrate artifact from /api/chat response (success or replay).
-      // This supports the Strategy panel: the pinned card must update immediately after guided answers.
+      // M7.7 / M9:
+      // hydrate artifact from /api/chat response (success or replay).
+      // Expanded SessionArtifact now carries refinedRequirement + optional testSuite.
       const artifactPayload = readArtifactFromResponse(data);
       if (artifactPayload) {
         setSessionArtifact(artifactPayload.artifact);
@@ -969,6 +978,10 @@ export function useChatSession(): UseChatSessionReturn {
   const isTestReviewSession = mode === "review" && activeSessionMode === "review";
   const hasPinnedRequirement = !!sessionArtifact?.refinedRequirement;
 
+  // M9 CHANGE: derived suite flag for evolving test suite UI.
+  const hasPersistentTestSuite =
+    !!sessionArtifact?.testSuite && Array.isArray(sessionArtifact.testSuite.cases);
+
   return {
     mode,
     setMode,
@@ -1023,6 +1036,9 @@ export function useChatSession(): UseChatSessionReturn {
     isTestDesignSession,
     isTestReviewSession,
     hasPinnedRequirement,
+
+    // M9
+    hasPersistentTestSuite,
 
     latestCoachSuggestions,
     modeLabel,

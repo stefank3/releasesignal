@@ -11,8 +11,25 @@ export type RefinedRequirement = {
   acceptanceCriteria?: string[];
 };
 
+// M9 CHANGE: persistent test case model for evolving suites.
+export type TestCase = {
+  id: string; // e.g. TC-001
+  title: string; // short title used for continuity + duplicate avoidance
+  body: string; // full rendered case text
+};
+
+// M9 CHANGE: suite artifact stored inside ChatSession.artifactJson.
+export type TestSuiteArtifact = {
+  version: number;
+  cases: TestCase[];
+  createdAt: string;
+  lastUpdatedAt: string;
+};
+
 export type SessionArtifact = {
   refinedRequirement?: RefinedRequirement;
+  // M9 CHANGE: optional test suite state for incremental Cases mode.
+  testSuite?: TestSuiteArtifact;
 };
 
 export function isGuidedClarificationAnswer(message: string): boolean {
@@ -119,7 +136,23 @@ export function mergeArtifact(existing: SessionArtifact | null, patch: Partial<R
       : {}),
   };
 
-  return { refinedRequirement: nextRR };
+  return {
+    refinedRequirement: nextRR,
+    // M9 CHANGE: preserve existing testSuite when refinedRequirement is updated.
+    ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
+  };
+}
+
+// M9 CHANGE: helper for future Cases-mode incremental behavior.
+// Safe no-op for old sessions that do not yet have a suite.
+export function getTestSuite(artifact: SessionArtifact | null | undefined): TestSuiteArtifact | null {
+  const suite = artifact?.testSuite;
+  if (!suite || typeof suite !== "object") return null;
+  if (!Array.isArray(suite.cases)) return null;
+  if (typeof suite.version !== "number") return null;
+  if (typeof suite.createdAt !== "string") return null;
+  if (typeof suite.lastUpdatedAt !== "string") return null;
+  return suite;
 }
 
 export function artifactToContextText(artifact: SessionArtifact): string {
@@ -145,6 +178,21 @@ export function artifactToContextText(artifact: SessionArtifact): string {
   if (rr.acceptanceCriteria?.length) {
     lines.push("- Acceptance criteria:");
     for (const a of rr.acceptanceCriteria.slice(0, 12)) lines.push(`  - ${a}`);
+  }
+
+  // M9 CHANGE: include compact test suite context only when it exists.
+  // This is useful for future incremental generation prompts.
+  const suite = getTestSuite(artifact);
+  if (suite) {
+    lines.push("");
+    lines.push(`TEST SUITE (pinned): v${suite.version}, total cases: ${suite.cases.length}`);
+
+    if (suite.cases.length) {
+      lines.push("- Existing test case titles:");
+      for (const c of suite.cases.slice(0, 50)) {
+        lines.push(`  - ${c.id}: ${c.title}`);
+      }
+    }
   }
 
   return lines.join("\n");

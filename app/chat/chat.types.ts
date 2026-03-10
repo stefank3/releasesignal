@@ -85,8 +85,24 @@ export type RefinedRequirement = {
   acceptanceCriteria?: string[];
 };
 
+// M9 CHANGE: persistent suite types mirrored from backend artifact model.
+export type TestSuiteCase = {
+  id: string; // e.g. TC-001
+  title: string;
+  body: string;
+};
+
+export type TestSuiteArtifact = {
+  version: number;
+  cases: TestSuiteCase[];
+  createdAt: string;
+  lastUpdatedAt: string;
+};
+
 export type SessionArtifact = {
   refinedRequirement?: RefinedRequirement;
+  // M9 CHANGE: evolving persisted test suite for Cases mode continuity.
+  testSuite?: TestSuiteArtifact;
 };
 
 /**
@@ -179,6 +195,11 @@ export type SessionListItem = {
   // CHANGE (M7.7): lightweight pin metadata for sidebar badge
   hasPinnedRequirement?: boolean;
   artifactUpdatedAt?: string | null;
+
+  // M9 CHANGE: persistent suite metadata for sidebar/history badges
+  hasPersistentTestSuite?: boolean;
+  testSuiteVersion?: number | null;
+  testSuiteCount?: number | null;
 };
 
 export type HistoryMessage = {

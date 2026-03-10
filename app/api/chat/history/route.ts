@@ -10,6 +10,14 @@ export const runtime = "nodejs";
 
 type Mode = "coach" | "review" | "cases";
 
+type ArtifactJsonShape = {
+  refinedRequirement?: unknown;
+  testSuite?: {
+    version?: unknown;
+    cases?: unknown;
+  };
+};
+
 function sanitizeTitle(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
 
@@ -29,6 +37,62 @@ function getRequestId(req: Request): string {
 function normalizeMode(m: unknown): Mode {
   // WHY (M6.1): older rows or unexpected values should not break the history UI.
   return m === "review" || m === "cases" ? m : "coach";
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+/**
+ * M9 CHANGE:
+ * Read lightweight artifact metadata for sidebar/history badges.
+ * This stays defensive because older rows may not have artifactJson at all.
+ */
+function readArtifactMeta(artifactJson: unknown): {
+  hasPinnedRequirement: boolean;
+  hasPersistentTestSuite: boolean;
+  testSuiteVersion: number | null;
+  testSuiteCount: number | null;
+} {
+  if (!isRecord(artifactJson)) {
+    return {
+      hasPinnedRequirement: false,
+      hasPersistentTestSuite: false,
+      testSuiteVersion: null,
+      testSuiteCount: null,
+    };
+  }
+
+  const refinedRequirement = isRecord(artifactJson.refinedRequirement)
+    ? artifactJson.refinedRequirement
+    : null;
+
+  const hasPinnedRequirement = refinedRequirement
+    ? Object.values(refinedRequirement).some((value) => {
+        if (typeof value === "string") return value.trim().length > 0;
+        if (Array.isArray(value)) {
+          return value.some((item) => String(item ?? "").trim().length > 0);
+        }
+        return false;
+      })
+    : false;
+
+  const rawTestSuite = isRecord(artifactJson.testSuite) ? artifactJson.testSuite : null;
+  const rawCases = rawTestSuite?.cases;
+  const cases = Array.isArray(rawCases) ? rawCases : null;
+
+  const testSuiteCount = cases ? cases.length : null;
+  const testSuiteVersion =
+    typeof rawTestSuite?.version === "number" ? rawTestSuite.version : null;
+
+  const hasPersistentTestSuite = !!cases && cases.length > 0;
+
+  return {
+    hasPinnedRequirement,
+    hasPersistentTestSuite,
+    testSuiteVersion,
+    testSuiteCount,
+  };
 }
 
 /**
@@ -125,6 +189,9 @@ export async function GET(req: Request) {
         mode: true,
         createdAt: true,
         updatedAt: true,
+        // M7.7 / M9 CHANGE: sidebar/history badge metadata source
+        artifactJson: true,
+        artifactUpdatedAt: true,
       },
     });
 
@@ -215,6 +282,8 @@ export async function GET(req: Request) {
           lastAssistantMessage: lastAssistant ? { role: lastAssistant.role, content: lastAssistant.content } : null,
         });
 
+        const artifactMeta = readArtifactMeta(s.artifactJson);
+
         return {
           id: s.id,
           title: computedTitle,
@@ -235,6 +304,13 @@ export async function GET(req: Request) {
                 createdAt: last.createdAt.toISOString(),
               }
             : null,
+
+          // M7.7 / M9 CHANGE: sidebar/history metadata
+          hasPinnedRequirement: artifactMeta.hasPinnedRequirement,
+          artifactUpdatedAt: s.artifactUpdatedAt ? s.artifactUpdatedAt.toISOString() : null,
+          hasPersistentTestSuite: artifactMeta.hasPersistentTestSuite,
+          testSuiteVersion: artifactMeta.testSuiteVersion,
+          testSuiteCount: artifactMeta.testSuiteCount,
         };
       }),
       nextCursor: hasMore ? page[page.length - 1].id : null,

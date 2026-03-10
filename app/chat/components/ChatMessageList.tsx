@@ -6,6 +6,11 @@
 // - removes duplicate wrapper-level copy buttons
 // - relies on card-native copy actions where available
 // - keeps rendering behavior clean and consistent
+//
+// CHANGE (M9):
+// - small UI polish for evolving test suite sessions
+// - clearer empty-state wording for persistent Cases mode
+// - lightweight detection of "Test Suite vX" plain-text responses
 
 "use client";
 
@@ -26,6 +31,18 @@ function mdSafe(s: string) {
 function looksLikeJson(s: string) {
   const t = String(s ?? "").trimStart();
   return t.startsWith("{") || t.startsWith("[");
+}
+
+/**
+ * M9 CHANGE:
+ * Detect the rendered evolving-suite response shape returned by the backend:
+ *
+ * Test Suite v2
+ * Total test cases: 5
+ */
+function looksLikePersistedTestSuiteText(s: string): boolean {
+  const t = String(s ?? "").trim();
+  return /^Test Suite v\d+\s*\nTotal test cases:\s*\d+/i.test(t);
 }
 
 /**
@@ -96,7 +113,7 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
           ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately, then refine the requirement as the session evolves."
           : mode === "review"
             ? "Paste test cases or a test plan. I’ll return a score, breakdown, and prioritized improvements."
-            : "Describe the feature or use the Refined Requirement. I’ll generate STRICT plain-text Jira/Xray-ready test cases."}
+            : "Describe the feature or use the Refined Requirement. I’ll generate a persistent plain-text test suite that can evolve across this session."}
       </div>
     );
   }
@@ -183,8 +200,16 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
 
         // ---------------- CASES TEXT ----------------
         if (it.kind === "casesText") {
+          const isPersistedSuite = looksLikePersistedTestSuiteText(it.text);
+
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
+              {isPersistedSuite ? (
+                <div style={{ fontSize: 11, opacity: 0.66, color: "#fff" }}>
+                  Persistent suite workspace
+                </div>
+              ) : null}
+
               <CasesTextCard text={it.text} />
             </div>
           );

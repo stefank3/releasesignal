@@ -27,7 +27,7 @@ function normalizeMode(m: unknown): Mode {
   return m === "review" || m === "cases" ? m : "coach";
 }
 
-// CHANGE (M7.7): normalize artifact JSON output to SessionArtifact|null (defensive)
+// CHANGE (M7.7 / M9): surface full session artifact for pinned requirement + persistent test suite hydration.
 function readArtifact(v: unknown): Record<string, unknown> | null {
   if (!v) return null;
   if (typeof v !== "object") return null;
