@@ -21,6 +21,7 @@
 // CHANGE (M9):
 // 10) ADD: derived flag for persisted test suite presence
 // 11) KEEP: artifact hydration logic unchanged; expanded SessionArtifact now carries testSuite automatically
+// 12) ADD: graceful client-side oversized-input handling before hitting /api/chat
 
 "use client";
 
@@ -43,6 +44,9 @@ import type {
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
+
+// M9 CHANGE: match backend hard limit so we can fail gracefully in the client first.
+const MAX_MESSAGE_CHARS = 8000;
 
 /** Determine if user is already near the bottom of the chat window. */
 export function isNearBottom(el: HTMLDivElement, thresholdPx = 140) {
@@ -89,6 +93,54 @@ function createSessionClientId(): string {
     return (crypto as Crypto).randomUUID();
   }
   return `sid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+/**
+ * M9 CHANGE:
+ * Graceful UX for oversized single-pass requests.
+ * This is especially helpful for Review mode and very large pasted suites.
+ */
+function buildOversizedInputMessage(args: { mode: Mode; actualLength: number }): string {
+  const overBy = Math.max(0, args.actualLength - MAX_MESSAGE_CHARS);
+
+  if (args.mode === "review") {
+    return [
+      `This review input is too large for a single pass right now (${args.actualLength.toLocaleString()} characters, limit ${MAX_MESSAGE_CHARS.toLocaleString()}).`,
+      "",
+      "Try one of these:",
+      "- review a smaller section of the suite",
+      "- split the suite into parts",
+      "- review the highest-risk area first",
+      "",
+      `Current input exceeds the limit by ${overBy.toLocaleString()} characters.`,
+      "",
+      "Large-suite review will be expanded in a later milestone.",
+    ].join("\n");
+  }
+
+  if (args.mode === "cases") {
+    return [
+      `This test-design input is too large for a single request right now (${args.actualLength.toLocaleString()} characters, limit ${MAX_MESSAGE_CHARS.toLocaleString()}).`,
+      "",
+      "Try one of these:",
+      "- generate tests from a smaller requirement section",
+      "- paste only the core scope and constraints",
+      "- extend the suite incrementally in follow-up prompts",
+      "",
+      `Current input exceeds the limit by ${overBy.toLocaleString()} characters.`,
+    ].join("\n");
+  }
+
+  return [
+    `This Strategy input is too large for a single request right now (${args.actualLength.toLocaleString()} characters, limit ${MAX_MESSAGE_CHARS.toLocaleString()}).`,
+    "",
+    "Try one of these:",
+    "- shorten the description to the essential scope",
+    "- split the requirement into smaller parts",
+    "- start with the core workflow first",
+    "",
+    `Current input exceeds the limit by ${overBy.toLocaleString()} characters.`,
+  ].join("\n");
 }
 
 /**
@@ -723,6 +775,26 @@ export function useChatSession(): UseChatSessionReturn {
     if (!requestId) return;
 
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
+
+    // M9 CHANGE: graceful client-side oversized-input handling.
+    // We stop before creating a server error and explain how to proceed.
+    if (text.length > MAX_MESSAGE_CHARS) {
+      setLastRequestId(requestId);
+      setItems((prev) => [
+        ...prev,
+        {
+          kind: "error",
+          role: "bot",
+          title: "Input too large for a single request",
+          details: buildOversizedInputMessage({
+            mode: effectiveMode,
+            actualLength: text.length,
+          }),
+          requestId,
+        },
+      ]);
+      return;
+    }
 
     const sessionIdForRequest = replay
       ? lastPending?.sessionId ?? activeSessionId
