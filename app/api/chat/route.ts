@@ -683,30 +683,30 @@ export async function POST(req: Request) {
     const explicitRegenerationRequest = isExplicitRegenerationRequest(message);
 
 
-          if (message.length > 8000) {
-          await recordChatMetric({
-            nowMs: Date.now(),
-            mode: modeForMetric,
-            status: 400,
-            latencyMs: Date.now() - startTime,
-          });
+    if (message.length > 8000) {
+    await recordChatMetric({
+      nowMs: Date.now(),
+      mode: modeForMetric,
+      status: 400,
+      latencyMs: Date.now() - startTime,
+    });
 
-          const inputTooLargeMessage =
-            clientMode === "review"
-              ? "Input too large for a single review request. Please split the suite into smaller sections and review them in parts."
-              : clientMode === "cases"
-                ? "Input too large for a single test design request. Please reduce the pasted scope or generate the suite incrementally."
-                : "Input too large for a single Strategy request. Please shorten the requirement or split it into smaller parts.";
+    const inputTooLargeMessage =
+      clientMode === "review"
+        ? "Input too large for a single review request. Please split the suite into smaller sections and review them in parts."
+        : clientMode === "cases"
+          ? "Input too large for a single test design request. Please reduce the pasted scope or generate the suite incrementally."
+          : "Input too large for a single Strategy request. Please shorten the requirement or split it into smaller parts.";
 
-          return NextResponse.json(
-            {
-              ok: false,
-              error: inputTooLargeMessage,
-              details: `Received ${message.length} characters. Maximum supported length is 8000.`,
-            },
-            { status: 400, headers: responseHeaders(requestId) }
-          );
-        }
+    return NextResponse.json(
+      {
+        ok: false,
+        error: inputTooLargeMessage,
+        details: `Received ${message.length} characters. Maximum supported length is 8000.`,
+      },
+      { status: 400, headers: responseHeaders(requestId) }
+    );
+  }
 
     // M7.4: guided clarification answer heuristic
     const guidedAnswer =
