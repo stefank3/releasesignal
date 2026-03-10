@@ -1509,6 +1509,9 @@ export async function POST(req: Request) {
       openaiModel = t.model;
     }
 
+    const isAuthExpired =
+      /access token has expired|refresh token was not provided|re-authenticate/i.test(errMsg);
+
     log("error", {
       event: "chat_error",
       requestId,
@@ -1526,16 +1529,30 @@ export async function POST(req: Request) {
       openaiLatencyMs,
       openaiErrorCode,
       retryCount,
-      errorType: "chat_error",
+      errorType: isAuthExpired ? "auth_expired" : "chat_error",
       errorMessage: errMsg,
     });
 
     await recordChatMetric({
       nowMs: Date.now(),
       mode: modeForMetric,
-      status: 500,
+      status: isAuthExpired ? 401 : 500,
       latencyMs: Date.now() - startTime,
     });
+
+    if (isAuthExpired) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Session expired",
+          details: "Your sign-in session expired. Please sign in again to continue.",
+          ...(rateMeta ? { rate: rateMeta } : {}),
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        },
+        { status: 401, headers: responseHeaders(requestId, rateMeta ?? undefined) }
+      );
+    }
 
     return NextResponse.json(
       {

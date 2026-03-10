@@ -889,11 +889,24 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
         return;
       }
-
       if (status === 429) {
         setRateLimitMsg(
           `${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`
         );
+        return;
+      }
+
+      if (status === 401) {
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "error",
+            role: "bot",
+            title: "Session expired",
+            details: data?.details ?? "Your sign-in session expired. Please sign in again and retry.",
+            requestId: serverRequestId,
+          },
+        ]);
         return;
       }
 
