@@ -165,11 +165,6 @@ function focusChatInputBestEffort() {
 }
 
 export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) {
-  const isCoachSession = chat.mode === "coach" && chat.activeSessionMode === "coach";
-  if (!isCoachSession) return null;
-
-  const hasPinned = !!chat.sessionArtifact?.refinedRequirement;
-
   const [objective, setObjective] = useState("");
   const [primaryRisk, setPrimaryRisk] = useState("");
   const [integrations, setIntegrations] = useState("");
@@ -188,6 +183,9 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
     ].join("\n");
   }, [objective, primaryRisk, integrations, constraints, scope, successCriteria]);
 
+  const isCoachSession = chat.mode === "coach" && chat.activeSessionMode === "coach";
+  const hasPinned = !!chat.sessionArtifact?.refinedRequirement;
+
   const hasAnyInput = Boolean(
     objective.trim() ||
       primaryRisk.trim() ||
@@ -196,6 +194,8 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
       scope.trim() ||
       successCriteria.trim()
   );
+
+  if (!isCoachSession) return null;
 
   return (
     <div

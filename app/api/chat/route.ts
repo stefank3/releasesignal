@@ -36,13 +36,11 @@ import { tokensToCredits, estimateCostUsd, maybeConvertUsdToEur } from "@/lib/ch
 
 import {
   type SessionArtifact,
-  type TestCase,
   type TestSuiteArtifact,
   isGuidedClarificationAnswer,
   parseGuidedAnswerToRefinedRequirement,
   mergeArtifact,
   artifactToContextText,
-  prismaJsonValue,
   getTestSuite,
 } from "@/lib/chat/artifact";
 
@@ -53,6 +51,23 @@ import {
   persistAssistantWithBillingTx,
   InsufficientCreditsError,
 } from "@/lib/chat/persist";
+
+import {
+  buildCoachContinuityArtifactPatch,
+  coachToText,
+  coachToTechnicalRequirementText,
+  hasMeaningfulRefinedRequirement,
+  shouldReturnTechnicalRequirement,
+} from "@/lib/server/chat/coachFormatting";
+
+import {
+  buildExistingSuiteBaselineFromArtifact,
+  mergeGeneratedCasesIntoSuite,
+  renderTestSuiteForUser,
+  withUpdatedTestSuiteArtifact,
+} from "@/lib/server/chat/testSuiteService";
+
+import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,504 +81,6 @@ function isExplicitRegenerationRequest(message: string): boolean {
   return /\b(regenerate|restart|start over|from scratch|fresh start|ignore previous|ignore the previous|discard previous|replace the suite|new suite)\b/i.test(
     message
   );
-}
-
-function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-
-  for (const raw of values) {
-    const value = String(raw ?? "").trim();
-    if (!value) continue;
-
-    const key = value.toLowerCase();
-    if (seen.has(key)) continue;
-
-    seen.add(key);
-    out.push(value);
-
-    if (out.length >= max) break;
-  }
-
-  return out;
-}
-
-/**
- * CHANGE (M8.7):
- * Very lightweight artifact enrichment for Strategy continuity.
- *
- * Goal:
- * - keep the Refined Requirement evolving across Strategy prompts
- * - avoid backend contract changes
- * - preserve existing guided-answer merge behavior
- *
- * Notes:
- * - guided structured answers are still the strongest artifact update path
- * - this helper adds continuity value for normal free-text refinements
- */
-function buildCoachContinuityArtifactPatch(args: {
-  existingArtifact: SessionArtifact | null;
-  coach: CoachResult;
-  latestUserMessage: string;
-  guidedAnswer: boolean;
-  weakInput: boolean;
-}): ReturnType<typeof parseGuidedAnswerToRefinedRequirement> | null {
-  const existing = args.existingArtifact?.refinedRequirement;
-  const latestMessage = args.latestUserMessage.trim();
-
-  const existingContext =
-    typeof existing?.context === "string" ? existing.context.trim() : "";
-
-  let nextContext = existingContext;
-
-  const shouldAppendLatestMessage =
-    !args.guidedAnswer &&
-    !args.weakInput &&
-    latestMessage.length > 0 &&
-    latestMessage.length <= 600 &&
-    !existingContext.toLowerCase().includes(latestMessage.toLowerCase());
-
-  if (shouldAppendLatestMessage) {
-    nextContext = nextContext
-      ? `${nextContext}\n\nLatest refinement: ${latestMessage}`
-      : latestMessage;
-  }
-
-  const objective =
-    (typeof existing?.objective === "string" && existing.objective.trim()) ||
-    args.coach.highSignalApproach.goals[0] ||
-    "";
-
-  const riskFocus = uniqueNonEmpty(
-    [...(existing?.riskFocus ?? []), ...args.coach.riskMatrix.map((r) => r.risk)],
-    12
-  );
-
-  const patch = {
-    objective: objective || undefined,
-    context: nextContext || existing?.context || undefined,
-    inScope: existing?.inScope ?? [],
-    outOfScope: existing?.outOfScope ?? [],
-    integrations: existing?.integrations ?? [],
-    riskFocus,
-    acceptanceCriteria: existing?.acceptanceCriteria ?? [],
-  };
-
-  const hasMeaningfulPatch =
-    !!patch.objective ||
-    !!patch.context ||
-    patch.inScope.length > 0 ||
-    patch.outOfScope.length > 0 ||
-    patch.integrations.length > 0 ||
-    patch.riskFocus.length > 0 ||
-    patch.acceptanceCriteria.length > 0;
-
-  return hasMeaningfulPatch ? patch : null;
-}
-
-/**
- * M9 CHANGE:
- * Normalize titles for lightweight duplicate filtering during beta.
- * We intentionally keep this simple for now:
- * - case-insensitive
- * - punctuation-insensitive
- * - whitespace-normalized
- */
-function normalizeCaseTitle(title: string): string {
-  return String(title ?? "")
-    .toLowerCase()
-    .replace(/^tc-\d{1,4}\s*[-–:]\s*/i, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * M9 CHANGE:
- * Parse generated plain-text test cases from the model reply.
- * Expected format starts each case with:
- *   TC-001 - Title
- * or
- *   TC-001: Title
- */
-function parseGeneratedTestCases(text: string): Array<{ title: string; body: string }> {
-  const raw = String(text ?? "").replace(/\r/g, "").trim();
-  if (!raw) return [];
-
-  const matches = [...raw.matchAll(/^\s*TC-(\d{1,4})\s*[-–:]\s*(.+)$/gim)];
-  if (!matches.length) return [];
-
-  const out: Array<{ title: string; body: string }> = [];
-
-  for (let i = 0; i < matches.length; i++) {
-    const match = matches[i];
-    const start = match.index ?? 0;
-    const end = i + 1 < matches.length ? matches[i + 1].index ?? raw.length : raw.length;
-
-    const block = raw.slice(start, end).trim();
-    const title = String(match[2] ?? "").trim();
-
-    if (!title || !block) continue;
-    out.push({ title, body: block });
-  }
-
-  return out;
-}
-
-/**
- * M9 CHANGE:
- * Rebuild a case body so numbering is deterministic even if the model returns
- * a wrong or repeated TC id.
- */
-function buildNormalizedCaseBody(caseId: string, title: string, rawBody: string): string {
-  const cleaned = String(rawBody ?? "").replace(/\r/g, "").trim();
-  const lines = cleaned.split("\n");
-  const normalizedHeader = `${caseId} - ${title}`;
-
-  if (lines.length === 0) return normalizedHeader;
-
-  if (/^\s*TC-\d{1,4}\s*[-–:]\s*/i.test(lines[0] ?? "")) {
-    lines[0] = normalizedHeader;
-    return lines.join("\n").trim();
-  }
-
-  return `${normalizedHeader}\n${cleaned}`.trim();
-}
-
-/**
- * M9 CHANGE:
- * Build a compact existing-suite baseline directly from the persisted artifact.
- * This replaces the old "scan prior assistant messages" approach.
- */
-function buildExistingSuiteBaselineFromArtifact(suite: TestSuiteArtifact | null): {
-  suiteSummary: string | null;
-  maxCaseNumber: number;
-  existingCount: number;
-} {
-  if (!suite?.cases?.length) {
-    return {
-      suiteSummary: null,
-      maxCaseNumber: 0,
-      existingCount: 0,
-    };
-  }
-
-  const headers = suite.cases.map((c) => `${c.id} - ${c.title}`);
-  const maxCaseNumber = suite.cases.reduce((max, c) => {
-    const match = /^TC-(\d{1,4})$/i.exec(String(c.id ?? "").trim());
-    const n = match ? Number(match[1]) : 0;
-    return Math.max(max, n);
-  }, 0);
-
-  return {
-    suiteSummary: headers.join("\n"),
-    maxCaseNumber,
-    existingCount: suite.cases.length,
-  };
-}
-
-/**
- * M9 CHANGE:
- * Merge newly generated cases into the persisted suite.
- *
- * Rules:
- * - explicit regeneration -> replace suite with v1
- * - continuation -> append only new unique titles
- * - numbering is always rebuilt from next available id
- * - version increments only when new unique cases were actually added
- */
-function mergeGeneratedCasesIntoSuite(args: {
-  existingSuite: TestSuiteArtifact | null;
-  generatedText: string;
-  explicitReset: boolean;
-}): {
-  nextSuite: TestSuiteArtifact | null;
-  addedCount: number;
-} {
-  const parsed = parseGeneratedTestCases(args.generatedText);
-  if (!parsed.length) {
-    return {
-      nextSuite: args.explicitReset ? null : args.existingSuite,
-      addedCount: 0,
-    };
-  }
-
-  const nowIso = new Date().toISOString();
-
-  if (args.explicitReset || !args.existingSuite) {
-    const freshCases: TestCase[] = parsed.map((c, idx) => {
-      const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
-      return {
-        id: caseId,
-        title: c.title,
-        body: buildNormalizedCaseBody(caseId, c.title, c.body),
-      };
-    });
-
-    return {
-      nextSuite: {
-        version: 1,
-        cases: freshCases,
-        createdAt: nowIso,
-        lastUpdatedAt: nowIso,
-      },
-      addedCount: freshCases.length,
-    };
-  }
-
-  const existingSuite = args.existingSuite;
-  const existingKeys = new Set(existingSuite.cases.map((c) => normalizeCaseTitle(c.title)));
-
-  let nextNumber = existingSuite.cases.reduce((max, c) => {
-    const match = /^TC-(\d{1,4})$/i.exec(String(c.id ?? "").trim());
-    const n = match ? Number(match[1]) : 0;
-    return Math.max(max, n);
-  }, 0) + 1;
-
-  const appended: TestCase[] = [];
-
-  for (const generated of parsed) {
-    const key = normalizeCaseTitle(generated.title);
-    if (!key) continue;
-    if (existingKeys.has(key)) continue;
-
-    const caseId = `TC-${String(nextNumber).padStart(3, "0")}`;
-    nextNumber += 1;
-    existingKeys.add(key);
-
-    appended.push({
-      id: caseId,
-      title: generated.title,
-      body: buildNormalizedCaseBody(caseId, generated.title, generated.body),
-    });
-  }
-
-  if (!appended.length) {
-    return {
-      nextSuite: existingSuite,
-      addedCount: 0,
-    };
-  }
-
-  return {
-    nextSuite: {
-      ...existingSuite,
-      version: existingSuite.version + 1,
-      cases: [...existingSuite.cases, ...appended],
-      lastUpdatedAt: nowIso,
-    },
-    addedCount: appended.length,
-  };
-}
-
-/**
- * M9 CHANGE:
- * Preserve refinedRequirement while writing back an updated test suite.
- */
-function withUpdatedTestSuiteArtifact(
-  existingArtifact: SessionArtifact | null,
-  testSuite: TestSuiteArtifact
-): SessionArtifact {
-  const prev: SessionArtifact =
-    existingArtifact && typeof existingArtifact === "object" ? existingArtifact : {};
-
-  return {
-    ...(prev.refinedRequirement ? { refinedRequirement: prev.refinedRequirement } : {}),
-    testSuite,
-  };
-}
-
-/**
- * M9 CHANGE:
- * Render the persisted suite for the user instead of only the delta.
- * This makes the workspace feel persistent and versioned.
- */
-function renderTestSuiteForUser(suite: TestSuiteArtifact): string {
-  const lines: string[] = [];
-
-  lines.push(`Test Suite v${suite.version}`);
-  lines.push(`Total test cases: ${suite.cases.length}`);
-  lines.push("");
-
-  for (let i = 0; i < suite.cases.length; i++) {
-    lines.push(suite.cases[i].body.trim());
-    if (i < suite.cases.length - 1) lines.push("");
-  }
-
-  return lines.join("\n").trim();
-}
-
-/**
- * CHANGE (M7.6):
- * Keep a normal exploratory coach response for early / loose prompts.
- * This preserves the original "QA coach" feel before the requirement is refined.
- */
-function coachToText(coach: CoachResult): string {
-  const lines: string[] = [];
-
-  lines.push("Assumptions:");
-  for (const a of coach.assumptions.slice(0, 6)) lines.push(`- ${a}`);
-
-  lines.push("");
-  lines.push("Risk matrix:");
-  for (const r of coach.riskMatrix.slice(0, 6)) {
-    lines.push(
-      `- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact}) — Mitigation: ${r.mitigation}`
-    );
-  }
-
-  lines.push("");
-  lines.push("High-signal test approach:");
-  lines.push("Goals:");
-  for (const g of coach.highSignalApproach.goals.slice(0, 6)) lines.push(`- ${g}`);
-
-  lines.push("Test ideas:");
-  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${t}`);
-
-  if (coach.highSignalApproach.minimalRepro?.length) {
-    lines.push("Minimal repro (optional):");
-    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
-  }
-
-  if (coach.optionalClarifications?.length) {
-    lines.push("");
-    lines.push("Optional clarifications:");
-    for (const q of coach.optionalClarifications.slice(0, 3)) lines.push(`- ${q}`);
-  }
-
-  return lines.join("\n");
-}
-
-/**
- * CHANGE (M7.6):
- * Refined coach responses should look like a reusable technical requirement artifact.
- * This is the format the user can copy into Cases mode.
- *
- * CHANGE (M8 final polish):
- * Optional clarifications are appended to the visible reply text instead of being returned
- * only as separate suggestions payloads.
- */
-function coachToTechnicalRequirementText(
-  coach: CoachResult,
-  artifact: SessionArtifact | null
-): string {
-  const lines: string[] = [];
-  const rr = artifact?.refinedRequirement;
-
-  lines.push("Refined Technical Requirement");
-  lines.push("");
-
-  if (rr?.objective?.trim()) {
-    lines.push("Objective:");
-    lines.push(rr.objective.trim());
-    lines.push("");
-  } else if (coach.highSignalApproach.goals[0]) {
-    lines.push("Objective:");
-    lines.push(coach.highSignalApproach.goals[0]);
-    lines.push("");
-  }
-
-  if (rr?.context?.trim()) {
-    lines.push("Context / Constraints:");
-    lines.push(rr.context.trim());
-    lines.push("");
-  } else if (coach.assumptions.length) {
-    lines.push("Context / Assumptions:");
-    for (const a of coach.assumptions.slice(0, 6)) lines.push(`- ${a}`);
-    lines.push("");
-  }
-
-  if (rr?.inScope?.length) {
-    lines.push("In Scope:");
-    for (const s of rr.inScope.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.outOfScope?.length) {
-    lines.push("Out of Scope:");
-    for (const s of rr.outOfScope.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.integrations?.length) {
-    lines.push("Integrations:");
-    for (const s of rr.integrations.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.acceptanceCriteria?.length) {
-    lines.push("Acceptance Criteria:");
-    for (const s of rr.acceptanceCriteria.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  lines.push("Primary Risk Focus:");
-  if (rr?.riskFocus?.length) {
-    for (const s of rr.riskFocus.slice(0, 12)) lines.push(`- ${s}`);
-  } else {
-    for (const r of coach.riskMatrix.slice(0, 6)) {
-      lines.push(`- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact})`);
-    }
-  }
-  lines.push("");
-
-  lines.push("Recommended Test Strategy:");
-  for (const g of coach.highSignalApproach.goals.slice(0, 6)) lines.push(`- ${g}`);
-  lines.push("");
-
-  lines.push("High-Signal Test Ideas:");
-  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${t}`);
-  lines.push("");
-
-  if (coach.highSignalApproach.minimalRepro?.length) {
-    lines.push("Minimal Repro / Diagnostic Path:");
-    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (coach.optionalClarifications?.length) {
-    lines.push("Optional Clarifications:");
-    for (const q of coach.optionalClarifications.slice(0, 3)) lines.push(`- ${q}`);
-    lines.push("");
-  }
-
-  return lines.join("\n").trim();
-}
-
-/**
- * CHANGE (M7):
- * Do not inject empty artifact context.
- * We only consider the artifact "meaningful" if it has at least one non-empty field.
- */
-function hasMeaningfulRefinedRequirement(artifact: SessionArtifact | null): boolean {
-  const rr = artifact?.refinedRequirement;
-  if (!rr) return false;
-
-  const hasText = (v?: string) => typeof v === "string" && v.trim().length > 0;
-  const hasList = (v?: string[]) =>
-    Array.isArray(v) && v.some((x) => String(x ?? "").trim().length > 0);
-
-  return (
-    hasText(rr.objective) ||
-    hasText(rr.context) ||
-    hasList(rr.inScope) ||
-    hasList(rr.outOfScope) ||
-    hasList(rr.integrations) ||
-    hasList(rr.riskFocus) ||
-    hasList(rr.acceptanceCriteria)
-  );
-}
-
-/**
- * CHANGE (M7.6):
- * Refined requirement format should be the normal response AFTER refinement,
- * not for every early exploratory coach reply.
- */
-function shouldReturnTechnicalRequirement(args: {
-  guidedAnswer: boolean;
-  artifact: SessionArtifact | null;
-}): boolean {
-  return args.guidedAnswer || hasMeaningfulRefinedRequirement(args.artifact);
 }
 
 export async function POST(req: Request) {
@@ -604,6 +121,7 @@ export async function POST(req: Request) {
         status: 401,
         latencyMs: Date.now() - startTime,
       });
+
       return NextResponse.json(
         { ok: false, error: "Unauthorized" },
         { status: 401, headers: responseHeaders(requestId) }
@@ -628,6 +146,7 @@ export async function POST(req: Request) {
         status: 401,
         latencyMs: Date.now() - startTime,
       });
+
       return NextResponse.json(
         { ok: false, error: "Unauthorized" },
         { status: 401, headers: responseHeaders(requestId) }
@@ -650,6 +169,7 @@ export async function POST(req: Request) {
         status: 400,
         latencyMs: Date.now() - startTime,
       });
+
       return NextResponse.json(
         { ok: false, error: "Invalid JSON body" },
         { status: 400, headers: responseHeaders(requestId) }
@@ -664,12 +184,12 @@ export async function POST(req: Request) {
         status: 400,
         latencyMs: Date.now() - startTime,
       });
+
       return NextResponse.json(
         { ok: false, error: "Missing 'message' (must be a string)" },
         { status: 400, headers: responseHeaders(requestId) }
       );
     }
-    
 
     // 2) Mode selection
     const clientMode: ClientMode = normalizeClientMode(body?.mode);
@@ -682,31 +202,30 @@ export async function POST(req: Request) {
     const weakInput = isWeakInput(message);
     const explicitRegenerationRequest = isExplicitRegenerationRequest(message);
 
-
     if (message.length > 8000) {
-    await recordChatMetric({
-      nowMs: Date.now(),
-      mode: modeForMetric,
-      status: 400,
-      latencyMs: Date.now() - startTime,
-    });
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 400,
+        latencyMs: Date.now() - startTime,
+      });
 
-    const inputTooLargeMessage =
-      clientMode === "review"
-        ? "Input too large for a single review request. Please split the suite into smaller sections and review them in parts."
-        : clientMode === "cases"
-          ? "Input too large for a single test design request. Please reduce the pasted scope or generate the suite incrementally."
-          : "Input too large for a single Strategy request. Please shorten the requirement or split it into smaller parts.";
+      const inputTooLargeMessage =
+        clientMode === "review"
+          ? "Input too large for a single review request. Please split the suite into smaller sections and review them in parts."
+          : clientMode === "cases"
+            ? "Input too large for a single test design request. Please reduce the pasted scope or generate the suite incrementally."
+            : "Input too large for a single Strategy request. Please shorten the requirement or split it into smaller parts.";
 
-    return NextResponse.json(
-      {
-        ok: false,
-        error: inputTooLargeMessage,
-        details: `Received ${message.length} characters. Maximum supported length is 8000.`,
-      },
-      { status: 400, headers: responseHeaders(requestId) }
-    );
-  }
+      return NextResponse.json(
+        {
+          ok: false,
+          error: inputTooLargeMessage,
+          details: `Received ${message.length} characters. Maximum supported length is 8000.`,
+        },
+        { status: 400, headers: responseHeaders(requestId) }
+      );
+    }
 
     // M7.4: guided clarification answer heuristic
     const guidedAnswer =
@@ -723,12 +242,14 @@ export async function POST(req: Request) {
           mode: clientMode,
           durationMs: Date.now() - startTime,
         });
+
         await recordChatMetric({
           nowMs: Date.now(),
           mode: modeForMetric,
           status: 403,
           latencyMs: Date.now() - startTime,
         });
+
         return NextResponse.json(
           { ok: false, mode: clientMode, error: "Forbidden" },
           { status: 403, headers: responseHeaders(requestId) }
@@ -845,6 +366,7 @@ export async function POST(req: Request) {
         status: 409,
         latencyMs: Date.now() - startTime,
       });
+
       return sessionState.response;
     }
 
@@ -983,19 +505,14 @@ export async function POST(req: Request) {
       const patch = parseGuidedAnswerToRefinedRequirement(message);
       if (patch) {
         const nextArtifact = mergeArtifact(sessionArtifact, patch);
-        const now = new Date();
 
-        await prisma.chatSession.update({
-          where: { id: sessionId },
-          data: {
-            artifactJson: prismaJsonValue(nextArtifact),
-            artifactUpdatedAt: now,
-          },
-          select: { id: true },
+        const saved = await saveSessionArtifact({
+          sessionId,
+          artifact: nextArtifact,
         });
 
-        sessionArtifact = nextArtifact;
-        artifactUpdatedAtIso = now.toISOString();
+        sessionArtifact = saved.artifact;
+        artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
       }
     }
 
@@ -1273,19 +790,14 @@ export async function POST(req: Request) {
 
           if (continuityPatch) {
             const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
-            const now = new Date();
 
-            await prisma.chatSession.update({
-              where: { id: sessionId },
-              data: {
-                artifactJson: prismaJsonValue(nextArtifact),
-                artifactUpdatedAt: now,
-              },
-              select: { id: true },
+            const saved = await saveSessionArtifact({
+              sessionId,
+              artifact: nextArtifact,
             });
 
-            sessionArtifact = nextArtifact;
-            artifactUpdatedAtIso = now.toISOString();
+            sessionArtifact = saved.artifact;
+            artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
           }
         }
 
@@ -1387,19 +899,14 @@ export async function POST(req: Request) {
      */
     if (wantCases && nextTestSuiteArtifact) {
       const nextArtifact = withUpdatedTestSuiteArtifact(sessionArtifact, nextTestSuiteArtifact);
-      const now = new Date();
 
-      await prisma.chatSession.update({
-        where: { id: sessionId },
-        data: {
-          artifactJson: prismaJsonValue(nextArtifact),
-          artifactUpdatedAt: now,
-        },
-        select: { id: true },
+      const saved = await saveSessionArtifact({
+        sessionId,
+        artifact: nextArtifact,
       });
 
-      sessionArtifact = nextArtifact;
-      artifactUpdatedAtIso = now.toISOString();
+      sessionArtifact = saved.artifact;
+      artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
     }
 
     // 14) Responses

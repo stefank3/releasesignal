@@ -4,7 +4,7 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 function SmallButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
@@ -34,27 +34,6 @@ export default function CasesTextCard({ text }: { text: string }) {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // NOTE: create a hidden textarea once to support legacy copy fallback safely
-  const legacyCopyEl = useMemo(() => {
-    const el = document.createElement("textarea");
-    el.style.position = "fixed";
-    el.style.left = "-9999px";
-    el.style.top = "0";
-    el.setAttribute("readonly", "true");
-    return el;
-  }, []);
-
-  useEffect(() => {
-    // cleanup (defensive)
-    return () => {
-      try {
-        if (legacyCopyEl.parentNode) legacyCopyEl.parentNode.removeChild(legacyCopyEl);
-      } catch {
-        // ignore
-      }
-    };
-  }, [legacyCopyEl]);
-
   const copyText = async () => {
     // CHANGE: Clipboard API is best, but fallback improves reliability (non-HTTPS / permissions).
     try {
@@ -66,23 +45,25 @@ export default function CasesTextCard({ text }: { text: string }) {
     }
 
     try {
-      legacyCopyEl.value = text;
+      // CHANGE (lint fix):
+      // Create a fresh textarea for legacy copy fallback instead of mutating
+      // a memoized DOM element reference.
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      textarea.style.top = "0";
+      textarea.setAttribute("readonly", "true");
 
-      // Attach only when needed
-      document.body.appendChild(legacyCopyEl);
-      legacyCopyEl.select();
-      legacyCopyEl.setSelectionRange(0, legacyCopyEl.value.length);
+      document.body.appendChild(textarea);
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
 
       const ok = document.execCommand("copy");
-      document.body.removeChild(legacyCopyEl);
+      document.body.removeChild(textarea);
 
       setToast(ok ? "Copied ✓" : "Copy failed (clipboard blocked)");
     } catch {
-      try {
-        if (legacyCopyEl.parentNode) legacyCopyEl.parentNode.removeChild(legacyCopyEl);
-      } catch {
-        // ignore
-      }
       setToast("Copy failed (clipboard blocked)");
     }
   };

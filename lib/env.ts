@@ -65,15 +65,6 @@ function resolveRuntimeStage(): "prod" | "preview" | "dev" {
 
 const runtimeStage = resolveRuntimeStage();
 
-/**
- * WHY:
- * Every Redis key must be namespaced.
- * This guarantees zero cross-environment contamination.
- */
-function _resolveRedisPrefix(): string {
-  return `${runtimeStage}:stefans-mvp:`;
-}
-
 export const env = Object.freeze({
   // Runtime DB (Pooler)
   DATABASE_URL: requireEnv("DATABASE_URL"),

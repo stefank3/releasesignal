@@ -200,14 +200,6 @@ function ReviewEmptyState() {
 }
 
 export default function ReviewCard({ review }: { review: ReviewResult }) {
-  if (isEmptyReview(review)) {
-    return <ReviewEmptyState />;
-  }
-
-  const score = clamp(Number(review.score) || 0, 0, 100);
-  const grade =
-    score >= 90 ? "Excellent" : score >= 75 ? "Good" : score >= 60 ? "Fair" : score >= 40 ? "Weak" : "Poor";
-
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -215,6 +207,14 @@ export default function ReviewCard({ review }: { review: ReviewResult }) {
     const t = setTimeout(() => setToast(null), 1200);
     return () => clearTimeout(t);
   }, [toast]);
+
+  if (isEmptyReview(review)) {
+    return <ReviewEmptyState />;
+  }
+
+  const score = clamp(Number(review.score) || 0, 0, 100);
+  const grade =
+    score >= 90 ? "Excellent" : score >= 75 ? "Good" : score >= 60 ? "Fair" : score >= 40 ? "Weak" : "Poor";
 
   const copyText = async (text: string, label: string) => {
     try {

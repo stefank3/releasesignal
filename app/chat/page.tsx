@@ -23,7 +23,7 @@ export default function ChatPage() {
   const chat = useChatSession();
 
   // Page-only: optional rerender tick (used to refresh layout-dependent UI state)
-  const [uiTick, setUiTick] = useState(0);
+  const [, setUiTick] = useState(0);
   const bumpUiTickAction = () => setUiTick((v) => v + 1);
 
   const mainStyle: React.CSSProperties = {

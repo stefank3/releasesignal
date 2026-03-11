@@ -10,14 +10,6 @@ export const runtime = "nodejs";
 
 type Mode = "coach" | "review" | "cases";
 
-type ArtifactJsonShape = {
-  refinedRequirement?: unknown;
-  testSuite?: {
-    version?: unknown;
-    cases?: unknown;
-  };
-};
-
 function sanitizeTitle(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
 
