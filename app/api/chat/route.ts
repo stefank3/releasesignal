@@ -1,5 +1,4 @@
 // app/api/chat/route.ts
-import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
 import { auth0 } from "@/lib/auth0";
@@ -22,7 +21,6 @@ import {
   type ExecutionMode,
   type RateMeta,
 } from "@/lib/chat/chatTypes";
-import { responseHeaders } from "@/lib/chat/http";
 import { isWeakInput } from "@/lib/chat/inputQuality";
 import { tokensToCredits, estimateCostUsd, maybeConvertUsdToEur } from "@/lib/chat/costs";
 
@@ -60,6 +58,21 @@ import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { buildPromptPayload } from "@/lib/server/chat/promptBuilder";
 import { parseCoachResponse, parseReviewResponse } from "@/lib/server/chat/modelResponseParser";
 import { tryReplayExistingAssistant } from "@/lib/server/chat/replayService";
+import {
+  buildAuthExpiredResponse,
+  buildChatSuccessResponse,
+  buildForbiddenResponse,
+  buildInputTooLargeResponse,
+  buildInsufficientCreditsBillingResponse,
+  buildInsufficientCreditsPrecheckResponse,
+  buildInvalidJsonBodyResponse,
+  buildMissingMessageResponse,
+  buildRateLimitExceededResponse,
+  buildReviewParseFailureResponse,
+  buildReviewSuccessResponse,
+  buildServerErrorResponse,
+  buildUnauthorizedResponse,
+} from "@/lib/server/chat/responseBuilder";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -114,10 +127,7 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
-        { status: 401, headers: responseHeaders(requestId) }
-      );
+      return buildUnauthorizedResponse(requestId);
     }
 
     const user = session.user;
@@ -139,10 +149,7 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
-        { status: 401, headers: responseHeaders(requestId) }
-      );
+      return buildUnauthorizedResponse(requestId);
     }
 
     auth0SubForLog = sub;
@@ -162,10 +169,7 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      return NextResponse.json(
-        { ok: false, error: "Invalid JSON body" },
-        { status: 400, headers: responseHeaders(requestId) }
-      );
+      return buildInvalidJsonBodyResponse(requestId);
     }
 
     const message = body?.message;
@@ -177,10 +181,7 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      return NextResponse.json(
-        { ok: false, error: "Missing 'message' (must be a string)" },
-        { status: 400, headers: responseHeaders(requestId) }
-      );
+      return buildMissingMessageResponse(requestId);
     }
 
     // 2) Mode selection
@@ -202,21 +203,11 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      const inputTooLargeMessage =
-        clientMode === "review"
-          ? "Input too large for a single review request. Please split the suite into smaller sections and review them in parts."
-          : clientMode === "cases"
-            ? "Input too large for a single test design request. Please reduce the pasted scope or generate the suite incrementally."
-            : "Input too large for a single Strategy request. Please shorten the requirement or split it into smaller parts.";
-
-      return NextResponse.json(
-        {
-          ok: false,
-          error: inputTooLargeMessage,
-          details: `Received ${message.length} characters. Maximum supported length is 8000.`,
-        },
-        { status: 400, headers: responseHeaders(requestId) }
-      );
+      return buildInputTooLargeResponse({
+        requestId,
+        clientMode,
+        messageLength: message.length,
+      });
     }
 
     // M7.4: guided clarification answer heuristic
@@ -242,10 +233,10 @@ export async function POST(req: Request) {
           latencyMs: Date.now() - startTime,
         });
 
-        return NextResponse.json(
-          { ok: false, mode: clientMode, error: "Forbidden" },
-          { status: 403, headers: responseHeaders(requestId) }
-        );
+        return buildForbiddenResponse({
+          requestId,
+          clientMode,
+        });
       }
     }
 
@@ -281,15 +272,11 @@ export async function POST(req: Request) {
         meta: { walletBalance: orgState.wallet?.balance ?? 0 },
       });
 
-      return NextResponse.json(
-        {
-          ok: false,
-          mode: clientMode,
-          error: "Insufficient credits",
-          creditsRemaining: orgState.wallet?.balance ?? 0,
-        },
-        { status: 402, headers: responseHeaders(requestId) }
-      );
+      return buildInsufficientCreditsPrecheckResponse({
+        requestId,
+        clientMode,
+        creditsRemaining: orgState.wallet?.balance ?? 0,
+      });
     }
 
     // 5) Rate limit
@@ -324,22 +311,11 @@ export async function POST(req: Request) {
         rateLimited: true,
       });
 
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Rate limit exceeded",
-          details: `Too many requests. Try again in ~${resetSeconds}s.`,
-          rate: { ...rateMeta, remaining: 0 },
-        },
-        {
-          status: 429,
-          headers: responseHeaders(
-            requestId,
-            { ...rateMeta, remaining: 0 },
-            resetSeconds
-          ),
-        }
-      );
+      return buildRateLimitExceededResponse({
+        requestId,
+        rateMeta,
+        resetSeconds,
+      });
     }
 
     // 6) Create/reuse session + hydrate artifact
@@ -476,6 +452,12 @@ export async function POST(req: Request) {
     const totalTokens =
       completion.usage?.total_tokens ?? promptTokens + completionTokens;
 
+    const usage = {
+      promptTokens,
+      completionTokens,
+      totalTokens,
+    };
+
     const creditsCharged = tokensToCredits(totalTokens);
 
     const costUsd = estimateCostUsd({ model, promptTokens, completionTokens });
@@ -605,21 +587,17 @@ export async function POST(req: Request) {
           latencyMs: Date.now() - startTime,
         });
 
-        return NextResponse.json(
-          {
-            ok: false,
-            mode: clientMode,
-            error: "Insufficient credits",
-            sessionId,
-            creditsCharged,
-            creditsRemaining: orgState.wallet?.balance ?? 0,
-            usage: { promptTokens, completionTokens, totalTokens },
-            rate: rateMeta,
-            artifact: sessionArtifact,
-            artifactUpdatedAt: artifactUpdatedAtIso,
-          },
-          { status: 402, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-        );
+        return buildInsufficientCreditsBillingResponse({
+          requestId,
+          clientMode,
+          sessionId,
+          creditsCharged,
+          creditsRemaining: orgState.wallet?.balance ?? 0,
+          usage,
+          rateMeta,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        });
       }
       throw e;
     }
@@ -646,40 +624,33 @@ export async function POST(req: Request) {
       });
 
       if (!reviewObj) {
-        return NextResponse.json(
-          {
-            ok: false,
-            mode: clientMode,
-            error: "Failed to parse review JSON",
-            raw: rawReply,
-            sessionId,
-            creditsCharged,
-            creditsRemaining,
-            usage: { promptTokens, completionTokens, totalTokens },
-            rate: rateMeta,
-            artifact: sessionArtifact,
-            artifactUpdatedAt: artifactUpdatedAtIso,
-          },
-          { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          ok: true,
-          mode: clientMode,
-          review: reviewObj,
+        return buildReviewParseFailureResponse({
+          requestId,
+          clientMode,
+          rawReply,
           sessionId,
           creditsCharged,
           creditsRemaining,
-          usage: { promptTokens, completionTokens, totalTokens },
-          rate: rateMeta,
-          repaired: reviewRepaired || undefined,
+          usage,
+          rateMeta,
           artifact: sessionArtifact,
           artifactUpdatedAt: artifactUpdatedAtIso,
-        },
-        { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-      );
+        });
+      }
+
+      return buildReviewSuccessResponse({
+        requestId,
+        clientMode,
+        review: reviewObj,
+        sessionId,
+        creditsCharged,
+        creditsRemaining,
+        usage,
+        rateMeta,
+        repaired: reviewRepaired || undefined,
+        artifact: sessionArtifact,
+        artifactUpdatedAt: artifactUpdatedAtIso,
+      });
     }
 
     await recordChatMetric({
@@ -717,22 +688,19 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json(
-      {
-        ok: true,
-        mode: clientMode,
-        reply: replyTextForUser ?? "No reply returned",
-        coach: coachParsed,
-        sessionId,
-        creditsCharged,
-        creditsRemaining,
-        usage: { promptTokens, completionTokens, totalTokens },
-        rate: rateMeta,
-        artifact: sessionArtifact,
-        artifactUpdatedAt: artifactUpdatedAtIso,
-      },
-      { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-    );
+    return buildChatSuccessResponse({
+      requestId,
+      clientMode,
+      reply: replyTextForUser ?? "No reply returned",
+      coach: coachParsed,
+      sessionId,
+      creditsCharged,
+      creditsRemaining,
+      usage,
+      rateMeta,
+      artifact: sessionArtifact,
+      artifactUpdatedAt: artifactUpdatedAtIso,
+    });
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : "Unknown server error";
 
@@ -775,29 +743,20 @@ export async function POST(req: Request) {
     });
 
     if (isAuthExpired) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Session expired",
-          details: "Your sign-in session expired. Please sign in again to continue.",
-          ...(rateMeta ? { rate: rateMeta } : {}),
-          artifact: sessionArtifact,
-          artifactUpdatedAt: artifactUpdatedAtIso,
-        },
-        { status: 401, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "Server error",
-        details: errMsg,
-        ...(rateMeta ? { rate: rateMeta } : {}),
+      return buildAuthExpiredResponse({
+        requestId,
+        rateMeta,
         artifact: sessionArtifact,
         artifactUpdatedAt: artifactUpdatedAtIso,
-      },
-      { status: 500, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-    );
+      });
+    }
+
+    return buildServerErrorResponse({
+      requestId,
+      errorMessage: errMsg,
+      rateMeta,
+      artifact: sessionArtifact,
+      artifactUpdatedAt: artifactUpdatedAtIso,
+    });
   }
 }
