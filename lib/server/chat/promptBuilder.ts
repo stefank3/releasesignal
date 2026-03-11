@@ -194,7 +194,7 @@ export function buildPromptPayload(args: BuildPromptArgs): BuildPromptResult {
     { role: "user", content: message },
   ];
 
-  return {
+    return {
     systemPrompt,
     modeInstruction,
     messagesForModel,
