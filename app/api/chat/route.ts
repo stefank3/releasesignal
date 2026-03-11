@@ -7,9 +7,7 @@ import { type CoachResult, type ReviewResult } from "@/lib/framework/reviewSchem
 
 import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics";
 
-import {
-  type RateMeta,
-} from "@/lib/chat/chatTypes";
+import { type RateMeta } from "@/lib/chat/chatTypes";
 
 import {
   type SessionArtifact,
@@ -27,15 +25,9 @@ import {
   InsufficientCreditsError,
 } from "@/lib/chat/persist";
 
-import {
-  hasMeaningfulRefinedRequirement,
-} from "@/lib/server/chat/coachFormatting";
+import { hasMeaningfulRefinedRequirement } from "@/lib/server/chat/coachFormatting";
 
-import {
-  mergeGeneratedCasesIntoSuite,
-  renderTestSuiteForUser,
-  withUpdatedTestSuiteArtifact,
-} from "@/lib/server/chat/testSuiteService";
+import { withUpdatedTestSuiteArtifact } from "@/lib/server/chat/testSuiteService";
 
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { buildPromptPayload } from "@/lib/server/chat/promptBuilder";
@@ -62,6 +54,7 @@ import {
 import { executeChatCompletion } from "@/lib/server/chat/openaiService";
 import { getOpenAITraceFromError } from "@/lib/openai";
 import { runCoachFlow } from "@/lib/server/chat/coachFlowService";
+import { runCasesFlow } from "@/lib/server/chat/casesFlowService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -413,25 +406,15 @@ export async function POST(req: Request) {
     }
 
     if (wantCases) {
-      const existingSuiteForMerge = explicitRegenerationRequest
-        ? null
-        : getTestSuite(sessionArtifact);
-
-      const merged = mergeGeneratedCasesIntoSuite({
-        existingSuite: existingSuiteForMerge,
-        generatedText: rawReply.trim(),
-        explicitReset: explicitRegenerationRequest,
+      const casesFlow = await runCasesFlow({
+        rawReply,
+        sessionArtifact,
+        explicitRegenerationRequest,
       });
 
-      nextTestSuiteArtifact = merged.nextSuite;
-      testSuiteAddedCount = merged.addedCount;
-
-      if (nextTestSuiteArtifact) {
-        replyTextForUser = renderTestSuiteForUser(nextTestSuiteArtifact);
-      } else {
-        replyTextForUser = rawReply.trim();
-      }
-
+      replyTextForUser = casesFlow.replyTextForUser;
+      nextTestSuiteArtifact = casesFlow.nextTestSuiteArtifact;
+      testSuiteAddedCount = casesFlow.testSuiteAddedCount;
       coachParsed = null;
     }
 
