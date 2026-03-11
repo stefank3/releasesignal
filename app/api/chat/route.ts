@@ -3,14 +3,9 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
 import { auth0 } from "@/lib/auth0";
-import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
 
-import {
-  type CoachResult,
-  type ReviewResult,
-  isReviewResult,
-} from "@/lib/framework/reviewSchema";
+import { type CoachResult, type ReviewResult } from "@/lib/framework/reviewSchema";
 
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics";
@@ -28,7 +23,6 @@ import {
   type RateMeta,
 } from "@/lib/chat/chatTypes";
 import { responseHeaders } from "@/lib/chat/http";
-import { extractJsonObject } from "@/lib/chat/json";
 import { isWeakInput } from "@/lib/chat/inputQuality";
 import { tokensToCredits, estimateCostUsd, maybeConvertUsdToEur } from "@/lib/chat/costs";
 
@@ -41,7 +35,7 @@ import {
   getTestSuite,
 } from "@/lib/chat/artifact";
 
-import { loadOrCreateSession, refreshArtifact } from "@/lib/chat/sessionStore";
+import { loadOrCreateSession } from "@/lib/chat/sessionStore";
 import {
   persistUserMessageIdempotent,
   persistAssistantWithBillingTx,
@@ -64,10 +58,8 @@ import {
 
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { buildPromptPayload } from "@/lib/server/chat/promptBuilder";
-import {
-  parseCoachResponse,
-  parseReviewResponse,
-} from "@/lib/server/chat/modelResponseParser";
+import { parseCoachResponse, parseReviewResponse } from "@/lib/server/chat/modelResponseParser";
+import { tryReplayExistingAssistant } from "@/lib/server/chat/replayService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -395,22 +387,21 @@ export async function POST(req: Request) {
     });
 
     // 7) Replay
-    const existingAssistant = await prisma.chatMessage.findFirst({
-      where: { sessionId, requestId, role: "assistant", auth0Sub },
-      select: { content: true, tokensIn: true, tokensOut: true },
+    const replay = await tryReplayExistingAssistant({
+      auth0Sub,
+      sessionId,
+      requestId,
+      clientMode,
+      executionMode,
+      rateMeta,
+      sessionArtifact,
+      artifactUpdatedAtIso,
     });
 
-    if (existingAssistant) {
-      const refreshed = await refreshArtifact({
-        auth0Sub,
-        sessionId,
-        fallback: sessionArtifact,
-      });
+    sessionArtifact = replay.sessionArtifact;
+    artifactUpdatedAtIso = replay.artifactUpdatedAtIso;
 
-      sessionArtifact = refreshed.artifact ?? sessionArtifact ?? null;
-      artifactUpdatedAtIso =
-        refreshed.artifactUpdatedAtIso ?? artifactUpdatedAtIso ?? null;
-
+    if (replay.hit) {
       await recordChatMetric({
         nowMs: Date.now(),
         mode: modeForMetric,
@@ -418,78 +409,7 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      if (executionMode === "review") {
-        const raw = existingAssistant.content ?? "";
-        try {
-          const parsed = JSON.parse(extractJsonObject(raw)) as unknown;
-          if (isReviewResult(parsed)) {
-            return NextResponse.json(
-              {
-                ok: true,
-                mode: clientMode,
-                review: parsed as ReviewResult,
-                sessionId,
-                usage: {
-                  promptTokens: existingAssistant.tokensIn ?? 0,
-                  completionTokens: existingAssistant.tokensOut ?? 0,
-                  totalTokens:
-                    (existingAssistant.tokensIn ?? 0) +
-                    (existingAssistant.tokensOut ?? 0),
-                },
-                rate: rateMeta,
-                replay: true,
-                artifact: sessionArtifact,
-                artifactUpdatedAt: artifactUpdatedAtIso,
-              },
-              { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-            );
-          }
-        } catch {
-          // fall through
-        }
-
-        return NextResponse.json(
-          {
-            ok: true,
-            mode: clientMode,
-            raw,
-            sessionId,
-            usage: {
-              promptTokens: existingAssistant.tokensIn ?? 0,
-              completionTokens: existingAssistant.tokensOut ?? 0,
-              totalTokens:
-                (existingAssistant.tokensIn ?? 0) +
-                (existingAssistant.tokensOut ?? 0),
-            },
-            rate: rateMeta,
-            replay: true,
-            artifact: sessionArtifact,
-            artifactUpdatedAt: artifactUpdatedAtIso,
-          },
-          { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          ok: true,
-          mode: clientMode,
-          reply: existingAssistant.content,
-          sessionId,
-          usage: {
-            promptTokens: existingAssistant.tokensIn ?? 0,
-            completionTokens: existingAssistant.tokensOut ?? 0,
-            totalTokens:
-              (existingAssistant.tokensIn ?? 0) +
-              (existingAssistant.tokensOut ?? 0),
-          },
-          rate: rateMeta,
-          replay: true,
-          artifact: sessionArtifact,
-          artifactUpdatedAt: artifactUpdatedAtIso,
-        },
-        { status: 200, headers: responseHeaders(requestId, rateMeta ?? undefined) }
-      );
+      return replay.response;
     }
 
     // 8) Persist user message
@@ -588,19 +508,9 @@ export async function POST(req: Request) {
       coachParsed = await parseCoachResponse(rawReply);
 
       if (coachParsed) {
-        // M8 final polish:
-        // Allow optional clarifications even after refinement.
-        // Keep them capped to 3 so Strategy stays lightweight.
         coachParsed.optionalClarifications =
           coachParsed.optionalClarifications?.slice(0, 3) ?? [];
 
-        /**
-         * CHANGE (M8.7):
-         * Strategy continuity artifact enrichment.
-         *
-         * Guided answers already update the artifact strongly before the model call.
-         * This additional step keeps free-text Strategy refinements evolving across the session.
-         */
         if (!explicitRegenerationRequest) {
           const continuityPatch = buildCoachContinuityArtifactPatch({
             existingArtifact: sessionArtifact,
@@ -663,7 +573,6 @@ export async function POST(req: Request) {
       if (nextTestSuiteArtifact) {
         replyTextForUser = renderTestSuiteForUser(nextTestSuiteArtifact);
       } else {
-        // Fallback if parsing failed or the model returned something malformed.
         replyTextForUser = rawReply.trim();
       }
 
@@ -715,10 +624,6 @@ export async function POST(req: Request) {
       throw e;
     }
 
-    /**
-     * M9 CHANGE:
-     * Persist updated test suite only after assistant persistence + billing succeed.
-     */
     if (wantCases && nextTestSuiteArtifact) {
       const nextArtifact = withUpdatedTestSuiteArtifact(sessionArtifact, nextTestSuiteArtifact);
 
