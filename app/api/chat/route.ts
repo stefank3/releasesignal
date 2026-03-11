@@ -7,10 +7,9 @@ import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
 
 import {
-  isCoachResult,
-  isReviewResult,
   type CoachResult,
   type ReviewResult,
+  isReviewResult,
 } from "@/lib/framework/reviewSchema";
 
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
@@ -42,7 +41,6 @@ import {
   getTestSuite,
 } from "@/lib/chat/artifact";
 
-import { repairJsonOnce } from "@/lib/chat/repair";
 import { loadOrCreateSession, refreshArtifact } from "@/lib/chat/sessionStore";
 import {
   persistUserMessageIdempotent,
@@ -66,6 +64,10 @@ import {
 
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { buildPromptPayload } from "@/lib/server/chat/promptBuilder";
+import {
+  parseCoachResponse,
+  parseReviewResponse,
+} from "@/lib/server/chat/modelResponseParser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -576,43 +578,14 @@ export async function POST(req: Request) {
     let testSuiteAddedCount = 0;
 
     if (executionMode === "review") {
-      const tryParse = (txt: string): ReviewResult | null => {
-        try {
-          const parsed = JSON.parse(extractJsonObject(txt)) as unknown;
-          return isReviewResult(parsed) ? (parsed as ReviewResult) : null;
-        } catch {
-          return null;
-        }
-      };
-
-      reviewObj = tryParse(rawReply);
-
-      if (!reviewObj) {
-        const repaired = await repairJsonOnce({ mode: "review", raw: rawReply });
-        reviewObj = tryParse(repaired);
-        reviewRepaired = !!reviewObj;
-      }
-
-      if (reviewObj) reviewStoredJson = JSON.stringify(reviewObj);
+      const parsedReview = await parseReviewResponse(rawReply);
+      reviewObj = parsedReview.reviewObj;
+      reviewStoredJson = parsedReview.reviewStoredJson;
+      reviewRepaired = parsedReview.repaired;
     }
 
     if (executionMode === "coach" && !wantCases) {
-      try {
-        const obj = JSON.parse(extractJsonObject(rawReply));
-        if (isCoachResult(obj)) coachParsed = obj;
-      } catch {
-        // ignore
-      }
-
-      if (!coachParsed) {
-        const repaired = await repairJsonOnce({ mode: "coach", raw: rawReply });
-        try {
-          const repairedObj = JSON.parse(extractJsonObject(repaired));
-          if (isCoachResult(repairedObj)) coachParsed = repairedObj;
-        } catch {
-          // ignore
-        }
-      }
+      coachParsed = await parseCoachResponse(rawReply);
 
       if (coachParsed) {
         // M8 final polish:
@@ -922,5 +895,4 @@ export async function POST(req: Request) {
       { status: 500, headers: responseHeaders(requestId, rateMeta ?? undefined) }
     );
   }
-  
 }
