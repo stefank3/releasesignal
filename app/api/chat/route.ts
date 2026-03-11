@@ -1,28 +1,15 @@
 // app/api/chat/route.ts
 import { randomUUID } from "crypto";
 
-import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
 
 import { type CoachResult, type ReviewResult } from "@/lib/framework/reviewSchema";
 
-import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics";
 
-import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
-
-import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
-import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
-
 import {
-  normalizeClientMode,
-  type ChatBody,
-  type ClientMode,
-  type ExecutionMode,
   type RateMeta,
 } from "@/lib/chat/chatTypes";
-import { isWeakInput } from "@/lib/chat/inputQuality";
-import { tokensToCredits, estimateCostUsd, maybeConvertUsdToEur } from "@/lib/chat/costs";
 
 import {
   type SessionArtifact,
@@ -61,18 +48,20 @@ import { tryReplayExistingAssistant } from "@/lib/server/chat/replayService";
 import {
   buildAuthExpiredResponse,
   buildChatSuccessResponse,
-  buildForbiddenResponse,
-  buildInputTooLargeResponse,
   buildInsufficientCreditsBillingResponse,
-  buildInsufficientCreditsPrecheckResponse,
-  buildInvalidJsonBodyResponse,
-  buildMissingMessageResponse,
-  buildRateLimitExceededResponse,
   buildReviewParseFailureResponse,
   buildReviewSuccessResponse,
   buildServerErrorResponse,
-  buildUnauthorizedResponse,
 } from "@/lib/server/chat/responseBuilder";
+import {
+  ensureBillingPreconditions,
+  enforceRateLimit,
+  parseAndValidateChatRequest,
+  requireAuthenticatedUser,
+  requireReviewAccess,
+} from "@/lib/server/chat/requestGuards";
+import { openai, withOpenAITrace, getOpenAITraceFromError } from "@/lib/openai";
+import { tokensToCredits, estimateCostUsd, maybeConvertUsdToEur } from "@/lib/chat/costs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -108,217 +97,103 @@ export async function POST(req: Request) {
   const retryCount = 0;
 
   try {
-    // 0) Require Auth0 session
-    const session = await auth0.getSession();
-    if (!session?.user) {
-      log("warn", {
-        event: "unauthorized",
-        requestId,
-        errorType: "unauthorized",
-        errorMessage: "Missing Auth0 session",
-        durationMs: Date.now() - startTime,
-        meta: { path: "/api/chat" },
-      });
+    // 0) Auth
+    const authResult = await requireAuthenticatedUser({
+      requestId,
+      startTime,
+      modeForMetric,
+      recordChatMetric,
+    });
 
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 401,
-        latencyMs: Date.now() - startTime,
-      });
-
-      return buildUnauthorizedResponse(requestId);
+    if (!authResult.ok) {
+      return authResult.response;
     }
 
-    const user = session.user;
-    const sub = user.sub as string | undefined;
-    if (!sub) {
-      log("warn", {
-        event: "unauthorized",
-        requestId,
-        errorType: "unauthorized",
-        errorMessage: "Missing Auth0 sub",
-        durationMs: Date.now() - startTime,
-        meta: { reason: "missing_sub" },
-      });
-
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 401,
-        latencyMs: Date.now() - startTime,
-      });
-
-      return buildUnauthorizedResponse(requestId);
-    }
-
-    auth0SubForLog = sub;
-    const auth0Sub = sub;
+    const user = authResult.user;
+    const auth0Sub = authResult.auth0Sub;
+    auth0SubForLog = auth0Sub;
 
     const identifier = `user:${auth0Sub}`;
 
-    // 1) Parse request body
-    let body: ChatBody = {};
-    try {
-      body = (await req.json()) as ChatBody;
-    } catch {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 400,
-        latencyMs: Date.now() - startTime,
-      });
+    // 1) Parse + validate input
+    const parsedRequest = await parseAndValidateChatRequest({
+      req,
+      requestId,
+      startTime,
+      modeForMetric,
+      recordChatMetric,
+      isExplicitRegenerationRequest,
+    });
 
-      return buildInvalidJsonBodyResponse(requestId);
+    if (!parsedRequest.ok) {
+      return parsedRequest.response;
     }
 
-    const message = body?.message;
-    if (!message || typeof message !== "string") {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 400,
-        latencyMs: Date.now() - startTime,
-      });
-
-      return buildMissingMessageResponse(requestId);
-    }
-
-    // 2) Mode selection
-    const clientMode: ClientMode = normalizeClientMode(body?.mode);
-    const wantCases = clientMode === "cases";
-    const wantReview = clientMode === "review";
-    const executionMode: ExecutionMode = wantReview ? "review" : "coach";
+    const {
+      body,
+      message,
+      clientMode,
+      wantCases,
+      executionMode,
+      weakInput,
+      explicitRegenerationRequest,
+    } = parsedRequest;
 
     modeForMetric = clientMode;
-
-    const weakInput = isWeakInput(message);
-    const explicitRegenerationRequest = isExplicitRegenerationRequest(message);
-
-    if (message.length > 8000) {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 400,
-        latencyMs: Date.now() - startTime,
-      });
-
-      return buildInputTooLargeResponse({
-        requestId,
-        clientMode,
-        messageLength: message.length,
-      });
-    }
 
     // M7.4: guided clarification answer heuristic
     const guidedAnswer =
       executionMode === "coach" && !wantCases && isGuidedClarificationAnswer(message);
 
-    // 3) RBAC: review is admin-only
-    if (executionMode === "review") {
-      const isAdmin = await isAdminFromAccessToken();
-      if (!isAdmin) {
-        log("warn", {
-          event: "forbidden_review_access",
-          requestId,
-          auth0Sub,
-          mode: clientMode,
-          durationMs: Date.now() - startTime,
-        });
-
-        await recordChatMetric({
-          nowMs: Date.now(),
-          mode: modeForMetric,
-          status: 403,
-          latencyMs: Date.now() - startTime,
-        });
-
-        return buildForbiddenResponse({
-          requestId,
-          clientMode,
-        });
-      }
-    }
-
-    // 4) Ensure org + wallet exist (billing preconditions)
-    const orgState = await ensureOrgForUser({
+    // 2) Review RBAC
+    const accessResult = await requireReviewAccess({
+      executionMode,
+      requestId,
       auth0Sub,
-      name: (user.name as string | undefined) ?? null,
-      email: (user.email as string | undefined) ?? null,
+      clientMode,
+      startTime,
+      recordChatMetric,
     });
 
-    orgId =
-      typeof orgState.organizationId === "string"
-        ? orgState.organizationId
-        : undefined;
-
-    if (!orgState.wallet || orgState.wallet.balance <= 0) {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 402,
-        latencyMs: Date.now() - startTime,
-      });
-
-      log("warn", {
-        event: "billing_failure",
-        requestId,
-        auth0Sub,
-        orgId,
-        mode: clientMode,
-        errorType: "insufficient_credits_precheck",
-        errorMessage: "Wallet balance <= 0 before OpenAI call",
-        durationMs: Date.now() - startTime,
-        meta: { walletBalance: orgState.wallet?.balance ?? 0 },
-      });
-
-      return buildInsufficientCreditsPrecheckResponse({
-        requestId,
-        clientMode,
-        creditsRemaining: orgState.wallet?.balance ?? 0,
-      });
+    if (!accessResult.ok) {
+      return accessResult.response;
     }
 
-    // 5) Rate limit
-    const { success, remaining, reset } = await chatRatelimit.limit(identifier);
-    const resetSeconds =
-      typeof reset === "number"
-        ? Math.max(1, Math.ceil((reset - Date.now()) / 1000))
-        : 60;
+    // 3) Billing preconditions
+    const billingResult = await ensureBillingPreconditions({
+      auth0Sub,
+      user,
+      requestId,
+      clientMode,
+      startTime,
+      recordChatMetric,
+    });
 
-    rateMeta = {
-      limit: CHAT_RATE_LIMIT.limit,
-      remaining: typeof remaining === "number" ? remaining : 0,
-      resetSeconds,
-    };
-
-    if (!success) {
-      log("warn", {
-        event: "rate_limit_exceeded",
-        requestId,
-        auth0Sub,
-        orgId,
-        mode: clientMode,
-        durationMs: Date.now() - startTime,
-        meta: { resetSeconds },
-      });
-
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 429,
-        latencyMs: Date.now() - startTime,
-        rateLimited: true,
-      });
-
-      return buildRateLimitExceededResponse({
-        requestId,
-        rateMeta,
-        resetSeconds,
-      });
+    if (!billingResult.ok) {
+      return billingResult.response;
     }
 
-    // 6) Create/reuse session + hydrate artifact
+    orgId = billingResult.orgId;
+    const orgState = billingResult.orgState;
+
+    // 4) Rate limit
+    const rateLimitResult = await enforceRateLimit({
+      identifier,
+      requestId,
+      auth0Sub,
+      orgId,
+      clientMode,
+      startTime,
+      recordChatMetric,
+    });
+
+    rateMeta = rateLimitResult.rateMeta;
+
+    if (!rateLimitResult.ok) {
+      return rateLimitResult.response;
+    }
+
+    // 5) Create/reuse session + hydrate artifact
     const sessionState = await loadOrCreateSession({
       auth0Sub,
       requestId,
@@ -362,7 +237,7 @@ export async function POST(req: Request) {
       },
     });
 
-    // 7) Replay
+    // 6) Replay
     const replay = await tryReplayExistingAssistant({
       auth0Sub,
       sessionId,
@@ -388,7 +263,7 @@ export async function POST(req: Request) {
       return replay.response;
     }
 
-    // 8) Persist user message
+    // 7) Persist user message
     await persistUserMessageIdempotent({
       sessionId,
       auth0Sub,
@@ -396,7 +271,7 @@ export async function POST(req: Request) {
       content: message,
     });
 
-    // 9) Guided clarification answer -> update artifact now
+    // 8) Guided clarification answer -> update artifact now
     if (guidedAnswer) {
       const patch = parseGuidedAnswerToRefinedRequirement(message);
       if (patch) {
@@ -412,7 +287,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 10) Prompts
+    // 9) Prompts
     const {
       messagesForModel,
       existingCasesCount,
@@ -427,7 +302,7 @@ export async function POST(req: Request) {
       sessionArtifact,
     });
 
-    // 11) OpenAI call
+    // 10) OpenAI call
     const model = "gpt-4.1-mini";
     openaiModel = model;
 
@@ -463,7 +338,7 @@ export async function POST(req: Request) {
     const costUsd = estimateCostUsd({ model, promptTokens, completionTokens });
     const costEur = costUsd != null ? maybeConvertUsdToEur(costUsd) : null;
 
-    // 12) Parse/repair outputs
+    // 11) Parse/repair outputs
     let coachParsed: CoachResult | null = null;
     let replyTextForUser: string | null = null;
 
@@ -471,11 +346,6 @@ export async function POST(req: Request) {
     let reviewStoredJson: string | null = null;
     let reviewRepaired = false;
 
-    /**
-     * M9 CHANGE:
-     * Stage the next suite update in memory first.
-     * We persist it only after billing + assistant persistence succeeds.
-     */
     let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
     let testSuiteAddedCount = 0;
 
@@ -566,7 +436,7 @@ export async function POST(req: Request) {
         ? reviewStoredJson ?? rawReply
         : replyTextForUser ?? "No reply returned";
 
-    // 13) Billing + assistant persistence
+    // 12) Billing + assistant persistence
     let creditsRemaining: number | null = null;
     try {
       creditsRemaining = await persistAssistantWithBillingTx({
@@ -614,7 +484,7 @@ export async function POST(req: Request) {
       artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
     }
 
-    // 14) Responses
+    // 13) Responses
     if (executionMode === "review") {
       await recordChatMetric({
         nowMs: Date.now(),
