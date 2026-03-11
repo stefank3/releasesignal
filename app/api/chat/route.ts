@@ -28,10 +28,7 @@ import {
 } from "@/lib/chat/persist";
 
 import {
-  buildCoachContinuityArtifactPatch,
-  coachToText,
-  coachToTechnicalRequirementText,
-  shouldReturnTechnicalRequirement,
+  hasMeaningfulRefinedRequirement,
 } from "@/lib/server/chat/coachFormatting";
 
 import {
@@ -42,7 +39,7 @@ import {
 
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { buildPromptPayload } from "@/lib/server/chat/promptBuilder";
-import { parseCoachResponse, parseReviewResponse } from "@/lib/server/chat/modelResponseParser";
+import { parseReviewResponse } from "@/lib/server/chat/modelResponseParser";
 import { tryReplayExistingAssistant } from "@/lib/server/chat/replayService";
 
 import {
@@ -64,6 +61,7 @@ import {
 
 import { executeChatCompletion } from "@/lib/server/chat/openaiService";
 import { getOpenAITraceFromError } from "@/lib/openai";
+import { runCoachFlow } from "@/lib/server/chat/coachFlowService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,13 +98,11 @@ export async function POST(req: Request) {
   const retryCount = 0;
 
   try {
-
     /*
     ---------------------------------------------------------
     AUTHENTICATION
     ---------------------------------------------------------
     */
-
     const authResult = await requireAuthenticatedUser({
       requestId,
       startTime,
@@ -129,7 +125,6 @@ export async function POST(req: Request) {
     REQUEST VALIDATION
     ---------------------------------------------------------
     */
-
     const parsedRequest = await parseAndValidateChatRequest({
       req,
       requestId,
@@ -165,7 +160,6 @@ export async function POST(req: Request) {
     RBAC
     ---------------------------------------------------------
     */
-
     const accessResult = await requireReviewAccess({
       executionMode,
       requestId,
@@ -184,7 +178,6 @@ export async function POST(req: Request) {
     BILLING PRECHECK
     ---------------------------------------------------------
     */
-
     const billingResult = await ensureBillingPreconditions({
       auth0Sub,
       user,
@@ -206,7 +199,6 @@ export async function POST(req: Request) {
     RATE LIMIT
     ---------------------------------------------------------
     */
-
     const rateLimitResult = await enforceRateLimit({
       identifier,
       requestId,
@@ -228,7 +220,6 @@ export async function POST(req: Request) {
     SESSION LOAD
     ---------------------------------------------------------
     */
-
     const sessionState = await loadOrCreateSession({
       auth0Sub,
       requestId,
@@ -277,7 +268,6 @@ export async function POST(req: Request) {
     REPLAY
     ---------------------------------------------------------
     */
-
     const replay = await tryReplayExistingAssistant({
       auth0Sub,
       sessionId,
@@ -308,7 +298,6 @@ export async function POST(req: Request) {
     PERSIST USER MESSAGE
     ---------------------------------------------------------
     */
-
     await persistUserMessageIdempotent({
       sessionId,
       auth0Sub,
@@ -321,7 +310,6 @@ export async function POST(req: Request) {
     ARTIFACT PATCH (GUIDED)
     ---------------------------------------------------------
     */
-
     if (guidedAnswer) {
       const patch = parseGuidedAnswerToRefinedRequirement(message);
 
@@ -343,23 +331,21 @@ export async function POST(req: Request) {
     PROMPT BUILD
     ---------------------------------------------------------
     */
-
-      const { messagesForModel } = buildPromptPayload({
-        message,
-        weakInput,
-        guidedAnswer,
-        wantCases,
-        executionMode,
-        explicitRegenerationRequest,
-        sessionArtifact,
-      });
+    const { messagesForModel } = buildPromptPayload({
+      message,
+      weakInput,
+      guidedAnswer,
+      wantCases,
+      executionMode,
+      explicitRegenerationRequest,
+      sessionArtifact,
+    });
 
     /*
     ---------------------------------------------------------
-    OPENAI EXECUTION (EXTRACTED SERVICE)
+    OPENAI EXECUTION
     ---------------------------------------------------------
     */
-
     const completionResult = await executeChatCompletion({
       messagesForModel,
       executionMode,
@@ -380,15 +366,17 @@ export async function POST(req: Request) {
 
     const creditsCharged = completionResult.creditsCharged;
 
+    const costUsd = completionResult.costUsd;
+    const costEur = completionResult.costEur;
+
     openaiModel = completionResult.model;
     openaiLatencyMs = completionResult.openaiLatencyMs;
 
     /*
     ---------------------------------------------------------
-    MODEL PARSING
+    MODEL PARSING / FLOWS
     ---------------------------------------------------------
     */
-
     let coachParsed: CoachResult | null = null;
     let replyTextForUser: string | null = null;
 
@@ -397,6 +385,7 @@ export async function POST(req: Request) {
     let reviewRepaired = false;
 
     let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
+    let testSuiteAddedCount = 0;
 
     if (executionMode === "review") {
       const parsedReview = await parseReviewResponse(rawReply);
@@ -406,55 +395,21 @@ export async function POST(req: Request) {
     }
 
     if (executionMode === "coach" && !wantCases) {
-      coachParsed = await parseCoachResponse(rawReply);
+      const coachFlow = await runCoachFlow({
+        rawReply,
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        message,
+        guidedAnswer,
+        weakInput,
+        explicitRegenerationRequest,
+      });
 
-      if (coachParsed) {
-        coachParsed.optionalClarifications =
-          coachParsed.optionalClarifications?.slice(0, 3) ?? [];
-
-        if (!explicitRegenerationRequest) {
-          const continuityPatch = buildCoachContinuityArtifactPatch({
-            existingArtifact: sessionArtifact,
-            coach: coachParsed,
-            latestUserMessage: message,
-            guidedAnswer,
-            weakInput,
-          });
-
-          if (continuityPatch) {
-            const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
-
-            const saved = await saveSessionArtifact({
-              sessionId,
-              artifact: nextArtifact,
-            });
-
-            sessionArtifact = saved.artifact;
-            artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
-          }
-        }
-
-        const effectiveArtifactForReply = explicitRegenerationRequest
-          ? null
-          : sessionArtifact;
-
-        if (
-          shouldReturnTechnicalRequirement({
-            guidedAnswer,
-            artifact: effectiveArtifactForReply,
-          })
-        ) {
-          replyTextForUser = coachToTechnicalRequirementText(
-            coachParsed,
-            effectiveArtifactForReply
-          );
-        } else {
-          replyTextForUser = coachToText(coachParsed);
-        }
-      } else {
-        replyTextForUser =
-          "I couldn't format the coach output this time. Please retry.";
-      }
+      coachParsed = coachFlow.coachParsed;
+      replyTextForUser = coachFlow.replyTextForUser;
+      sessionArtifact = coachFlow.sessionArtifact;
+      artifactUpdatedAtIso = coachFlow.artifactUpdatedAtIso;
     }
 
     if (wantCases) {
@@ -469,6 +424,7 @@ export async function POST(req: Request) {
       });
 
       nextTestSuiteArtifact = merged.nextSuite;
+      testSuiteAddedCount = merged.addedCount;
 
       if (nextTestSuiteArtifact) {
         replyTextForUser = renderTestSuiteForUser(nextTestSuiteArtifact);
@@ -489,7 +445,6 @@ export async function POST(req: Request) {
     BILLING TRANSACTION
     ---------------------------------------------------------
     */
-
     let creditsRemaining: number | null = null;
 
     try {
@@ -532,7 +487,6 @@ export async function POST(req: Request) {
     SUITE PERSIST
     ---------------------------------------------------------
     */
-
     if (wantCases && nextTestSuiteArtifact) {
       const nextArtifact = withUpdatedTestSuiteArtifact(
         sessionArtifact,
@@ -553,7 +507,6 @@ export async function POST(req: Request) {
     RESPONSES
     ---------------------------------------------------------
     */
-
     if (executionMode === "review") {
       await recordChatMetric({
         nowMs: Date.now(),
@@ -599,6 +552,32 @@ export async function POST(req: Request) {
       latencyMs: Date.now() - startTime,
     });
 
+    log("info", {
+      event: "chat_completed",
+      requestId,
+      auth0Sub,
+      orgId,
+      sessionId,
+      mode: clientMode,
+      durationMs: Date.now() - startTime,
+      model: openaiModel,
+      openaiLatencyMs,
+      retryCount,
+      meta: {
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        creditsCharged,
+        creditsRemaining,
+        costUsd,
+        costEur,
+        explicitRegenerationRequest,
+        testSuiteAddedCount,
+        hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
+        hasTestSuite: !!getTestSuite(sessionArtifact),
+      },
+    });
+
     return buildChatSuccessResponse({
       requestId,
       clientMode,
@@ -612,7 +591,6 @@ export async function POST(req: Request) {
       artifact: sessionArtifact,
       artifactUpdatedAt: artifactUpdatedAtIso,
     });
-
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : "Unknown server error";
 
