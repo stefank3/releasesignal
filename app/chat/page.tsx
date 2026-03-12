@@ -7,10 +7,19 @@
 // - relaxes the narrow centered container
 // - allows Release Signal to use much more horizontal space
 // - keeps a controlled max width for readability and UI stability
+//
+// CHANGE (M10 UI Pass):
+// - adds resolved theme wiring for sidebar/header/toolbar/panel
+// - supports light / dark / system theme
+// - keeps existing chat/session behavior unchanged
+//
+// CHANGE (M10 Hydration Fix):
+// - prevents theme mismatch during SSR/client hydration
+// - keeps first render deterministic, then resolves system theme after mount
 
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
 
 import { useChatSession } from "./hooks/useChatSession";
 
@@ -19,6 +28,16 @@ import ChatHeader from "./components/ChatHeader";
 import ChatToolbar from "./components/ChatToolbar";
 import ChatPanel from "./components/ChatPanel";
 
+
+type ThemeMode = "light" | "dark" | "system";
+
+function getSystemTheme(): "light" | "dark" {
+  if (typeof window === "undefined") return "dark";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
 export default function ChatPage() {
   const chat = useChatSession();
 
@@ -26,24 +45,68 @@ export default function ChatPage() {
   const [, setUiTick] = useState(0);
   const bumpUiTickAction = () => setUiTick((v) => v + 1);
 
+  /*
+  ---------------------------------------------------------
+  THEME STATE
+  ---------------------------------------------------------
+  */
+
+  const [themeMode] = useState<ThemeMode>("system");
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">("dark");
+
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const applyThemePreference = () => {
+      setSystemTheme(mediaQuery.matches ? "dark" : "light");
+    };
+
+    applyThemePreference();
+    mediaQuery.addEventListener("change", applyThemePreference);
+
+    return () => {
+      mediaQuery.removeEventListener("change", applyThemePreference);
+    };
+  }, []);
+
+  // M10 hydration fix:
+  // Keep SSR and first client render deterministic.
+  
+
+  const resolvedTheme: "light" | "dark" =
+    themeMode === "system" ? systemTheme : themeMode;
+
+  const isDark = resolvedTheme === "dark";
+
+  if (!mounted) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          height: "100vh",
+          width: "100%",
+          background: "#0f172a",
+        }}
+      />
+    );
+  }
+
   const mainStyle: React.CSSProperties = {
-    // M8.1:
-    // Increased horizontal breathing room for workflow-oriented UI.
     padding: "20px 24px",
-
-    // M8.1:
-    // Previous value (1040) made the app feel boxed in on large screens.
-    // 1480 keeps readability while using much more of the available viewport.
     maxWidth: 1480,
-
-    // Keep the main workspace centered inside the available area.
     margin: "0 auto",
-
-    color: "#fff",
-    background:
-      "radial-gradient(900px 360px at 50% -120px, rgba(255,255,255,0.10), rgba(0,0,0,0))",
-
-    // Ensures the centered container still expands naturally.
+    color: isDark ? "#ffffff" : "#0f172a",
+    background: isDark
+      ? "radial-gradient(900px 360px at 50% -120px, rgba(255,255,255,0.10), rgba(0,0,0,0))"
+      : "radial-gradient(900px 360px at 50% -120px, rgba(0,0,0,0.05), rgba(255,255,255,0))",
     width: "100%",
     boxSizing: "border-box",
   };
@@ -62,6 +125,7 @@ export default function ChatPage() {
         renameSaving={chat.renameSaving}
         deletingId={chat.deletingId}
         deleteBusy={chat.deleteBusy}
+        resolvedTheme={resolvedTheme}
         onNewChatAction={() => {
           chat.newChat();
           bumpUiTickAction();
@@ -91,11 +155,12 @@ export default function ChatPage() {
           ...mainStyle,
           flex: 1,
           overflow: "auto",
-          minWidth: 0, // Prevents flex overflow issues on narrower screens.
+          minWidth: 0,
         }}
       >
         <ChatHeader
           sidebarCollapsed={chat.sidebarCollapsed}
+          resolvedTheme={resolvedTheme}
           onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)}
           mode={chat.mode}
           onModeChangeAction={(mode) => {
@@ -106,6 +171,7 @@ export default function ChatPage() {
 
         <ChatToolbar
           chat={chat}
+          resolvedTheme={resolvedTheme}
           onAfterUiAction={() => {
             bumpUiTickAction();
           }}
@@ -113,6 +179,7 @@ export default function ChatPage() {
 
         <ChatPanel
           chat={chat}
+          resolvedTheme={resolvedTheme}
           onAfterSendAction={() => {
             bumpUiTickAction();
           }}

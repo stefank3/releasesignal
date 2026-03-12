@@ -7,6 +7,11 @@
 // - show a guided empty state instead of a misleading scored review card
 // - direct the user to paste test cases into the input box
 // - keep normal review rendering unchanged for valid reviews
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware rendering
+// - support light / dark / system theme via resolvedTheme prop
+// - keep review visualization structure unchanged
 
 "use client";
 
@@ -60,21 +65,33 @@ function SmallButton({
   children,
   onClick,
   variant = "light",
+  resolvedTheme = "light",
 }: {
   children: React.ReactNode;
   onClick: () => void;
   variant?: "light" | "dark";
+  resolvedTheme?: "light" | "dark";
 }) {
-  const isDark = variant === "dark";
+  const isDarkTheme = resolvedTheme === "dark";
+  const useDarkVariant = variant === "dark";
+
   return (
     <button
       onClick={onClick}
       style={{
         padding: "6px 10px",
         borderRadius: 10,
-        border: isDark ? "1px solid #111" : "1px solid #ddd",
-        background: isDark ? "#111" : "#fff",
-        color: isDark ? "#fff" : "#111",
+        border: useDarkVariant
+          ? "1px solid #111"
+          : isDarkTheme
+            ? "1px solid rgba(255,255,255,0.18)"
+            : "1px solid #ddd",
+        background: useDarkVariant
+          ? "#111"
+          : isDarkTheme
+            ? "rgba(255,255,255,0.06)"
+            : "#fff",
+        color: useDarkVariant ? "#fff" : isDarkTheme ? "#fff" : "#111",
         fontWeight: 900,
         cursor: "pointer",
       }}
@@ -85,27 +102,67 @@ function SmallButton({
 }
 
 /** Breakdown row with a progress bar (simple MVP UI, no external libs). */
-function BarRow({ label, value, max }: { label: string; value: number; max: number }) {
+function BarRow({
+  label,
+  value,
+  max,
+  resolvedTheme = "light",
+}: {
+  label: string;
+  value: number;
+  max: number;
+  resolvedTheme?: "light" | "dark";
+}) {
   const safeValue = clamp(Number(value) || 0, 0, max);
   const pct = (safeValue / max) * 100;
+  const isDark = resolvedTheme === "dark";
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 70px", gap: 12, alignItems: "center" }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "#111" }}>{label}</div>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "220px 1fr 70px",
+        gap: 12,
+        alignItems: "center",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: isDark ? "#fff" : "#111",
+        }}
+      >
+        {label}
+      </div>
 
       <div
         style={{
           height: 10,
           borderRadius: 999,
-          border: "1px solid #ddd",
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.14)"
+            : "1px solid #ddd",
           overflow: "hidden",
-          background: "#fafafa",
+          background: isDark ? "rgba(255,255,255,0.08)" : "#fafafa",
         }}
       >
-        <div style={{ width: `${pct}%`, height: "100%", background: "#111" }} />
+        <div
+          style={{
+            width: `${pct}%`,
+            height: "100%",
+            background: isDark ? "#fff" : "#111",
+          }}
+        />
       </div>
 
-      <div style={{ fontSize: 13, textAlign: "right", color: "#111" }}>
+      <div
+        style={{
+          fontSize: 13,
+          textAlign: "right",
+          color: isDark ? "#fff" : "#111",
+        }}
+      >
         {safeValue}/{max}
       </div>
     </div>
@@ -113,17 +170,46 @@ function BarRow({ label, value, max }: { label: string; value: number; max: numb
 }
 
 /** Reusable list section for gaps/anti-patterns/improvements. */
-function Section({ title, items }: { title: string; items: string[] }) {
+function Section({
+  title,
+  items,
+  resolvedTheme = "light",
+}: {
+  title: string;
+  items: string[];
+  resolvedTheme?: "light" | "dark";
+}) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div style={{ marginTop: 14 }}>
-      <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8, color: "#111" }}>{title}</div>
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 800,
+          marginBottom: 8,
+          color: isDark ? "#fff" : "#111",
+        }}
+      >
+        {title}
+      </div>
 
       {items.length === 0 ? (
-        <div style={{ fontSize: 13, color: "#666" }}>None.</div>
+        <div style={{ fontSize: 13, color: isDark ? "rgba(255,255,255,0.68)" : "#666" }}>
+          None.
+        </div>
       ) : (
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           {items.map((x, i) => (
-            <li key={i} style={{ fontSize: 13, marginBottom: 6, lineHeight: 1.35, color: "#111" }}>
+            <li
+              key={i}
+              style={{
+                fontSize: 13,
+                marginBottom: 6,
+                lineHeight: 1.35,
+                color: isDark ? "#fff" : "#111",
+              }}
+            >
               {x}
             </li>
           ))}
@@ -148,59 +234,109 @@ function isEmptyReview(review: ReviewResult): boolean {
     review.breakdown.designQuality === 0 &&
     review.breakdown.levelAndScope === 0 &&
     review.breakdown.diagnosticValue === 0 &&
-    (verdict.includes("no tests provided") || verdict.includes("no test cases provided"))
+    (verdict.includes("no tests provided") ||
+      verdict.includes("no test cases provided"))
   );
 }
 
-function ReviewEmptyState() {
+function ReviewEmptyState({
+  resolvedTheme = "light",
+}: {
+  resolvedTheme?: "light" | "dark";
+}) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div
       style={{
-        border: "1px solid #e6e6e6",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.12)"
+          : "1px solid #e6e6e6",
         borderRadius: 18,
         padding: 20,
-        background: "#fff",
-        boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
-        color: "#111",
+        background: isDark ? "rgba(255,255,255,0.05)" : "#fff",
+        boxShadow: isDark
+          ? "0 6px 22px rgba(0,0,0,0.18)"
+          : "0 6px 22px rgba(0,0,0,0.06)",
+        color: isDark ? "#fff" : "#111",
         display: "grid",
         gap: 14,
       }}
     >
       <div style={{ display: "grid", gap: 6 }}>
-        <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: 0.2 }}>Paste Test Cases to Review</div>
-        <div style={{ fontSize: 13, color: "#444", lineHeight: 1.5 }}>
-          Test Review evaluates an existing test suite and returns a coverage score, risk gaps, anti-patterns, and
-          prioritized improvements.
+        <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: 0.2 }}>
+          Paste Test Cases to Review
+        </div>
+        <div
+          style={{
+            fontSize: 13,
+            color: isDark ? "rgba(255,255,255,0.76)" : "#444",
+            lineHeight: 1.5,
+          }}
+        >
+          Test Review evaluates an existing test suite and returns a coverage
+          score, risk gaps, anti-patterns, and prioritized improvements.
         </div>
       </div>
 
       <div
         style={{
-          border: "1px solid #f0f0f0",
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid #f0f0f0",
           borderRadius: 16,
           padding: 14,
-          background: "#fafafa",
+          background: isDark ? "rgba(255,255,255,0.04)" : "#fafafa",
           display: "grid",
           gap: 8,
         }}
       >
-        <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>What to do next</div>
-        <div style={{ fontSize: 13, color: "#444", lineHeight: 1.45 }}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 900,
+            color: isDark ? "rgba(255,255,255,0.82)" : "#333",
+          }}
+        >
+          What to do next
+        </div>
+        <div
+          style={{
+            fontSize: 13,
+            color: isDark ? "rgba(255,255,255,0.76)" : "#444",
+            lineHeight: 1.45,
+          }}
+        >
           • Paste test cases to review (from Test Design or your existing suite)
           <br />
           • Then send the request again to generate the review
         </div>
       </div>
 
-      <div style={{ fontSize: 12, color: "#666", lineHeight: 1.45 }}>
-        Tip: Generate a suite in <strong>Test Design</strong> and paste it here for evaluation.
+      <div
+        style={{
+          fontSize: 12,
+          color: isDark ? "rgba(255,255,255,0.66)" : "#666",
+          lineHeight: 1.45,
+        }}
+      >
+        Tip: Generate a suite in <strong>Test Design</strong> and paste it here
+        for evaluation.
       </div>
     </div>
   );
 }
 
-export default function ReviewCard({ review }: { review: ReviewResult }) {
+export default function ReviewCard({
+  review,
+  resolvedTheme = "light",
+}: {
+  review: ReviewResult;
+  resolvedTheme?: "light" | "dark";
+}) {
   const [toast, setToast] = useState<string | null>(null);
+
+  const isDark = resolvedTheme === "dark";
 
   useEffect(() => {
     if (!toast) return;
@@ -209,12 +345,20 @@ export default function ReviewCard({ review }: { review: ReviewResult }) {
   }, [toast]);
 
   if (isEmptyReview(review)) {
-    return <ReviewEmptyState />;
+    return <ReviewEmptyState resolvedTheme={resolvedTheme} />;
   }
 
   const score = clamp(Number(review.score) || 0, 0, 100);
   const grade =
-    score >= 90 ? "Excellent" : score >= 75 ? "Good" : score >= 60 ? "Fair" : score >= 40 ? "Weak" : "Poor";
+    score >= 90
+      ? "Excellent"
+      : score >= 75
+        ? "Good"
+        : score >= 60
+          ? "Fair"
+          : score >= 40
+            ? "Weak"
+            : "Poor";
 
   const copyText = async (text: string, label: string) => {
     try {
@@ -228,35 +372,73 @@ export default function ReviewCard({ review }: { review: ReviewResult }) {
   return (
     <div
       style={{
-        border: "1px solid #e6e6e6",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.12)"
+          : "1px solid #e6e6e6",
         borderRadius: 18,
         padding: 20,
-        background: "#fff",
-        boxShadow: "0 6px 22px rgba(0,0,0,0.06)",
-        color: "#111",
+        background: isDark ? "rgba(255,255,255,0.05)" : "#fff",
+        boxShadow: isDark
+          ? "0 6px 22px rgba(0,0,0,0.18)"
+          : "0 6px 22px rgba(0,0,0,0.06)",
+        color: isDark ? "#fff" : "#111",
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 14,
+        }}
+      >
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: 0.2 }}>Review Score</div>
-          <div style={{ fontSize: 13, color: "#444", lineHeight: 1.45 }}>{review.verdict}</div>
+          <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: 0.2 }}>
+            Review Score
+          </div>
+          <div
+            style={{
+              fontSize: 13,
+              color: isDark ? "rgba(255,255,255,0.76)" : "#444",
+              lineHeight: 1.45,
+            }}
+          >
+            {review.verdict}
+          </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: 10,
+          }}
+        >
           <div style={{ display: "flex", gap: 8 }}>
-            <SmallButton onClick={() => copyText(reviewToMarkdown(review), "Markdown")}>Copy MD</SmallButton>
-            <SmallButton onClick={() => copyText(reviewToJson(review), "JSON")} variant="dark">
+            <SmallButton
+              onClick={() => copyText(reviewToMarkdown(review), "Markdown")}
+              resolvedTheme={resolvedTheme}
+            >
+              Copy MD
+            </SmallButton>
+
+            <SmallButton
+              onClick={() => copyText(reviewToJson(review), "JSON")}
+              variant="dark"
+              resolvedTheme={resolvedTheme}
+            >
               Copy JSON
             </SmallButton>
           </div>
 
           <div
             style={{
-              border: "1px solid #111",
+              border: isDark ? "1px solid #fff" : "1px solid #111",
               borderRadius: 999,
               padding: "9px 12px",
-              background: "#111",
-              color: "#fff",
+              background: isDark ? "#fff" : "#111",
+              color: isDark ? "#111" : "#fff",
               fontWeight: 950,
               fontSize: 14,
             }}
@@ -264,7 +446,14 @@ export default function ReviewCard({ review }: { review: ReviewResult }) {
             {score}/100
           </div>
 
-          <div style={{ fontSize: 12, color: "#666" }}>{grade}</div>
+          <div
+            style={{
+              fontSize: 12,
+              color: isDark ? "rgba(255,255,255,0.66)" : "#666",
+            }}
+          >
+            {grade}
+          </div>
         </div>
       </div>
 
@@ -275,9 +464,11 @@ export default function ReviewCard({ review }: { review: ReviewResult }) {
             display: "inline-block",
             padding: "6px 10px",
             borderRadius: 999,
-            border: "1px solid #e6e6e6",
-            background: "#fff",
-            color: "#111",
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.14)"
+              : "1px solid #e6e6e6",
+            background: isDark ? "rgba(255,255,255,0.06)" : "#fff",
+            color: isDark ? "#fff" : "#111",
             fontSize: 12,
             fontWeight: 800,
           }}
@@ -286,38 +477,127 @@ export default function ReviewCard({ review }: { review: ReviewResult }) {
         </div>
       )}
 
-      <div style={{ marginTop: 16, borderTop: "1px solid #f1f1f1" }} />
+      <div
+        style={{
+          marginTop: 16,
+          borderTop: isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid #f1f1f1",
+        }}
+      />
 
       <div
         style={{
           marginTop: 16,
-          border: "1px solid #f0f0f0",
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid #f0f0f0",
           borderRadius: 16,
           padding: 14,
-          background: "#fafafa",
+          background: isDark ? "rgba(255,255,255,0.04)" : "#fafafa",
           display: "grid",
           gap: 12,
         }}
       >
-        <div style={{ fontSize: 12, fontWeight: 900, color: "#333" }}>Breakdown</div>
-        <BarRow label="Business relevance" value={review.breakdown.businessRelevance} max={25} />
-        <BarRow label="Risk coverage" value={review.breakdown.riskCoverage} max={25} />
-        <BarRow label="Design quality" value={review.breakdown.designQuality} max={20} />
-        <BarRow label="Level & scope" value={review.breakdown.levelAndScope} max={15} />
-        <BarRow label="Diagnostic value" value={review.breakdown.diagnosticValue} max={15} />
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 900,
+            color: isDark ? "rgba(255,255,255,0.82)" : "#333",
+          }}
+        >
+          Breakdown
+        </div>
+
+        <BarRow
+          label="Business relevance"
+          value={review.breakdown.businessRelevance}
+          max={25}
+          resolvedTheme={resolvedTheme}
+        />
+        <BarRow
+          label="Risk coverage"
+          value={review.breakdown.riskCoverage}
+          max={25}
+          resolvedTheme={resolvedTheme}
+        />
+        <BarRow
+          label="Design quality"
+          value={review.breakdown.designQuality}
+          max={20}
+          resolvedTheme={resolvedTheme}
+        />
+        <BarRow
+          label="Level & scope"
+          value={review.breakdown.levelAndScope}
+          max={15}
+          resolvedTheme={resolvedTheme}
+        />
+        <BarRow
+          label="Diagnostic value"
+          value={review.breakdown.diagnosticValue}
+          max={15}
+          resolvedTheme={resolvedTheme}
+        />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14, marginTop: 16 }}>
-        <div style={{ border: "1px solid #f0f0f0", borderRadius: 16, padding: 14, background: "#fff" }}>
-          <Section title="Top risk gaps" items={review.riskGaps} />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr",
+          gap: 14,
+          marginTop: 16,
+        }}
+      >
+        <div
+          style={{
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.10)"
+              : "1px solid #f0f0f0",
+            borderRadius: 16,
+            padding: 14,
+            background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
+          }}
+        >
+          <Section
+            title="Top risk gaps"
+            items={review.riskGaps}
+            resolvedTheme={resolvedTheme}
+          />
         </div>
 
-        <div style={{ border: "1px solid #f0f0f0", borderRadius: 16, padding: 14, background: "#fff" }}>
-          <Section title="Anti-patterns" items={review.antiPatterns} />
+        <div
+          style={{
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.10)"
+              : "1px solid #f0f0f0",
+            borderRadius: 16,
+            padding: 14,
+            background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
+          }}
+        >
+          <Section
+            title="Anti-patterns"
+            items={review.antiPatterns}
+            resolvedTheme={resolvedTheme}
+          />
         </div>
 
-        <div style={{ border: "1px solid #f0f0f0", borderRadius: 16, padding: 14, background: "#fff" }}>
-          <Section title="Prioritized improvements" items={review.improvements} />
+        <div
+          style={{
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.10)"
+              : "1px solid #f0f0f0",
+            borderRadius: 16,
+            padding: 14,
+            background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
+          }}
+        >
+          <Section
+            title="Prioritized improvements"
+            items={review.improvements}
+            resolvedTheme={resolvedTheme}
+          />
         </div>
       </div>
     </div>

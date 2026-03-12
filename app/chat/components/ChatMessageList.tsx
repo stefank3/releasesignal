@@ -11,6 +11,11 @@
 // - small UI polish for evolving test suite sessions
 // - clearer empty-state wording for persistent Cases mode
 // - lightweight detection of "Test Suite vX" plain-text responses
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware message rendering
+// - remove hardcoded dark-only text/surface assumptions
+// - keep behavior unchanged while supporting light / dark / system themes
 
 "use client";
 
@@ -55,7 +60,12 @@ function tryFormatCoachJson(text: string): string | null {
       assumptions?: string[];
       riskMatrix?: { risk?: string; likelihood?: string; impact?: string }[];
       highSignalApproach?: { testIdeas?: string[] };
-      testCases?: { id?: string; title?: string; priority?: string; level?: string }[];
+      testCases?: {
+        id?: string;
+        title?: string;
+        priority?: string;
+        level?: string;
+      }[];
       optionalClarifications?: string[];
     };
 
@@ -84,18 +94,30 @@ function tryFormatCoachJson(text: string): string | null {
         const id = mdSafe(tc.id ?? "");
         const title = mdSafe(tc.title ?? "");
         const meta = [tc.priority, tc.level].filter(Boolean).join(" · ");
-        lines.push(`- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim());
+        lines.push(
+          `- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim()
+        );
       }
       lines.push("");
-    } else if (Array.isArray(obj.highSignalApproach?.testIdeas) && obj.highSignalApproach.testIdeas?.length) {
+    } else if (
+      Array.isArray(obj.highSignalApproach?.testIdeas) &&
+      obj.highSignalApproach.testIdeas?.length
+    ) {
       lines.push("Draft test ideas:");
-      for (const t of obj.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${mdSafe(t)}`);
+      for (const t of obj.highSignalApproach.testIdeas.slice(0, 12)) {
+        lines.push(`- ${mdSafe(t)}`);
+      }
       lines.push("");
     }
 
-    if (Array.isArray(obj.optionalClarifications) && obj.optionalClarifications.length) {
+    if (
+      Array.isArray(obj.optionalClarifications) &&
+      obj.optionalClarifications.length
+    ) {
       lines.push("Optional clarifications:");
-      for (const q of obj.optionalClarifications.slice(0, 3)) lines.push(`- ${mdSafe(q)}`);
+      for (const q of obj.optionalClarifications.slice(0, 3)) {
+        lines.push(`- ${mdSafe(q)}`);
+      }
       lines.push("");
     }
 
@@ -105,10 +127,24 @@ function tryFormatCoachJson(text: string): string | null {
   }
 }
 
-export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mode: Mode }) {
+export default function ChatMessageList({
+  items,
+  mode,
+  resolvedTheme = "dark",
+}: {
+  items: ChatItem[];
+  mode: Mode;
+  resolvedTheme?: "light" | "dark";
+}) {
+  const isDark = resolvedTheme === "dark";
+
+  const emptyStateColor = isDark ? "rgba(255,255,255,0.78)" : "rgba(15,23,42,0.78)";
+  const requestIdColor = isDark ? "#ffffff" : "#0f172a";
+  const unknownColor = isDark ? "rgba(255,255,255,0.7)" : "rgba(15,23,42,0.7)";
+
   if (items.length === 0) {
     return (
-      <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 1.55 }}>
+      <div style={{ color: emptyStateColor, fontSize: 13, lineHeight: 1.55 }}>
         {mode === "coach"
           ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately, then refine the requirement as the session evolves."
           : mode === "review"
@@ -148,31 +184,50 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
             typeof textToShow === "string" &&
             textToShow.startsWith("Refined Technical Requirement");
 
+          const bubbleStyle: React.CSSProperties = {
+            maxWidth: "78%",
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.12)"
+              : "1px solid rgba(15,23,42,0.12)",
+            borderRadius: 16,
+            padding: 16,
+            background: isUser
+              ? isDark
+                ? "rgba(0,0,0,0.55)"
+                : "rgba(15,23,42,0.08)"
+              : isDark
+                ? "rgba(255,255,255,0.06)"
+                : "rgba(15,23,42,0.03)",
+            color: isDark ? "#ffffff" : "#0f172a",
+            whiteSpace: "pre-wrap",
+            fontSize: 13,
+            lineHeight: 1.55,
+          };
+
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: isUser ? "flex-end" : "flex-start",
+                }}
+              >
                 {isRequirement ? (
                   <div style={{ width: "100%", maxWidth: "100%" }}>
                     <RequirementCard text={textToShow} />
                   </div>
                 ) : (
-                  <div
-                    style={{
-                      maxWidth: "78%",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      borderRadius: 16,
-                      padding: 16,
-                      background: isUser ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.06)",
-                      color: "#fff",
-                      whiteSpace: "pre-wrap",
-                      fontSize: 13,
-                      lineHeight: 1.55,
-                    }}
-                  >
+                  <div style={bubbleStyle}>
                     {textToShow}
 
                     {it.requestId && (
-                      <div style={{ marginTop: 10, fontSize: 10, opacity: 0.55 }}>
+                      <div
+                        style={{
+                          marginTop: 10,
+                          fontSize: 10,
+                          opacity: 0.55,
+                        }}
+                      >
                         requestId: {it.requestId.slice(0, 8)}…
                       </div>
                     )}
@@ -181,7 +236,13 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
               </div>
 
               {isRequirement && it.requestId ? (
-                <div style={{ fontSize: 10, opacity: 0.55, color: "#fff" }}>
+                <div
+                  style={{
+                    fontSize: 10,
+                    opacity: 0.55,
+                    color: requestIdColor,
+                  }}
+                >
                   requestId: {it.requestId.slice(0, 8)}…
                 </div>
               ) : null}
@@ -193,7 +254,10 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
         if (it.kind === "review") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
-              <ReviewCard review={it.review as ReviewResult} />
+              <ReviewCard
+                review={it.review as ReviewResult}
+                resolvedTheme={resolvedTheme}
+              />
             </div>
           );
         }
@@ -205,7 +269,13 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               {isPersistedSuite ? (
-                <div style={{ fontSize: 11, opacity: 0.66, color: "#fff" }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    opacity: 0.66,
+                    color: requestIdColor,
+                  }}
+                >
                   Persistent suite workspace
                 </div>
               ) : null}
@@ -230,15 +300,26 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
             <div
               key={key}
               style={{
-                border: "1px solid rgba(255,80,200,0.55)",
+                border: isDark
+                  ? "1px solid rgba(255,80,200,0.55)"
+                  : "1px solid rgba(220,38,38,0.40)",
                 borderRadius: 16,
                 padding: 16,
-                background: "rgba(255,255,255,0.06)",
-                color: "#fff",
+                background: isDark
+                  ? "rgba(255,255,255,0.06)"
+                  : "rgba(220,38,38,0.05)",
+                color: isDark ? "#ffffff" : "#7f1d1d",
               }}
             >
               <div style={{ fontWeight: 950, marginBottom: 10 }}>{it.title}</div>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.45 }}>
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                }}
+              >
                 {it.details}
               </pre>
             </div>
@@ -246,7 +327,7 @@ export default function ChatMessageList({ items, mode }: { items: ChatItem[]; mo
         }
 
         return (
-          <div key={key} style={{ fontSize: 12, opacity: 0.7 }}>
+          <div key={key} style={{ fontSize: 12, opacity: 0.7, color: unknownColor }}>
             Unknown message type
           </div>
         );

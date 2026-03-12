@@ -7,6 +7,11 @@
 // - align placeholders with Strategy / Test Design / Test Review terminology
 // - use mode-aware primary button labels for stronger workflow clarity
 // - keep behavior unchanged and lightweight for beta
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware input/button styling
+// - remove mixed hardcoded dark/light styling
+// - improve visual consistency in light mode
 
 "use client";
 
@@ -17,6 +22,7 @@ type Props = {
   mode: Mode;
   value: string;
   disabled?: boolean;
+  resolvedTheme?: "light" | "dark";
 
   // Naming ends with "Action" to avoid Next/TS “serializable props” warnings in some setups.
   onChangeAction: (next: string) => void;
@@ -44,11 +50,13 @@ function getButtonLabel(mode: Mode, disabled?: boolean): string {
 }
 
 const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
-  { mode, value, disabled, onChangeAction, onSendAction },
+  { mode, value, disabled, resolvedTheme = "dark", onChangeAction, onSendAction },
   ref
 ) {
   const placeholder = getPlaceholder(mode);
   const buttonLabel = getButtonLabel(mode, disabled);
+
+  const isDark = resolvedTheme === "dark";
 
   return (
     <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
@@ -61,9 +69,13 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
           flex: 1,
           padding: "12px 14px",
           borderRadius: 14,
-          border: "1px solid rgba(255,255,255,0.12)",
-          background: "rgba(255,255,255,0.92)",
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.12)"
+            : "1px solid rgba(15,23,42,0.14)",
+          background: isDark ? "rgba(255,255,255,0.92)" : "#ffffff",
           color: "#111",
+          outline: "none",
+          boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.04)",
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") onSendAction();
@@ -76,13 +88,16 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
         style={{
           padding: "12px 16px",
           borderRadius: 14,
-          border: "1px solid rgba(255,255,255,0.14)",
-          background: "rgba(0,0,0,0.55)",
-          color: "#fff",
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.14)"
+            : "1px solid rgba(15,23,42,0.14)",
+          background: isDark ? "rgba(0,0,0,0.55)" : "#ffffff",
+          color: isDark ? "#fff" : "#0f172a",
           fontWeight: 950,
           opacity: disabled ? 0.7 : 1,
           cursor: disabled ? "not-allowed" : "pointer",
           whiteSpace: "nowrap",
+          boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
         }}
         disabled={!!disabled}
       >

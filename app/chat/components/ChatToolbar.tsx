@@ -7,6 +7,11 @@
 // - removes redundant mode switcher buttons from the toolbar
 // - keeps ChatHeader as the primary workflow selector
 // - preserves session-lock rules and demo behavior
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware toolbar text and banners
+// - remove dark-only banner/session-meta styling assumptions
+// - keep toolbar behavior unchanged
 
 "use client";
 
@@ -27,24 +32,67 @@ import {
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 
 function modeLabel(m: Mode) {
-  return m === "coach" ? "Strategy" : m === "review" ? "Test Review" : "Test Design";
+  return m === "coach"
+    ? "Strategy"
+    : m === "review"
+      ? "Test Review"
+      : "Test Design";
 }
 
 type Props = {
   chat: UseChatSessionReturn;
-  onAfterUiAction?: () => void; // page can force scroll-to-bottom, etc.
+  onAfterUiAction?: () => void;
+
+  // M10 UI:
+  // Resolved by page shell and passed down so all chrome can follow one theme.
+  resolvedTheme?: "light" | "dark";
 };
 
-export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
+export default function ChatToolbar({
+  chat,
+  onAfterUiAction,
+  resolvedTheme = "dark",
+}: Props) {
   const rateChipText = useMemo(() => {
     if (!chat.rate) return null;
     return `Rate: ${chat.rate.remaining}/${chat.rate.limit} · resets in ${chat.rate.resetSeconds}s`;
   }, [chat.rate]);
 
+  const isDark = resolvedTheme === "dark";
+  const textColor = isDark ? "#ffffff" : "#0f172a";
+  const subtleText = isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.68)";
+
+  const bannerStyle: React.CSSProperties = {
+    marginTop: 10,
+    marginBottom: 12,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.22)"
+      : "1px solid rgba(15,23,42,0.14)",
+    background: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.05)",
+    color: textColor,
+    fontSize: 13,
+    fontWeight: 800,
+  };
+
+  const modeLockButtonStyle: React.CSSProperties = {
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.22)"
+      : "1px solid rgba(15,23,42,0.14)",
+    background: isDark ? "rgba(255,255,255,0.14)" : "#ffffff",
+    color: textColor,
+    fontWeight: 900,
+    cursor: "pointer",
+    boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
+  };
+
   const loadDemoAction = (demoMode: Mode, text: string) => {
     // Preserve existing behavior: cannot change mode inside an existing locked session.
     if (chat.activeSessionId && demoMode !== chat.activeSessionMode) {
-      chat.trySetMode(demoMode); // sets modeLockMsg via hook
+      chat.trySetMode(demoMode);
       return;
     }
 
@@ -55,9 +103,10 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
   return (
     <>
       {/* Demo toolbar */}
-      <Toolbar
+      <Toolbar resolvedTheme={resolvedTheme}
         right={
           <HeaderButton
+            resolvedTheme={resolvedTheme}
             onClickAction={() => {
               chat.startNewSessionInMode(chat.mode);
               localStorage.removeItem(STORAGE_KEY);
@@ -69,9 +118,10 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
           </HeaderButton>
         }
       >
-        <Chip>Demo</Chip>
+        <Chip resolvedTheme={resolvedTheme}>Demo</Chip>
 
         <HeaderButton
+          resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("coach", DEMO_COACH_LOGIN)}
           disabled={chat.isSending}
         >
@@ -79,6 +129,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
         </HeaderButton>
 
         <HeaderButton
+          resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("review", DEMO_REVIEW_LOGIN)}
           disabled={chat.isSending}
         >
@@ -86,6 +137,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
         </HeaderButton>
 
         <HeaderButton
+          resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("review", DEMO_REVIEW_EXPORT)}
           disabled={chat.isSending}
         >
@@ -93,6 +145,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
         </HeaderButton>
 
         <HeaderButton
+          resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("cases", DEMO_CASES_LOGIN)}
           disabled={chat.isSending}
         >
@@ -103,14 +156,19 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
       <div style={{ height: 10 }} />
 
       {/* Session actions toolbar */}
-      <Toolbar>
+      <Toolbar resolvedTheme={resolvedTheme}>
         <Group>
-          <ModeBadge mode={chat.mode} />
-          {rateChipText && <Chip>{rateChipText}</Chip>}
-          {chat.lastRequestId && <Chip>rid: {chat.lastRequestId.slice(0, 8)}…</Chip>}
+          <ModeBadge mode={chat.mode} resolvedTheme={resolvedTheme} />
+          {rateChipText && <Chip resolvedTheme={resolvedTheme}>{rateChipText}</Chip>}
+          {chat.lastRequestId && (
+            <Chip resolvedTheme={resolvedTheme}>
+              rid: {chat.lastRequestId.slice(0, 8)}…
+            </Chip>
+          )}
 
           {chat.lastPending && !chat.isSending && (
             <HeaderButton
+              resolvedTheme={resolvedTheme}
               onClickAction={() => {
                 void (async () => {
                   await chat.send({ replay: true });
@@ -129,8 +187,9 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
         */}
 
         <Group>
-          <Chip>New session</Chip>
+          <Chip resolvedTheme={resolvedTheme}>New session</Chip>
           <HeaderButton
+            resolvedTheme={resolvedTheme}
             onClickAction={() => {
               chat.startNewSessionInMode("coach");
               onAfterUiAction?.();
@@ -140,6 +199,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
             Strategy
           </HeaderButton>
           <HeaderButton
+            resolvedTheme={resolvedTheme}
             onClickAction={() => {
               chat.startNewSessionInMode("cases");
               onAfterUiAction?.();
@@ -149,6 +209,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
             Test Design
           </HeaderButton>
           <HeaderButton
+            resolvedTheme={resolvedTheme}
             onClickAction={() => {
               chat.startNewSessionInMode("review");
               onAfterUiAction?.();
@@ -167,15 +228,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
           return (
             <div
               style={{
-                marginTop: 10,
-                marginBottom: 12,
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.22)",
-                background: "rgba(255,255,255,0.08)",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 800,
+                ...bannerStyle,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -184,8 +237,8 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
               }}
             >
               <div style={{ lineHeight: 1.35 }}>
-                This session is locked to <b>{modeLabel(lock.sessionMode)}</b>. To use{" "}
-                <b>{modeLabel(lock.requestedMode)}</b>, start a new session.
+                This session is locked to <b>{modeLabel(lock.sessionMode)}</b>. To
+                use <b>{modeLabel(lock.requestedMode)}</b>, start a new session.
               </div>
 
               <button
@@ -193,15 +246,7 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
                   chat.startNewSessionInMode(lock.requestedMode);
                   onAfterUiAction?.();
                 }}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.22)",
-                  background: "rgba(255,255,255,0.14)",
-                  color: "#fff",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
+                style={modeLockButtonStyle}
               >
                 New session in {modeLabel(lock.requestedMode)}
               </button>
@@ -219,12 +264,23 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
           alignItems: "center",
         }}
       >
-        <Chip>{chat.activeSessionId ? `Session: ${chat.activeSessionId.slice(0, 8)}…` : "Session: (new)"}</Chip>
+        <Chip resolvedTheme={resolvedTheme}>
+          {chat.activeSessionId
+            ? `Session: ${chat.activeSessionId.slice(0, 8)}…`
+            : "Session: (new)"}
+        </Chip>
 
-        {chat.activeSessionId ? <ModeBadge mode={chat.activeSessionMode} locked /> : null}
+        {chat.activeSessionId ? (
+          <ModeBadge
+            mode={chat.activeSessionMode}
+            locked
+            resolvedTheme={resolvedTheme}
+          />
+        ) : null}
 
         {chat.activeSessionId && chat.messagesCursor && (
           <HeaderButton
+            resolvedTheme={resolvedTheme}
             onClickAction={() => {
               void (async () => {
                 await chat.loadSessionMessages(
@@ -241,29 +297,14 @@ export default function ChatToolbar({ chat, onAfterUiAction }: Props) {
         )}
 
         {chat.activeSessionId ? (
-          <div style={{ fontSize: 12, opacity: 0.72 }}>
+          <div style={{ fontSize: 12, color: subtleText }}>
             Mode is session-locked. Start a new session to switch workflow steps.
           </div>
         ) : null}
       </div>
 
       {/* Rate limit banner */}
-      {chat.rateLimitMsg && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.22)",
-            background: "rgba(255,255,255,0.08)",
-            color: "#fff",
-            fontSize: 13,
-            fontWeight: 800,
-          }}
-        >
-          {chat.rateLimitMsg}
-        </div>
-      )}
+      {chat.rateLimitMsg && <div style={bannerStyle}>{chat.rateLimitMsg}</div>}
     </>
   );
 }

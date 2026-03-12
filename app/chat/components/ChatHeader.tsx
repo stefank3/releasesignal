@@ -15,6 +15,11 @@
 // - adds visible step progression: Strategy -> Test Design -> Test Review
 // - highlights the active workflow step
 // - reinforces the intended product flow during beta
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware header rendering
+// - remove dark-only toolbar/header styling
+// - improve light-mode contrast and readability
 
 "use client";
 
@@ -34,6 +39,10 @@ type Props = {
   // M8.1:
   // Callback used to switch modes from the header selector.
   onModeChangeAction: (mode: Mode) => void;
+
+  // M10 UI:
+  // Resolved by page shell and passed down so chrome stays consistent.
+  resolvedTheme?: "light" | "dark";
 };
 
 const MODE_META: Record<
@@ -68,9 +77,15 @@ export default function ChatHeader({
   onToggleSidebarAction,
   mode,
   onModeChangeAction,
+  resolvedTheme = "dark",
 }: Props) {
   const activeModeMeta = MODE_META[mode];
   const activeStep = activeModeMeta.step;
+
+  const isDark = resolvedTheme === "dark";
+
+  const textColor = isDark ? "#ffffff" : "#0f172a";
+  const subtleText = isDark ? "rgba(255,255,255,0.75)" : "rgba(15,23,42,0.72)";
 
   return (
     <div
@@ -91,24 +106,41 @@ export default function ChatHeader({
             width: 40,
             height: 40,
             borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.18)",
-            background: "rgba(255,255,255,0.06)",
-            color: "#fff",
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.18)"
+              : "1px solid rgba(15,23,42,0.14)",
+            background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+            color: textColor,
             fontWeight: 950,
             cursor: "pointer",
             display: "grid",
             placeItems: "center",
             flex: "0 0 auto",
+            boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
           }}
         >
           {sidebarCollapsed ? "»" : "«"}
         </button>
 
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 900, margin: 0, lineHeight: 1.15 }}>
+          <h1
+            style={{
+              fontSize: 20,
+              fontWeight: 900,
+              margin: 0,
+              lineHeight: 1.15,
+              color: textColor,
+            }}
+          >
             Release Signal
           </h1>
-          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+          <div
+            style={{
+              fontSize: 12,
+              color: subtleText,
+              marginTop: 4,
+            }}
+          >
             AI-assisted QA review, strategy refinement, and test design
           </div>
         </div>
@@ -126,8 +158,11 @@ export default function ChatHeader({
           gap: 10,
           padding: "10px 12px",
           borderRadius: 14,
-          border: "1px solid rgba(255,255,255,0.12)",
-          background: "rgba(255,255,255,0.04)",
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.12)"
+            : "1px solid rgba(15,23,42,0.10)",
+          background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
+          boxShadow: isDark ? "none" : "0 6px 14px rgba(15,23,42,0.04)",
         }}
       >
         {/* Workflow selector */}
@@ -154,14 +189,25 @@ export default function ChatHeader({
                   borderRadius: 999,
                   padding: "8px 14px",
                   border: isActive
-                    ? "1px solid rgba(255,255,255,0.28)"
-                    : "1px solid rgba(255,255,255,0.12)",
-                  background: isActive ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.05)",
-                  color: "#fff",
+                    ? isDark
+                      ? "1px solid rgba(255,255,255,0.28)"
+                      : "1px solid rgba(15,23,42,0.18)"
+                    : isDark
+                      ? "1px solid rgba(255,255,255,0.12)"
+                      : "1px solid rgba(15,23,42,0.12)",
+                  background: isActive
+                    ? isDark
+                      ? "rgba(255,255,255,0.14)"
+                      : "rgba(15,23,42,0.08)"
+                    : isDark
+                      ? "rgba(255,255,255,0.05)"
+                      : "#ffffff",
+                  color: textColor,
                   fontSize: 13,
                   fontWeight: isActive ? 800 : 600,
                   cursor: "pointer",
                   transition: "all 120ms ease",
+                  boxShadow: isDark ? "none" : "0 3px 8px rgba(15,23,42,0.04)",
                 }}
               >
                 {meta.label}
@@ -194,15 +240,25 @@ export default function ChatHeader({
                     padding: "6px 10px",
                     borderRadius: 999,
                     border: isActive
-                      ? "1px solid rgba(255,255,255,0.26)"
-                      : "1px solid rgba(255,255,255,0.10)",
+                      ? isDark
+                        ? "1px solid rgba(255,255,255,0.26)"
+                        : "1px solid rgba(15,23,42,0.18)"
+                      : isDark
+                        ? "1px solid rgba(255,255,255,0.10)"
+                        : "1px solid rgba(15,23,42,0.10)",
                     background: isActive
-                      ? "rgba(255,255,255,0.12)"
+                      ? isDark
+                        ? "rgba(255,255,255,0.12)"
+                        : "rgba(15,23,42,0.08)"
                       : isCompleted
-                        ? "rgba(255,255,255,0.08)"
-                        : "rgba(255,255,255,0.03)",
+                        ? isDark
+                          ? "rgba(255,255,255,0.08)"
+                          : "rgba(15,23,42,0.05)"
+                        : isDark
+                          ? "rgba(255,255,255,0.03)"
+                          : "rgba(15,23,42,0.025)",
                     opacity: isActive ? 1 : isCompleted ? 0.92 : 0.72,
-                    color: "#fff",
+                    color: textColor,
                     fontSize: 12,
                     fontWeight: isActive ? 900 : 700,
                     whiteSpace: "nowrap",
@@ -215,10 +271,16 @@ export default function ChatHeader({
                       width: 20,
                       height: 20,
                       borderRadius: 999,
-                      border: "1px solid rgba(255,255,255,0.18)",
+                      border: isDark
+                        ? "1px solid rgba(255,255,255,0.18)"
+                        : "1px solid rgba(15,23,42,0.14)",
                       fontSize: 11,
                       fontWeight: 900,
-                      background: isActive ? "rgba(255,255,255,0.14)" : "transparent",
+                      background: isActive
+                        ? isDark
+                          ? "rgba(255,255,255,0.14)"
+                          : "rgba(15,23,42,0.10)"
+                        : "transparent",
                     }}
                   >
                     {meta.step}
@@ -234,6 +296,7 @@ export default function ChatHeader({
                       fontSize: 12,
                       opacity: 0.45,
                       fontWeight: 900,
+                      color: textColor,
                     }}
                   >
                     →
@@ -245,8 +308,10 @@ export default function ChatHeader({
         </div>
 
         {/* Active mode hint for immediate workflow clarity */}
-        <div style={{ fontSize: 12, opacity: 0.8 }}>
-          <strong style={{ fontWeight: 800 }}>{activeModeMeta.label}:</strong>{" "}
+        <div style={{ fontSize: 12, color: subtleText }}>
+          <strong style={{ fontWeight: 800, color: textColor }}>
+            {activeModeMeta.label}:
+          </strong>{" "}
           {activeModeMeta.hint}
         </div>
       </div>

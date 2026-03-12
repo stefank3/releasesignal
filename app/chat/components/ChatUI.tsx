@@ -8,30 +8,46 @@
 // - visible mode labels updated from COACH / REVIEW / CASES
 // - new UI labels are STRATEGY / TEST REVIEW / TEST DESIGN
 // - internal Mode values remain unchanged
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware shared UI primitives
+// - remove dark-only styling assumptions from toolbar buttons/chips/groups
+// - keep behavior unchanged while supporting light / dark themes
 
 "use client";
 
 import React from "react";
 import type { Mode } from "../chat.types";
 
+type ResolvedTheme = "light" | "dark";
+
 export function clamp(n: number, min: number, max: number): number {
-  // NOTE: explicit return type helps avoid subtle inference issues in strict builds
   return Math.max(min, Math.min(max, n));
 }
 
-/** Small pill label used in header sections (dark background friendly). */
-export function Chip({ children }: { children: React.ReactNode }) {
+/** Small pill label used in header sections. */
+export function Chip({
+  children,
+  resolvedTheme = "dark",
+}: {
+  children: React.ReactNode;
+  resolvedTheme?: ResolvedTheme;
+}) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <span
       style={{
         display: "inline-block",
         padding: "4px 8px",
         borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.18)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.18)"
+          : "1px solid rgba(15,23,42,0.14)",
         fontSize: 11,
         fontWeight: 800,
-        background: "rgba(255,255,255,0.05)",
-        color: "#fff",
+        background: isDark ? "rgba(255,255,255,0.05)" : "rgba(15,23,42,0.04)",
+        color: isDark ? "#fff" : "#0f172a",
         lineHeight: 1.1,
         whiteSpace: "nowrap",
       }}
@@ -55,29 +71,36 @@ export function ModeBadge({
   mode,
   locked,
   compact,
+  resolvedTheme = "dark",
 }: {
   mode: Mode;
   locked?: boolean;
   compact?: boolean;
+  resolvedTheme?: ResolvedTheme;
 }) {
+  const isDark = resolvedTheme === "dark";
+
   const meta =
-    mode === "coach"
+  mode === "coach"
+    ? {
+        label: "STRATEGY",
+        bg: isDark ? "rgba(56,189,248,0.16)" : "rgba(56,189,248,0.14)",
+        border: isDark ? "rgba(56,189,248,0.35)" : "rgba(14,116,144,0.30)",
+        color: isDark ? "#ffffff" : "#0b5f7a",
+      }
+    : mode === "review"
       ? {
-          label: "STRATEGY",
-          bg: "rgba(56,189,248,0.16)",
-          border: "rgba(56,189,248,0.35)",
+          label: "TEST REVIEW",
+          bg: isDark ? "rgba(34,197,94,0.16)" : "rgba(34,197,94,0.14)",
+          border: isDark ? "rgba(34,197,94,0.35)" : "rgba(21,128,61,0.30)",
+          color: isDark ? "#ffffff" : "#166534",
         }
-      : mode === "review"
-        ? {
-            label: "TEST REVIEW",
-            bg: "rgba(34,197,94,0.16)",
-            border: "rgba(34,197,94,0.35)",
-          }
-        : {
-            label: "TEST DESIGN",
-            bg: "rgba(168,85,247,0.16)",
-            border: "rgba(168,85,247,0.35)",
-          };
+      : {
+          label: "TEST DESIGN",
+          bg: isDark ? "rgba(168,85,247,0.16)" : "rgba(168,85,247,0.14)",
+          border: isDark ? "rgba(168,85,247,0.35)" : "rgba(126,34,206,0.30)",
+          color: isDark ? "#ffffff" : "#6b21a8",
+        };
 
   return (
     <span
@@ -90,7 +113,7 @@ export function ModeBadge({
         borderRadius: 999,
         border: `1px solid ${meta.border}`,
         background: meta.bg,
-        color: "#fff",
+        color: meta.color,
         fontSize: compact ? 11 : 12,
         fontWeight: 950,
         letterSpacing: 0.4,
@@ -109,12 +132,16 @@ export function HeaderButton({
   children,
   onClickAction,
   disabled,
+  resolvedTheme = "dark",
 }: {
   active?: boolean;
   children: React.ReactNode;
-  onClickAction: () => void; // CHANGE: rename to satisfy Next/TS plugin warning 71007
+  onClickAction: () => void;
   disabled?: boolean;
+  resolvedTheme?: ResolvedTheme;
 }) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <button
       onClick={onClickAction}
@@ -122,15 +149,24 @@ export function HeaderButton({
       style={{
         padding: "7px 10px",
         borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.18)",
-        background: active ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)",
-        color: "#fff",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.18)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: active
+          ? isDark
+            ? "rgba(255,255,255,0.16)"
+            : "rgba(15,23,42,0.08)"
+          : isDark
+            ? "rgba(255,255,255,0.06)"
+            : "#ffffff",
+        color: isDark ? "#fff" : "#0f172a",
         fontWeight: 850,
         fontSize: 13,
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.55 : 1,
         outline: "none",
         whiteSpace: "nowrap",
+        boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
       }}
     >
       {children}
@@ -142,10 +178,14 @@ export function HeaderButton({
 export function Toolbar({
   children,
   right,
+  resolvedTheme = "dark",
 }: {
   children: React.ReactNode;
   right?: React.ReactNode;
+  resolvedTheme?: ResolvedTheme;
 }) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div
       style={{
@@ -155,8 +195,11 @@ export function Toolbar({
         flexWrap: "wrap",
         padding: "10px 12px",
         borderRadius: 16,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.05)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.10)",
+        background: isDark ? "rgba(255,255,255,0.05)" : "rgba(15,23,42,0.03)",
+        boxShadow: isDark ? "none" : "0 6px 14px rgba(15,23,42,0.04)",
       }}
     >
       <div
@@ -172,7 +215,14 @@ export function Toolbar({
         {children}
       </div>
       {right ? (
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+        <div
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
           {right}
         </div>
       ) : null}
@@ -180,7 +230,15 @@ export function Toolbar({
   );
 }
 
-export function Group({ children }: { children: React.ReactNode }) {
+export function Group({
+  children,
+  resolvedTheme = "dark",
+}: {
+  children: React.ReactNode;
+  resolvedTheme?: ResolvedTheme;
+}) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div
       style={{
@@ -189,8 +247,10 @@ export function Group({ children }: { children: React.ReactNode }) {
         gap: 8,
         padding: "6px 8px",
         borderRadius: 14,
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(0,0,0,0.18)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.12)"
+          : "1px solid rgba(15,23,42,0.10)",
+        background: isDark ? "rgba(0,0,0,0.18)" : "rgba(15,23,42,0.03)",
       }}
     >
       {children}

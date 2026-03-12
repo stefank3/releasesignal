@@ -22,6 +22,12 @@
 // - lets users prefill the input from the pinned Refined Requirement
 // - reduces copy/paste friction during beta
 // - does not auto-send; user can still adjust before generation
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware panel styling
+// - remove dark-only hardcoded shell assumptions
+// - prepare panel surfaces for light / dark / system theme support
+// - keep behavior unchanged
 
 "use client";
 
@@ -36,27 +42,40 @@ import StrategyPanel from "./StrategyPanel";
 type Props = {
   chat: UseChatSessionReturn;
   onAfterSendAction?: () => void;
+
+  // M10 UI:
+  // Theme is resolved by the page shell so child components stay consistent.
+  resolvedTheme?: "light" | "dark";
 };
 
-function OnboardingHint({ showStrategyHint }: { showStrategyHint: boolean }) {
+function OnboardingHint(args: {
+  showStrategyHint: boolean;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
   return (
     <div
       style={{
         marginBottom: 12,
-        border: "1px solid rgba(255,255,255,0.10)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
         borderRadius: 14,
         padding: 12,
-        background: "rgba(255,255,255,0.04)",
-        color: "#fff",
+        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
+        color: isDark ? "#ffffff" : "#0f172a",
         display: "grid",
         gap: 6,
       }}
     >
-      <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.92 }}>Getting started</div>
+      <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.92 }}>
+        Getting started
+      </div>
 
       <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.5 }}>
         Describe the feature, system, or requirement you want to test.
-        {showStrategyHint
+        {args.showStrategyHint
           ? " Start with Strategy to clarify scope and risks, then continue to Test Design."
           : ""}
       </div>
@@ -65,7 +84,8 @@ function OnboardingHint({ showStrategyHint }: { showStrategyHint: boolean }) {
         Example:
         <br />
         <span style={{ opacity: 0.88 }}>
-          Clarify the login flow with MFA, identify risks, then generate a structured test suite.
+          Clarify the login flow with MFA, identify risks, then generate a
+          structured test suite.
         </span>
       </div>
     </div>
@@ -121,7 +141,11 @@ function buildRefinedRequirementInput(
   return lines.join("\n");
 }
 
-export default function ChatPanel({ chat, onAfterSendAction }: Props) {
+export default function ChatPanel({
+  chat,
+  onAfterSendAction,
+  resolvedTheme = "dark",
+}: Props) {
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -158,8 +182,15 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
     }
   }, [chat.items, chat]);
 
-  const isCoachSession = chat.mode === "coach" && chat.activeSessionMode === "coach";
-  const isTestDesignSession = chat.mode === "cases" && chat.activeSessionMode === "cases";
+  const effectiveSessionMode =
+    chat.activeSessionId && chat.activeSessionMode
+      ? chat.activeSessionMode
+      : chat.mode;
+
+  const isCoachSession = effectiveSessionMode === "coach";
+  const isTestDesignSession = effectiveSessionMode === "cases";
+
+  const isDark = resolvedTheme === "dark";
 
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
@@ -170,15 +201,21 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
     return "minmax(0, 1fr) 400px";
   }, [isCoachSession, isNarrow]);
 
-  // Left side: unified chat surface
+  // M10 UI:
+  // Theme-aware shell tokens for panel surfaces.
   const leftPanelStyle: React.CSSProperties = {
-    border: "1px solid rgba(255,255,255,0.10)",
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.10)"
+      : "1px solid rgba(15,23,42,0.10)",
     borderRadius: 18,
-    background: "rgba(255,255,255,0.04)",
+    background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
     overflow: "hidden",
     display: "grid",
     gridTemplateRows: "1fr auto",
     minHeight: isNarrow ? "60vh" : "68vh",
+    boxShadow: isDark
+      ? "0 8px 30px rgba(0,0,0,0.18)"
+      : "0 8px 24px rgba(15,23,42,0.06)",
   };
 
   const chatBoxStyle: React.CSSProperties = {
@@ -188,29 +225,67 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
   };
 
   const inputWrapStyle: React.CSSProperties = {
-    borderTop: "1px solid rgba(255,255,255,0.10)",
+    borderTop: isDark
+      ? "1px solid rgba(255,255,255,0.10)"
+      : "1px solid rgba(15,23,42,0.10)",
     padding: 12,
-    background: "rgba(0,0,0,0.16)",
+    background: isDark ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.55)",
   };
 
   // M7.7 / M8.4:
   // Show the onboarding hint only for empty sessions before the first interaction.
   const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
 
-  // M8.4:
+  // M8.4 / M10 UI:
   // Strategy becomes a more distinct panel during beta, closer to a workflow workspace.
   const strategyPanelWrapStyle: React.CSSProperties = {
-    border: "1px solid rgba(255,255,255,0.12)",
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.12)"
+      : "1px solid rgba(15,23,42,0.12)",
     borderRadius: 18,
-    background: "rgba(255,255,255,0.05)",
+    background: isDark ? "rgba(255,255,255,0.05)" : "rgba(15,23,42,0.04)",
     padding: 12,
     minHeight: isNarrow ? undefined : "68vh",
+    boxShadow: isDark
+      ? "0 8px 30px rgba(0,0,0,0.18)"
+      : "0 8px 24px rgba(15,23,42,0.06)",
   };
 
   // M8.8:
   // Enable quick transfer from Strategy artifact to Test Design input.
   const canUseRefinedRequirement =
-    isTestDesignSession && chat.hasPinnedRequirement && !!buildRefinedRequirementInput(chat.sessionArtifact);
+    isTestDesignSession &&
+    chat.hasPinnedRequirement &&
+    !!buildRefinedRequirementInput(chat.sessionArtifact);
+
+  const helperBannerStyle: React.CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.10)"
+      : "1px solid rgba(15,23,42,0.10)",
+    background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
+  };
+
+  const helperButtonStyle: React.CSSProperties = {
+    padding: "8px 12px",
+    borderRadius: 12,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.16)"
+      : "1px solid rgba(15,23,42,0.16)",
+    background: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.06)",
+    color: isDark ? "#ffffff" : "#0f172a",
+    fontSize: 12,
+    fontWeight: 900,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  };
 
   return (
     <div
@@ -223,38 +298,39 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
     >
       {/* Left: unified chat surface (messages + input) */}
       <div>
-        {showOnboardingHint ? <OnboardingHint showStrategyHint={isCoachSession} /> : null}
+        {showOnboardingHint ? (
+          <OnboardingHint
+            showStrategyHint={isCoachSession}
+            resolvedTheme={resolvedTheme}
+          />
+        ) : null}
 
         <div style={leftPanelStyle}>
           <div ref={chatBoxRef} style={chatBoxStyle}>
-            <ChatMessageList items={chat.items} mode={chat.mode} />
+            <ChatMessageList
+              items={chat.items}
+              mode={chat.mode}
+              resolvedTheme={resolvedTheme}
+            />
           </div>
 
           <div style={inputWrapStyle}>
             {canUseRefinedRequirement ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  marginBottom: 10,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(255,255,255,0.04)",
-                }}
-              >
+              <div style={helperBannerStyle}>
                 <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.4 }}>
-                  Use the pinned <strong style={{ fontWeight: 900 }}>Refined Requirement</strong> as
-                  the starting point for test generation.
+                  Use the pinned{" "}
+                  <strong style={{ fontWeight: 900 }}>
+                    Refined Requirement
+                  </strong>{" "}
+                  as the starting point for test generation.
                 </div>
 
                 <button
                   type="button"
                   onClick={() => {
-                    const nextInput = buildRefinedRequirementInput(chat.sessionArtifact);
+                    const nextInput = buildRefinedRequirementInput(
+                      chat.sessionArtifact
+                    );
                     if (!nextInput) return;
 
                     chat.setInput(nextInput);
@@ -263,28 +339,19 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
                       inputRef.current?.focus();
                     });
                   }}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.16)",
-                    background: "rgba(255,255,255,0.08)",
-                    color: "#fff",
-                    fontSize: 12,
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                  }}
+                  style={helperButtonStyle}
                 >
                   Use Refined Requirement
                 </button>
               </div>
             ) : null}
 
-            <ChatInput
+           <ChatInput
               ref={inputRef}
               mode={chat.mode}
               value={chat.input}
               disabled={chat.isSending}
+              resolvedTheme={resolvedTheme}
               onChangeAction={(next: string) => chat.setInput(next)}
               onSendAction={() => {
                 void (async () => {
@@ -300,7 +367,7 @@ export default function ChatPanel({ chat, onAfterSendAction }: Props) {
       {/* Right: Strategy panel */}
       {isCoachSession ? (
         <div style={strategyPanelWrapStyle}>
-          <StrategyPanel chat={chat} />
+          <StrategyPanel chat={chat} resolvedTheme={resolvedTheme} />
         </div>
       ) : null}
     </div>

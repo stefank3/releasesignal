@@ -12,6 +12,11 @@
 // - sidebar is now ready to surface persistent test-suite metadata
 // - keeps backward compatibility if history API does not yet return suite fields
 // - adds a compact suite badge when available
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware sidebar rendering
+// - remove dark-only styling assumptions
+// - fix washed-out / shadowed appearance in light mode
 
 "use client";
 
@@ -27,8 +32,19 @@ function sessionGlyph(title: string) {
   return (a + b).slice(0, 2);
 }
 
-function PinnedBadge({ updatedAt }: { updatedAt?: string | null }) {
-  const ts = typeof updatedAt === "string" && updatedAt ? new Date(updatedAt).toLocaleString() : null;
+function PinnedBadge({
+  updatedAt,
+  resolvedTheme = "dark",
+}: {
+  updatedAt?: string | null;
+  resolvedTheme?: "light" | "dark";
+}) {
+  const ts =
+    typeof updatedAt === "string" && updatedAt
+      ? new Date(updatedAt).toLocaleString()
+      : null;
+
+  const isDark = resolvedTheme === "dark";
 
   return (
     <span
@@ -39,9 +55,11 @@ function PinnedBadge({ updatedAt }: { updatedAt?: string | null }) {
         gap: 5,
         padding: "2px 7px",
         borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.16)",
-        background: "rgba(255,255,255,0.05)",
-        color: "#fff",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.16)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.05)" : "rgba(15,23,42,0.04)",
+        color: isDark ? "#fff" : "#0f172a",
         fontSize: 10,
         fontWeight: 900,
         whiteSpace: "nowrap",
@@ -65,9 +83,13 @@ function getSuiteMeta(
 
   const hasSuite = raw["hasPersistentTestSuite"] === true;
   const version =
-    typeof raw["testSuiteVersion"] === "number" ? (raw["testSuiteVersion"] as number) : null;
+    typeof raw["testSuiteVersion"] === "number"
+      ? (raw["testSuiteVersion"] as number)
+      : null;
   const totalCases =
-    typeof raw["testSuiteCount"] === "number" ? (raw["testSuiteCount"] as number) : null;
+    typeof raw["testSuiteCount"] === "number"
+      ? (raw["testSuiteCount"] as number)
+      : null;
 
   return { hasSuite, version, totalCases };
 }
@@ -75,9 +97,11 @@ function getSuiteMeta(
 function SuiteBadge({
   version,
   totalCases,
+  resolvedTheme = "dark",
 }: {
   version?: number | null;
   totalCases?: number | null;
+  resolvedTheme?: "light" | "dark";
 }) {
   const title =
     typeof version === "number" || typeof totalCases === "number"
@@ -85,6 +109,8 @@ function SuiteBadge({
           typeof totalCases === "number" ? ` • ${totalCases} cases` : ""
         }`
       : "Persistent test suite exists";
+
+  const isDark = resolvedTheme === "dark";
 
   return (
     <span
@@ -95,9 +121,11 @@ function SuiteBadge({
         gap: 5,
         padding: "2px 7px",
         borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.16)",
-        background: "rgba(255,255,255,0.05)",
-        color: "#fff",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.16)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.05)" : "rgba(15,23,42,0.04)",
+        color: isDark ? "#fff" : "#0f172a",
         fontSize: 10,
         fontWeight: 900,
         whiteSpace: "nowrap",
@@ -136,6 +164,10 @@ type Props = {
   onCancelRenameAction: () => void;
 
   onDeleteSessionAction: (sessionId: string) => void;
+
+  // M10 UI:
+  // Resolved by page shell and passed down to keep chrome consistent.
+  resolvedTheme?: "light" | "dark";
 };
 
 export default function SessionSidebar({
@@ -164,15 +196,23 @@ export default function SessionSidebar({
   onCancelRenameAction,
 
   onDeleteSessionAction,
+  resolvedTheme = "dark",
 }: Props) {
+  const isDark = resolvedTheme === "dark";
+
+  const sidebarText = isDark ? "#fff" : "#0f172a";
+  const subtleText = isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.68)";
+
   return (
     <aside
       style={{
-        width: sidebarWidth,
+        width: `${sidebarWidth}px`,
         transition: "width 180ms ease",
-        borderRight: "1px solid rgba(255,255,255,0.10)",
+        borderRight: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
         padding: sidebarCollapsed ? 10 : 12,
-        background: "rgba(0,0,0,0.35)",
+        background: isDark ? "rgba(0,0,0,0.35)" : "rgba(15,23,42,0.04)",
         overflow: "auto",
       }}
     >
@@ -184,7 +224,13 @@ export default function SessionSidebar({
           marginBottom: 10,
         }}
       >
-        {!sidebarCollapsed ? <div style={{ color: "#fff", fontWeight: 900, fontSize: 14 }}>History</div> : <div />}
+        {!sidebarCollapsed ? (
+          <div style={{ color: sidebarText, fontWeight: 900, fontSize: 14 }}>
+            History
+          </div>
+        ) : (
+          <div />
+        )}
 
         <button
           onClick={onNewChatAction}
@@ -192,12 +238,17 @@ export default function SessionSidebar({
           style={{
             padding: "8px 10px",
             borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.20)",
-            background: "rgba(255,255,255,0.06)",
-            color: "#fff",
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.20)"
+              : "1px solid rgba(15,23,42,0.16)",
+            background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+            color: sidebarText,
             fontWeight: 950,
             cursor: "pointer",
             width: sidebarCollapsed ? 44 : "auto",
+            boxShadow: isDark
+              ? "none"
+              : "0 4px 10px rgba(15,23,42,0.05)",
           }}
         >
           {sidebarCollapsed ? "＋" : "New"}
@@ -208,11 +259,13 @@ export default function SessionSidebar({
         {sessions.map((s) => {
           const active = s.id === activeSessionId;
           const title = s.title ?? "New chat";
-          const preview = s.lastMessage?.role === "user" ? s.lastMessage.content.slice(0, 80) : "Open to view";
+          const preview =
+            s.lastMessage?.role === "user"
+              ? s.lastMessage.content.slice(0, 80)
+              : "Open to view";
           const effectiveMode = (s.effectiveMode ?? s.mode) as Mode;
           const hasPinned = !!s.hasPinnedRequirement;
 
-          // M9 CHANGE: future-safe session metadata for persisted suite.
           const suiteMeta = getSuiteMeta(s);
           const hasSuite = suiteMeta.hasSuite;
 
@@ -225,13 +278,28 @@ export default function SessionSidebar({
                 style={{
                   width: "100%",
                   borderRadius: 14,
-                  border: active ? "1px solid rgba(255,255,255,0.28)" : "1px solid rgba(255,255,255,0.14)",
-                  background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.05)",
-                  color: "#fff",
+                  border: active
+                    ? isDark
+                      ? "1px solid rgba(255,255,255,0.28)"
+                      : "1px solid rgba(15,23,42,0.20)"
+                    : isDark
+                      ? "1px solid rgba(255,255,255,0.14)"
+                      : "1px solid rgba(15,23,42,0.10)",
+                  background: active
+                    ? isDark
+                      ? "rgba(255,255,255,0.12)"
+                      : "rgba(15,23,42,0.08)"
+                    : isDark
+                      ? "rgba(255,255,255,0.05)"
+                      : "rgba(255,255,255,0.72)",
+                  color: sidebarText,
                   cursor: "pointer",
                   padding: 9,
                   display: "grid",
                   placeItems: "center",
+                  boxShadow: isDark
+                    ? "none"
+                    : "0 4px 10px rgba(15,23,42,0.04)",
                 }}
               >
                 <div
@@ -239,8 +307,12 @@ export default function SessionSidebar({
                     width: 38,
                     height: 38,
                     borderRadius: 13,
-                    border: "1px solid rgba(255,255,255,0.16)",
-                    background: "rgba(255,255,255,0.07)",
+                    border: isDark
+                      ? "1px solid rgba(255,255,255,0.16)"
+                      : "1px solid rgba(15,23,42,0.12)",
+                    background: isDark
+                      ? "rgba(255,255,255,0.07)"
+                      : "rgba(15,23,42,0.04)",
                     display: "grid",
                     placeItems: "center",
                     fontWeight: 950,
@@ -273,9 +345,24 @@ export default function SessionSidebar({
               key={s.id}
               style={{
                 borderRadius: 12,
-                border: active ? "1px solid rgba(255,255,255,0.22)" : "1px solid rgba(255,255,255,0.14)",
-                background: active ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.05)",
+                border: active
+                  ? isDark
+                    ? "1px solid rgba(255,255,255,0.22)"
+                    : "1px solid rgba(15,23,42,0.16)"
+                  : isDark
+                    ? "1px solid rgba(255,255,255,0.14)"
+                    : "1px solid rgba(15,23,42,0.10)",
+                background: active
+                  ? isDark
+                    ? "rgba(255,255,255,0.10)"
+                    : "rgba(15,23,42,0.07)"
+                  : isDark
+                    ? "rgba(255,255,255,0.05)"
+                    : "rgba(255,255,255,0.78)",
                 overflow: "hidden",
+                boxShadow: isDark
+                  ? "none"
+                  : "0 6px 14px rgba(15,23,42,0.04)",
               }}
             >
               <button
@@ -286,7 +373,7 @@ export default function SessionSidebar({
                   padding: "10px 10px 9px",
                   border: "none",
                   background: "transparent",
-                  color: "#fff",
+                  color: sidebarText,
                   cursor: "pointer",
                 }}
                 title={s.id}
@@ -322,6 +409,7 @@ export default function SessionSidebar({
                     marginTop: 5,
                     lineHeight: 1.3,
                     minHeight: 28,
+                    color: sidebarText,
                   }}
                 >
                   {preview}
@@ -337,17 +425,23 @@ export default function SessionSidebar({
                       flexWrap: "wrap",
                     }}
                   >
-                    {hasPinned ? <PinnedBadge updatedAt={s.artifactUpdatedAt ?? null} /> : null}
+                    {hasPinned ? (
+                      <PinnedBadge
+                        updatedAt={s.artifactUpdatedAt ?? null}
+                        resolvedTheme={resolvedTheme}
+                      />
+                    ) : null}
 
                     {hasSuite ? (
                       <SuiteBadge
                         version={suiteMeta.version}
                         totalCases={suiteMeta.totalCases}
+                        resolvedTheme={resolvedTheme}
                       />
                     ) : null}
 
                     {s.artifactUpdatedAt ? (
-                      <span style={{ fontSize: 10, opacity: 0.68 }}>
+                      <span style={{ fontSize: 10, opacity: 0.68, color: sidebarText }}>
                         {new Date(s.artifactUpdatedAt).toLocaleString()}
                       </span>
                     ) : null}
@@ -360,10 +454,12 @@ export default function SessionSidebar({
                   display: "flex",
                   gap: 6,
                   padding: "7px 10px",
-                  borderTop: "1px solid rgba(255,255,255,0.08)",
+                  borderTop: isDark
+                    ? "1px solid rgba(255,255,255,0.08)"
+                    : "1px solid rgba(15,23,42,0.08)",
                   alignItems: "center",
                   flexWrap: "wrap",
-                  background: "rgba(0,0,0,0.10)",
+                  background: isDark ? "rgba(0,0,0,0.10)" : "rgba(15,23,42,0.03)",
                 }}
               >
                 {renamingId === s.id ? (
@@ -377,9 +473,11 @@ export default function SessionSidebar({
                         minWidth: 120,
                         padding: "6px 8px",
                         borderRadius: 10,
-                        border: "1px solid rgba(255,255,255,0.18)",
-                        background: "rgba(255,255,255,0.06)",
-                        color: "#fff",
+                        border: isDark
+                          ? "1px solid rgba(255,255,255,0.18)"
+                          : "1px solid rgba(15,23,42,0.16)",
+                        background: isDark ? "rgba(255,255,255,0.06)" : "#fff",
+                        color: sidebarText,
                         outline: "none",
                         fontSize: 12,
                       }}
@@ -395,9 +493,11 @@ export default function SessionSidebar({
                       style={{
                         padding: "6px 10px",
                         borderRadius: 10,
-                        border: "1px solid rgba(255,255,255,0.20)",
-                        background: "rgba(255,255,255,0.12)",
-                        color: "#fff",
+                        border: isDark
+                          ? "1px solid rgba(255,255,255,0.20)"
+                          : "1px solid rgba(15,23,42,0.16)",
+                        background: isDark ? "rgba(255,255,255,0.12)" : "#fff",
+                        color: sidebarText,
                         fontWeight: 900,
                         cursor: renameSaving ? "not-allowed" : "pointer",
                         opacity: renameSaving ? 0.6 : 1,
@@ -417,9 +517,11 @@ export default function SessionSidebar({
                       style={{
                         padding: "6px 10px",
                         borderRadius: 10,
-                        border: "1px solid rgba(255,255,255,0.18)",
-                        background: "rgba(255,255,255,0.05)",
-                        color: "#fff",
+                        border: isDark
+                          ? "1px solid rgba(255,255,255,0.18)"
+                          : "1px solid rgba(15,23,42,0.14)",
+                        background: isDark ? "rgba(255,255,255,0.05)" : "#fff",
+                        color: sidebarText,
                         fontWeight: 900,
                         cursor: "pointer",
                         fontSize: 12,
@@ -437,9 +539,11 @@ export default function SessionSidebar({
                       style={{
                         padding: "6px 10px",
                         borderRadius: 10,
-                        border: "1px solid rgba(255,255,255,0.18)",
-                        background: "rgba(255,255,255,0.05)",
-                        color: "#fff",
+                        border: isDark
+                          ? "1px solid rgba(255,255,255,0.18)"
+                          : "1px solid rgba(15,23,42,0.14)",
+                        background: isDark ? "rgba(255,255,255,0.05)" : "#fff",
+                        color: sidebarText,
                         fontWeight: 900,
                         cursor: deleteBusy ? "not-allowed" : "pointer",
                         opacity: deleteBusy ? 0.6 : 1,
@@ -457,7 +561,7 @@ export default function SessionSidebar({
         })}
 
         {sessions.length === 0 && !sidebarCollapsed && (
-          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, lineHeight: 1.45 }}>
+          <div style={{ color: subtleText, fontSize: 12, lineHeight: 1.45 }}>
             No sessions yet. Send your first message to create one.
           </div>
         )}
@@ -470,16 +574,24 @@ export default function SessionSidebar({
             style={{
               padding: sidebarCollapsed ? "10px 10px" : "10px 12px",
               borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.16)",
-              background: "rgba(255,255,255,0.05)",
-              color: "#fff",
+              border: isDark
+                ? "1px solid rgba(255,255,255,0.16)"
+                : "1px solid rgba(15,23,42,0.14)",
+              background: isDark ? "rgba(255,255,255,0.05)" : "#fff",
+              color: sidebarText,
               fontWeight: 950,
               cursor: sessionsLoading ? "not-allowed" : "pointer",
               opacity: sessionsLoading ? 0.6 : 1,
               width: sidebarCollapsed ? "100%" : "auto",
             }}
           >
-            {sessionsLoading ? (sidebarCollapsed ? "…" : "Loading…") : sidebarCollapsed ? "↓" : "Load more"}
+            {sessionsLoading
+              ? sidebarCollapsed
+                ? "…"
+                : "Loading…"
+              : sidebarCollapsed
+                ? "↓"
+                : "Load more"}
           </button>
         )}
       </div>

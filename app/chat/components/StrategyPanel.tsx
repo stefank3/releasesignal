@@ -16,13 +16,27 @@
 // - removes duplicated Refined Requirement block from the right panel
 // - keeps the center-column requirement as the single source of truth
 // - keeps the panel focused on refinement inputs + preview only
+//
+// CHANGE (M10 UI Pass):
+// - add theme-aware rendering for light / dark mode
+// - remove dark-only text / field styling assumptions
 
 "use client";
 
 import React, { useMemo, useState } from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+type ResolvedTheme = "light" | "dark";
+
+function SectionTitle({
+  children,
+  resolvedTheme = "dark",
+}: {
+  children: React.ReactNode;
+  resolvedTheme?: ResolvedTheme;
+}) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div
       style={{
@@ -31,6 +45,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
         opacity: 0.9,
         marginBottom: 8,
         letterSpacing: 0.2,
+        color: isDark ? "#fff" : "#0f172a",
       }}
     >
       {children}
@@ -38,7 +53,15 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Pill({ children }: { children: React.ReactNode }) {
+function Pill({
+  children,
+  resolvedTheme = "dark",
+}: {
+  children: React.ReactNode;
+  resolvedTheme?: ResolvedTheme;
+}) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <span
       style={{
@@ -46,9 +69,11 @@ function Pill({ children }: { children: React.ReactNode }) {
         fontWeight: 900,
         padding: "4px 8px",
         borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.18)",
-        background: "rgba(255,255,255,0.06)",
-        color: "#fff",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.18)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.04)",
+        color: isDark ? "#fff" : "#0f172a",
         whiteSpace: "nowrap",
       }}
     >
@@ -62,12 +87,16 @@ function SmallButton({
   onClick,
   disabled,
   title,
+  resolvedTheme = "dark",
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
   title?: string;
+  resolvedTheme?: ResolvedTheme;
 }) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <button
       onClick={onClick}
@@ -76,12 +105,27 @@ function SmallButton({
       style={{
         padding: "7px 10px",
         borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.18)",
-        background: disabled ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.10)",
-        color: disabled ? "rgba(255,255,255,0.55)" : "#fff",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.18)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: disabled
+          ? isDark
+            ? "rgba(255,255,255,0.05)"
+            : "rgba(15,23,42,0.03)"
+          : isDark
+            ? "rgba(255,255,255,0.10)"
+            : "#ffffff",
+        color: disabled
+          ? isDark
+            ? "rgba(255,255,255,0.55)"
+            : "rgba(15,23,42,0.45)"
+          : isDark
+            ? "#fff"
+            : "#0f172a",
         fontWeight: 900,
         cursor: disabled ? "not-allowed" : "pointer",
         whiteSpace: "nowrap",
+        boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
       }}
     >
       {children}
@@ -95,16 +139,29 @@ function Field({
   onChange,
   placeholder,
   rows = 3,
+  resolvedTheme = "dark",
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
   rows?: number;
+  resolvedTheme?: ResolvedTheme;
 }) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div style={{ display: "grid", gap: 5 }}>
-      <label style={{ fontSize: 11, fontWeight: 950, opacity: 0.8 }}>{label}</label>
+      <label
+        style={{
+          fontSize: 11,
+          fontWeight: 950,
+          opacity: 0.8,
+          color: isDark ? "#fff" : "#0f172a",
+        }}
+      >
+        {label}
+      </label>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -115,12 +172,15 @@ function Field({
           resize: "vertical",
           padding: "9px 10px",
           borderRadius: 12,
-          border: "1px solid rgba(255,255,255,0.14)",
-          background: "rgba(255,255,255,0.04)",
-          color: "#fff",
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.14)"
+            : "1px solid rgba(15,23,42,0.14)",
+          background: isDark ? "rgba(255,255,255,0.04)" : "#ffffff",
+          color: isDark ? "#fff" : "#0f172a",
           outline: "none",
           fontSize: 12,
           lineHeight: 1.4,
+          boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.04)",
         }}
       />
     </div>
@@ -130,17 +190,33 @@ function Field({
 function Surface({
   children,
   dashed,
+  resolvedTheme = "dark",
 }: {
   children: React.ReactNode;
   dashed?: boolean;
+  resolvedTheme?: ResolvedTheme;
 }) {
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div
       style={{
-        border: dashed ? "1px dashed rgba(255,255,255,0.16)" : "1px solid rgba(255,255,255,0.10)",
+        border: dashed
+          ? isDark
+            ? "1px dashed rgba(255,255,255,0.16)"
+            : "1px dashed rgba(15,23,42,0.16)"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid rgba(15,23,42,0.10)",
         borderRadius: 14,
         padding: 12,
-        background: dashed ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.04)",
+        background: dashed
+          ? isDark
+            ? "rgba(0,0,0,0.16)"
+            : "rgba(15,23,42,0.03)"
+          : isDark
+            ? "rgba(255,255,255,0.04)"
+            : "rgba(255,255,255,0.72)",
       }}
     >
       {children}
@@ -164,7 +240,13 @@ function focusChatInputBestEffort() {
   }
 }
 
-export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) {
+export default function StrategyPanel({
+  chat,
+  resolvedTheme = "dark",
+}: {
+  chat: UseChatSessionReturn;
+  resolvedTheme?: ResolvedTheme;
+}) {
   const [objective, setObjective] = useState("");
   const [primaryRisk, setPrimaryRisk] = useState("");
   const [integrations, setIntegrations] = useState("");
@@ -185,6 +267,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
 
   const isCoachSession = chat.mode === "coach" && chat.activeSessionMode === "coach";
   const hasPinned = !!chat.sessionArtifact?.refinedRequirement;
+  const isDark = resolvedTheme === "dark";
 
   const hasAnyInput = Boolean(
     objective.trim() ||
@@ -200,26 +283,54 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
   return (
     <div
       style={{
-        color: "#fff",
+        color: isDark ? "#fff" : "#0f172a",
         display: "grid",
         gap: 12,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
         <div style={{ display: "grid", gap: 3 }}>
-          <div style={{ fontWeight: 950 }}>Strategy</div>
-          <div style={{ fontSize: 11, opacity: 0.7, lineHeight: 1.4 }}>
-            Refine the requirement as the scope evolves. This updates the pinned Refined Requirement used for test
-            generation.
+          <div style={{ fontWeight: 950, color: isDark ? "#fff" : "#0f172a" }}>
+            Strategy
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              opacity: 0.7,
+              lineHeight: 1.4,
+              color: isDark ? "#fff" : "#0f172a",
+            }}
+          >
+            Refine the requirement as the scope evolves. This updates the pinned
+            Refined Requirement used for test generation.
           </div>
         </div>
-        <Pill>{hasPinned ? "Pinned ✓" : "Not pinned"}</Pill>
+        <Pill resolvedTheme={resolvedTheme}>
+          {hasPinned ? "Pinned ✓" : "Not pinned"}
+        </Pill>
       </div>
 
-      <Surface>
-        <SectionTitle>Refine requirement</SectionTitle>
+      <Surface resolvedTheme={resolvedTheme}>
+        <SectionTitle resolvedTheme={resolvedTheme}>
+          Refine requirement
+        </SectionTitle>
 
-        <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45, marginBottom: 10 }}>
+        <div
+          style={{
+            fontSize: 12,
+            opacity: 0.78,
+            lineHeight: 1.45,
+            marginBottom: 10,
+            color: isDark ? "#fff" : "#0f172a",
+          }}
+        >
           Fill the fields below, then paste them into the main input and send.
         </div>
 
@@ -230,6 +341,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             onChange={setObjective}
             placeholder="What is the main business or QA objective?"
             rows={2}
+            resolvedTheme={resolvedTheme}
           />
 
           <Field
@@ -238,6 +350,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             onChange={setPrimaryRisk}
             placeholder="What failure or uncertainty matters most?"
             rows={2}
+            resolvedTheme={resolvedTheme}
           />
 
           <Field
@@ -246,6 +359,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             onChange={setIntegrations}
             placeholder="Auth0, email service, API gateway, payment provider..."
             rows={2}
+            resolvedTheme={resolvedTheme}
           />
 
           <Field
@@ -254,6 +368,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             onChange={setConstraints}
             placeholder="Environment limits, timeline, non-goals, technical restrictions..."
             rows={2}
+            resolvedTheme={resolvedTheme}
           />
 
           <Field
@@ -262,6 +377,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             onChange={setScope}
             placeholder="In: login, MFA challenge / Out: admin portal, audit exports"
             rows={2}
+            resolvedTheme={resolvedTheme}
           />
 
           <Field
@@ -270,6 +386,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             onChange={setSuccessCriteria}
             placeholder="What must be true for this to be considered successful?"
             rows={2}
+            resolvedTheme={resolvedTheme}
           />
         </div>
 
@@ -281,6 +398,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             }}
             disabled={!hasAnyInput}
             title="Paste structured answers into the main chat input"
+            resolvedTheme={resolvedTheme}
           >
             Paste into input
           </SmallButton>
@@ -296,14 +414,25 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             }}
             disabled={!hasAnyInput}
             title="Clear all answers"
+            resolvedTheme={resolvedTheme}
           >
             Clear form
           </SmallButton>
         </div>
       </Surface>
 
-      <Surface dashed>
-        <div style={{ fontSize: 11, fontWeight: 950, opacity: 0.82, marginBottom: 6 }}>Preview</div>
+      <Surface dashed resolvedTheme={resolvedTheme}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 950,
+            opacity: 0.82,
+            marginBottom: 6,
+            color: isDark ? "#fff" : "#0f172a",
+          }}
+        >
+          Preview
+        </div>
         <div
           style={{
             fontSize: 11,
@@ -312,6 +441,7 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             minHeight: 84,
+            color: isDark ? "#fff" : "#0f172a",
           }}
         >
           {generatedStructuredText}
@@ -319,12 +449,28 @@ export default function StrategyPanel({ chat }: { chat: UseChatSessionReturn }) 
       </Surface>
 
       {hasPinned ? (
-        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.4 }}>
-          The latest Refined Requirement is shown in the main conversation area and will be reused by Test Design.
+        <div
+          style={{
+            fontSize: 11,
+            opacity: 0.68,
+            lineHeight: 1.4,
+            color: isDark ? "#fff" : "#0f172a",
+          }}
+        >
+          The latest Refined Requirement is shown in the main conversation area
+          and will be reused by Test Design.
         </div>
       ) : (
-        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.4 }}>
-          Nothing is pinned yet. Fill the form, paste it into the input, and send to create the Refined Requirement.
+        <div
+          style={{
+            fontSize: 11,
+            opacity: 0.68,
+            lineHeight: 1.4,
+            color: isDark ? "#fff" : "#0f172a",
+          }}
+        >
+          Nothing is pinned yet. Fill the form, paste it into the input, and send
+          to create the Refined Requirement.
         </div>
       )}
     </div>
