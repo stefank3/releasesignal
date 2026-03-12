@@ -1,6 +1,6 @@
 // lib/chat/modes.ts
 import { NextResponse } from "next/server";
-import type { ClientMode, RateMeta } from "./types";
+import type { ClientMode, RateMeta } from "./chatTypes";
 import { responseHeaders } from "./http";
 
 export function normalizeClientMode(m: unknown): ClientMode {

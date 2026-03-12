@@ -12,10 +12,8 @@ import { type RateMeta } from "@/lib/chat/chatTypes";
 import {
   type SessionArtifact,
   type TestSuiteArtifact,
-  isGuidedClarificationAnswer,
-  parseGuidedAnswerToRefinedRequirement,
-  mergeArtifact,
   getTestSuite,
+  isGuidedClarificationAnswer,
 } from "@/lib/chat/artifact";
 
 import { loadOrCreateSession } from "@/lib/chat/sessionStore";
@@ -27,19 +25,13 @@ import {
 
 import { hasMeaningfulRefinedRequirement } from "@/lib/server/chat/coachFormatting";
 
-import { withUpdatedTestSuiteArtifact } from "@/lib/server/chat/testSuiteService";
-
-import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { buildPromptPayload } from "@/lib/server/chat/promptBuilder";
-import { parseReviewResponse } from "@/lib/server/chat/modelResponseParser";
 import { tryReplayExistingAssistant } from "@/lib/server/chat/replayService";
 
 import {
   buildAuthExpiredResponse,
   buildChatSuccessResponse,
   buildInsufficientCreditsBillingResponse,
-  buildReviewParseFailureResponse,
-  buildReviewSuccessResponse,
   buildServerErrorResponse,
 } from "@/lib/server/chat/responseBuilder";
 
@@ -53,8 +45,12 @@ import {
 
 import { executeChatCompletion } from "@/lib/server/chat/openaiService";
 import { getOpenAITraceFromError } from "@/lib/openai";
-import { runCoachFlow } from "@/lib/server/chat/coachFlowService";
-import { runCasesFlow } from "@/lib/server/chat/casesFlowService";
+import {
+  applyGuidedArtifactPatch,
+  persistGeneratedSuiteArtifact,
+} from "@/lib/server/chat/artifactUpdateService";
+import { runPostModelFlow } from "@/lib/server/chat/postModelFlowService";
+import { buildReviewFlowResponse } from "@/lib/server/chat/reviewFlowService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -300,24 +296,21 @@ export async function POST(req: Request) {
 
     /*
     ---------------------------------------------------------
-    ARTIFACT PATCH (GUIDED)
+    GUIDED ARTIFACT PATCH
     ---------------------------------------------------------
+    SURGICAL CHANGE (M10 Pass 11):
+    Guided-answer artifact patching now lives in artifactUpdateService.ts.
     */
-    if (guidedAnswer) {
-      const patch = parseGuidedAnswerToRefinedRequirement(message);
+    const guidedArtifactResult = await applyGuidedArtifactPatch({
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      message,
+      guidedAnswer,
+    });
 
-      if (patch) {
-        const nextArtifact = mergeArtifact(sessionArtifact, patch);
-
-        const saved = await saveSessionArtifact({
-          sessionId,
-          artifact: nextArtifact,
-        });
-
-        sessionArtifact = saved.artifact;
-        artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
-      }
-    }
+    sessionArtifact = guidedArtifactResult.sessionArtifact;
+    artifactUpdatedAtIso = guidedArtifactResult.artifactUpdatedAtIso;
 
     /*
     ---------------------------------------------------------
@@ -367,61 +360,38 @@ export async function POST(req: Request) {
 
     /*
     ---------------------------------------------------------
-    MODEL PARSING / FLOWS
+    POST-MODEL FLOW ORCHESTRATION
     ---------------------------------------------------------
+    SURGICAL CHANGE (M10 Pass 11):
+    route.ts no longer coordinates review / coach / cases branches inline.
     */
-    let coachParsed: CoachResult | null = null;
-    let replyTextForUser: string | null = null;
+    const postModel = await runPostModelFlow({
+      rawReply,
+      executionMode,
+      wantCases,
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      message,
+      guidedAnswer,
+      weakInput,
+      explicitRegenerationRequest,
+    });
 
-    let reviewObj: ReviewResult | null = null;
-    let reviewStoredJson: string | null = null;
-    let reviewRepaired = false;
+    let coachParsed: CoachResult | null = postModel.coachParsed;
+    let replyTextForUser: string | null = postModel.replyTextForUser;
 
-    let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
-    let testSuiteAddedCount = 0;
+    let reviewObj: ReviewResult | null = postModel.reviewObj;
+    let reviewRepaired = postModel.reviewRepaired;
 
-    if (executionMode === "review") {
-      const parsedReview = await parseReviewResponse(rawReply);
-      reviewObj = parsedReview.reviewObj;
-      reviewStoredJson = parsedReview.reviewStoredJson;
-      reviewRepaired = parsedReview.repaired;
-    }
+    let assistantContentToStore = postModel.assistantContentToStore;
 
-    if (executionMode === "coach" && !wantCases) {
-      const coachFlow = await runCoachFlow({
-        rawReply,
-        sessionId,
-        sessionArtifact,
-        artifactUpdatedAtIso,
-        message,
-        guidedAnswer,
-        weakInput,
-        explicitRegenerationRequest,
-      });
+    let nextTestSuiteArtifact: TestSuiteArtifact | null =
+      postModel.nextTestSuiteArtifact;
+    const testSuiteAddedCount = postModel.testSuiteAddedCount;
 
-      coachParsed = coachFlow.coachParsed;
-      replyTextForUser = coachFlow.replyTextForUser;
-      sessionArtifact = coachFlow.sessionArtifact;
-      artifactUpdatedAtIso = coachFlow.artifactUpdatedAtIso;
-    }
-
-    if (wantCases) {
-      const casesFlow = await runCasesFlow({
-        rawReply,
-        sessionArtifact,
-        explicitRegenerationRequest,
-      });
-
-      replyTextForUser = casesFlow.replyTextForUser;
-      nextTestSuiteArtifact = casesFlow.nextTestSuiteArtifact;
-      testSuiteAddedCount = casesFlow.testSuiteAddedCount;
-      coachParsed = null;
-    }
-
-    const assistantContentToStore =
-      executionMode === "review"
-        ? reviewStoredJson ?? rawReply
-        : replyTextForUser ?? "No reply returned";
+    sessionArtifact = postModel.sessionArtifact;
+    artifactUpdatedAtIso = postModel.artifactUpdatedAtIso;
 
     /*
     ---------------------------------------------------------
@@ -467,23 +437,20 @@ export async function POST(req: Request) {
 
     /*
     ---------------------------------------------------------
-    SUITE PERSIST
+    SUITE ARTIFACT PERSIST
     ---------------------------------------------------------
+    SURGICAL CHANGE (M10 Pass 11):
+    Cases suite persistence now lives in artifactUpdateService.ts.
     */
-    if (wantCases && nextTestSuiteArtifact) {
-      const nextArtifact = withUpdatedTestSuiteArtifact(
-        sessionArtifact,
-        nextTestSuiteArtifact
-      );
+    const suitePersistResult = await persistGeneratedSuiteArtifact({
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      nextTestSuiteArtifact,
+    });
 
-      const saved = await saveSessionArtifact({
-        sessionId,
-        artifact: nextArtifact,
-      });
-
-      sessionArtifact = saved.artifact;
-      artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
-    }
+    sessionArtifact = suitePersistResult.sessionArtifact;
+    artifactUpdatedAtIso = suitePersistResult.artifactUpdatedAtIso;
 
     /*
     ---------------------------------------------------------
@@ -498,31 +465,17 @@ export async function POST(req: Request) {
         latencyMs: Date.now() - startTime,
       });
 
-      if (!reviewObj) {
-        return buildReviewParseFailureResponse({
-          requestId,
-          clientMode,
-          rawReply,
-          sessionId,
-          creditsCharged,
-          creditsRemaining,
-          usage,
-          rateMeta,
-          artifact: sessionArtifact,
-          artifactUpdatedAt: artifactUpdatedAtIso,
-        });
-      }
-
-      return buildReviewSuccessResponse({
+      return buildReviewFlowResponse({
         requestId,
         clientMode,
-        review: reviewObj,
+        rawReply,
         sessionId,
         creditsCharged,
         creditsRemaining,
         usage,
         rateMeta,
-        repaired: reviewRepaired || undefined,
+        reviewObj,
+        reviewRepaired,
         artifact: sessionArtifact,
         artifactUpdatedAt: artifactUpdatedAtIso,
       });

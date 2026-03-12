@@ -6,7 +6,7 @@
   "dev": "next dev",
   "build": "prisma migrate deploy && next build",
   "start": "next start",
-  "lint": "eslint",
+  "lint": "eslint .",
   "postinstall": "prisma generate"
 },
   "dependencies": {
@@ -36,8 +36,5 @@
   },
    "engines": {
       "node": "24.x"
-  }
-
-
-  
+  } 
 }
