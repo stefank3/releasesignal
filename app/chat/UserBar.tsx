@@ -1,5 +1,16 @@
 "use client";
 
+// app/UserBar.tsx
+//
+// Purpose:
+// Lightweight session/user shell bar for authenticated state,
+// admin entry points, and logout.
+//
+// M11 CHANGE:
+// Add a single Admin entry point for internal tools.
+// We keep the bar clean by linking to /admin rather than exposing
+// every internal page directly in the main shell.
+
 import { useEffect, useState } from "react";
 
 type MeResponse =
@@ -14,7 +25,9 @@ export default function UserBar() {
 
     (async () => {
       try {
-        // WHY: /api/me must reflect the *current* Auth0 session immediately (no stale cache).
+        // WHY:
+        // /api/me must reflect the current Auth0 session immediately.
+        // We do not want stale cached user/admin state in the shell.
         const res = await fetch("/api/me", {
           cache: "no-store",
           signal: controller.signal,
@@ -22,7 +35,7 @@ export default function UserBar() {
 
         // WHY:
         // If the request fails (401/500/etc.), do NOT remove the entire user bar.
-        // We degrade into a recoverable unauthenticated shell instead.
+        // Degrade into a recoverable unauthenticated shell instead.
         if (!res.ok) {
           setMe({ authenticated: false });
           return;
@@ -33,7 +46,7 @@ export default function UserBar() {
       } catch {
         // WHY:
         // Network errors should not break the shell UI.
-        // Abort is also caught here during unmount.
+        // Abort during unmount also lands here.
         setMe({ authenticated: false });
       }
     })();
@@ -74,12 +87,17 @@ export default function UserBar() {
       <span className="opacity-80">{me.email}</span>
 
       {me.isAdmin && (
-        <a
-          href="/admin/metrics"
-          className="rounded-lg border px-3 py-2 hover:bg-white/10"
-        >
-          Metrics
-        </a>
+        <>
+          {/* M11:
+              Single admin entry point for internal tools such as
+              Metrics and Telemetry. */}
+          <a
+            href="/admin"
+            className="rounded-lg border px-3 py-2 hover:bg-white/10"
+          >
+            Admin
+          </a>
+        </>
       )}
 
       <a
