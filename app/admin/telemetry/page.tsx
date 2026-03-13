@@ -90,6 +90,18 @@ export default async function AdminTelemetryPage() {
         color: "inherit",
       }}
     >
+    <a
+        href="/admin"
+        style={{
+            display: "inline-block",
+            marginBottom: 16,
+            opacity: 0.8,
+            textDecoration: "none",
+            color: "inherit",
+        }}
+        >
+        ← Back to Admin
+      </a>
       {/* Page header */}
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 30, fontWeight: 800 }}>

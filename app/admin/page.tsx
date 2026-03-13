@@ -29,6 +29,16 @@ function cardStyle(): React.CSSProperties {
   };
 }
 
+function backLinkStyle(): React.CSSProperties {
+  return {
+    display: "inline-block",
+    marginBottom: 16,
+    opacity: 0.8,
+    textDecoration: "none",
+    color: "inherit",
+  };
+}
+
 export default function AdminHomePage() {
   return (
     <main
@@ -38,6 +48,12 @@ export default function AdminHomePage() {
         margin: "0 auto",
       }}
     >
+      {/* M11 closeout:
+          Simple back path from admin tools into the main app shell. */}
+      <Link href="/chat" style={backLinkStyle()}>
+        ← Back to App
+      </Link>
+
       <header style={{ marginBottom: 28 }}>
         <h1 style={{ fontSize: 30, fontWeight: 800, margin: 0 }}>
           Admin Console

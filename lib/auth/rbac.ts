@@ -1,4 +1,3 @@
-// lib/auth/rbac.ts
 /**
  * RBAC helpers (Auth0 access token roles claim).
  * We read roles ONLY from the Access Token because in Auth0 Next.js SDK v4
@@ -28,17 +27,42 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-/** Read roles from Access Token custom claim. */
+/**
+ * Read roles from Access Token custom claim.
+ *
+ * M11 closeout:
+ * If the access token is expired or unavailable, degrade gracefully and
+ * return an empty role list instead of throwing. This keeps shell UI such
+ * as /api/me stable even when re-authentication is needed.
+ */
 export async function getRolesFromAccessToken(): Promise<string[]> {
-  const tokenResult = await auth0.getAccessToken();
-  const token = tokenResult?.token;
+  try {
+    const tokenResult = await auth0.getAccessToken();
+    const token = tokenResult?.token;
 
-  if (!token) return [];
+    if (!token) return [];
 
-  const claims = decodeJwtPayload(token);
-  const rolesValue = claims?.[RBAC.ROLES_CLAIM];
+    const claims = decodeJwtPayload(token);
+    const rolesValue = claims?.[RBAC.ROLES_CLAIM];
 
-  return Array.isArray(rolesValue) ? (rolesValue as string[]) : [];
+    return Array.isArray(rolesValue) ? (rolesValue as string[]) : [];
+  } catch (error) {
+    // Graceful degradation for expired/missing refresh-token situations.
+    // We do not throw here because role checks should not crash shell-level UI.
+    const message = error instanceof Error ? error.message : "";
+
+    if (
+      /access token has expired|refresh token was not provided|missing_refresh_token/i.test(
+        message
+      )
+    ) {
+      return [];
+    }
+
+    // For any other unexpected error, also degrade safely.
+    // RBAC checks should remain fail-closed rather than crash the UI.
+    return [];
+  }
 }
 
 /** Convenience helper: admin check. */
