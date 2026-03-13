@@ -4,19 +4,15 @@
 //
 // Purpose:
 // Provide read access and basic aggregation over telemetry_event_logs.
-// This is used for internal visibility (admin pages, debugging tools,
-// operational monitoring).
+// This is used for internal visibility, admin tooling, and future
+// telemetry dashboards.
 //
 // IMPORTANT:
-// This file does NOT emit telemetry.
-// It only reads persisted telemetry events.
-//
-// Queries provided:
-//
-// - fetchRecentTelemetryEvents()
-// - fetchEventCountsByType()
-// - fetchWorkflowStageStats()
-// - fetchTokenUsageStats()
+// - this file does NOT emit telemetry
+// - this file only reads persisted telemetry events
+// - keep query shapes small and predictable for the first M11 pass
+
+import "server-only";
 
 import { prisma } from "@/lib/prisma";
 
@@ -26,27 +22,40 @@ Types
 ---------------------------------------------------------
 */
 
+// Lightweight recent-event row used by future internal telemetry views.
 export type TelemetryEventRow = {
   id: string;
+  createdAt: Date;
   eventType: string;
   workflowStage: string | null;
   status: string | null;
   sessionId: string | null;
-  createdAt: Date;
+  auth0Sub: string | null;
+  organizationId: string | null;
+  durationMs: number | null;
+  tokenInput: number | null;
+  tokenOutput: number | null;
+  tokenTotal: number | null;
+  artifactType: string | null;
+  artifactVersion: number | null;
 };
 
-export type EventCount = {
+// Event count aggregate by event type.
+export type TelemetryEventCount = {
   eventType: string;
   count: number;
 };
 
-export type WorkflowStageStats = {
+// Workflow-stage aggregate for internal KPI visibility.
+export type TelemetryWorkflowStageStats = {
   workflowStage: string | null;
   events: number;
   avgDurationMs: number | null;
+  totalTokens: number;
 };
 
-export type TokenUsageStats = {
+// Token usage summary across the stored telemetry dataset.
+export type TelemetryTokenUsageStats = {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalTokens: number;
@@ -54,23 +63,37 @@ export type TokenUsageStats = {
 
 /*
 ---------------------------------------------------------
-Fetch Recent Telemetry Events
+Recent Events
 ---------------------------------------------------------
 */
 
-export async function fetchRecentTelemetryEvents(limit = 50): Promise<TelemetryEventRow[]> {
+export async function fetchRecentTelemetryEvents(
+  limit = 50
+): Promise<TelemetryEventRow[]> {
+  // Keep bounds healthy so future UI usage cannot accidentally request
+  // an excessive number of rows in the first implementation pass.
+  const safeLimit = Math.max(1, Math.min(limit, 200));
+
   const rows = await prisma.telemetryEventLog.findMany({
     orderBy: {
       createdAt: "desc",
     },
-    take: limit,
+    take: safeLimit,
     select: {
       id: true,
+      createdAt: true,
       eventType: true,
       workflowStage: true,
       status: true,
       sessionId: true,
-      createdAt: true,
+      auth0Sub: true,
+      organizationId: true,
+      durationMs: true,
+      tokenInput: true,
+      tokenOutput: true,
+      tokenTotal: true,
+      artifactType: true,
+      artifactVersion: true,
     },
   });
 
@@ -79,56 +102,70 @@ export async function fetchRecentTelemetryEvents(limit = 50): Promise<TelemetryE
 
 /*
 ---------------------------------------------------------
-Event Counts By Type
+Counts By Event Type
 ---------------------------------------------------------
 */
 
-export async function fetchEventCountsByType(): Promise<EventCount[]> {
+export async function fetchTelemetryEventCounts(): Promise<
+  TelemetryEventCount[]
+> {
   const grouped = await prisma.telemetryEventLog.groupBy({
     by: ["eventType"],
     _count: {
       eventType: true,
     },
+    orderBy: {
+      eventType: "asc",
+    },
   });
 
-  return grouped.map((g) => ({
-    eventType: g.eventType,
-    count: g._count.eventType,
+  return grouped.map((row) => ({
+    eventType: row.eventType,
+    count: row._count.eventType,
   }));
 }
 
 /*
 ---------------------------------------------------------
-Workflow Stage Statistics
+Workflow Stage Stats
 ---------------------------------------------------------
 */
 
-export async function fetchWorkflowStageStats(): Promise<WorkflowStageStats[]> {
+export async function fetchTelemetryWorkflowStageStats(): Promise<
+  TelemetryWorkflowStageStats[]
+> {
   const grouped = await prisma.telemetryEventLog.groupBy({
     by: ["workflowStage"],
     _count: {
-      workflowStage: true,
+      _all: true,
     },
     _avg: {
       durationMs: true,
     },
+    _sum: {
+      tokenTotal: true,
+    },
+    orderBy: {
+      workflowStage: "asc",
+    },
   });
 
-  return grouped.map((g) => ({
-    workflowStage: g.workflowStage,
-    events: g._count.workflowStage,
-    avgDurationMs: g._avg.durationMs,
+  return grouped.map((row) => ({
+    workflowStage: row.workflowStage,
+    events: row._count._all,
+    avgDurationMs: row._avg.durationMs ?? null,
+    totalTokens: row._sum.tokenTotal ?? 0,
   }));
 }
 
 /*
 ---------------------------------------------------------
-Token Usage Statistics
+Token Usage Summary
 ---------------------------------------------------------
 */
 
-export async function fetchTokenUsageStats(): Promise<TokenUsageStats> {
-  const agg = await prisma.telemetryEventLog.aggregate({
+export async function fetchTelemetryTokenUsageStats(): Promise<TelemetryTokenUsageStats> {
+  const aggregate = await prisma.telemetryEventLog.aggregate({
     _sum: {
       tokenInput: true,
       tokenOutput: true,
@@ -137,8 +174,35 @@ export async function fetchTokenUsageStats(): Promise<TokenUsageStats> {
   });
 
   return {
-    totalInputTokens: agg._sum.tokenInput ?? 0,
-    totalOutputTokens: agg._sum.tokenOutput ?? 0,
-    totalTokens: agg._sum.tokenTotal ?? 0,
+    totalInputTokens: aggregate._sum.tokenInput ?? 0,
+    totalOutputTokens: aggregate._sum.tokenOutput ?? 0,
+    totalTokens: aggregate._sum.tokenTotal ?? 0,
+  };
+}
+
+/*
+---------------------------------------------------------
+Overview Bundle
+---------------------------------------------------------
+*/
+
+// Small convenience helper for internal telemetry pages so they
+// can fetch a compact overview in one service call.
+export async function fetchTelemetryOverview(args?: { recentLimit?: number }) {
+  const recentLimit = args?.recentLimit ?? 25;
+
+  const [recentEvents, eventCounts, workflowStageStats, tokenUsage] =
+    await Promise.all([
+      fetchRecentTelemetryEvents(recentLimit),
+      fetchTelemetryEventCounts(),
+      fetchTelemetryWorkflowStageStats(),
+      fetchTelemetryTokenUsageStats(),
+    ]);
+
+  return {
+    recentEvents,
+    eventCounts,
+    workflowStageStats,
+    tokenUsage,
   };
 }
