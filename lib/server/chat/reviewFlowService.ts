@@ -7,6 +7,11 @@
 // - centralize review parsing
 // - centralize persisted assistant content selection for review mode
 // - centralize success / parse-failure response shaping
+//
+// M11 CHANGE:
+// - classify structured review telemetry outcome
+// - return telemetry classification to the caller
+// - do NOT emit telemetry directly from this service
 
 import type { ClientMode, RateMeta } from "@/lib/chat/chatTypes";
 import type { SessionArtifact } from "@/lib/chat/artifact";
@@ -24,6 +29,18 @@ type UsagePayload = {
   totalTokens: number;
 };
 
+// M11:
+// Structured review telemetry classification returned to the caller.
+// Route.ts will add request/session/user/org context and persist it.
+export type ReviewFlowTelemetry = {
+  eventType: "review_performed" | "review_failed";
+  artifactType: "reviewResult";
+  metadata: {
+    parseSucceeded: boolean;
+    repaired: boolean;
+  };
+};
+
 export async function runReviewFlow(args: {
   rawReply: string;
 }): Promise<{
@@ -31,14 +48,28 @@ export async function runReviewFlow(args: {
   reviewStoredJson: string | null;
   reviewRepaired: boolean;
   assistantContentToStore: string;
+
+  // M11:
+  // Structured review outcome classification.
+  reviewTelemetry: ReviewFlowTelemetry;
 }> {
   const parsedReview = await parseReviewResponse(args.rawReply);
+
+  const reviewTelemetry: ReviewFlowTelemetry = {
+    eventType: parsedReview.reviewObj ? "review_performed" : "review_failed",
+    artifactType: "reviewResult",
+    metadata: {
+      parseSucceeded: !!parsedReview.reviewObj,
+      repaired: parsedReview.repaired,
+    },
+  };
 
   return {
     reviewObj: parsedReview.reviewObj,
     reviewStoredJson: parsedReview.reviewStoredJson,
     reviewRepaired: parsedReview.repaired,
     assistantContentToStore: parsedReview.reviewStoredJson ?? args.rawReply,
+    reviewTelemetry,
   };
 }
 

@@ -6,6 +6,11 @@
 // SURGICAL CHANGE:
 // - extract guided-answer artifact patching
 // - extract persisted suite artifact writes after Cases flow
+//
+// M11 CHANGE:
+// - classify guided requirement refinement outcome
+// - return structured telemetry info to the caller
+// - do NOT emit telemetry directly from this service yet
 
 import {
   type SessionArtifact,
@@ -17,6 +22,23 @@ import {
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { withUpdatedTestSuiteArtifact } from "@/lib/server/chat/testSuiteService";
 
+// M11:
+// Structured telemetry classification for requirement refinement.
+// Route.ts will later add request/session/user/org context and persist it.
+export type RequirementRefinedTelemetry = {
+  eventType: "requirement_refined";
+  artifactType: "refinedRequirement";
+  metadata: {
+    hasObjective: boolean;
+    hasContext: boolean;
+    inScopeCount: number;
+    outOfScopeCount: number;
+    integrationsCount: number;
+    riskFocusCount: number;
+    acceptanceCriteriaCount: number;
+  };
+};
+
 export async function applyGuidedArtifactPatch(args: {
   sessionId: string;
   sessionArtifact: SessionArtifact | null;
@@ -26,11 +48,17 @@ export async function applyGuidedArtifactPatch(args: {
 }): Promise<{
   sessionArtifact: SessionArtifact | null;
   artifactUpdatedAtIso: string | null;
+
+  // M11:
+  // Non-null only when a valid guided refinement patch was parsed
+  // and successfully persisted.
+  requirementTelemetry: RequirementRefinedTelemetry | null;
 }> {
   if (!args.guidedAnswer) {
     return {
       sessionArtifact: args.sessionArtifact,
       artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+      requirementTelemetry: null,
     };
   }
 
@@ -40,6 +68,7 @@ export async function applyGuidedArtifactPatch(args: {
     return {
       sessionArtifact: args.sessionArtifact,
       artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+      requirementTelemetry: null,
     };
   }
 
@@ -50,9 +79,28 @@ export async function applyGuidedArtifactPatch(args: {
     artifact: nextArtifact,
   });
 
+  // M11:
+  // Build structured requirement telemetry only after successful persistence.
+  const rr = saved.artifact?.refinedRequirement ?? {};
+
+  const requirementTelemetry: RequirementRefinedTelemetry = {
+    eventType: "requirement_refined",
+    artifactType: "refinedRequirement",
+    metadata: {
+      hasObjective: !!rr.objective,
+      hasContext: !!rr.context,
+      inScopeCount: rr.inScope?.length ?? 0,
+      outOfScopeCount: rr.outOfScope?.length ?? 0,
+      integrationsCount: rr.integrations?.length ?? 0,
+      riskFocusCount: rr.riskFocus?.length ?? 0,
+      acceptanceCriteriaCount: rr.acceptanceCriteria?.length ?? 0,
+    },
+  };
+
   return {
     sessionArtifact: saved.artifact,
     artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
+    requirementTelemetry,
   };
 }
 

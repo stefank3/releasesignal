@@ -10,6 +10,7 @@
 //
 // M11 CHANGE:
 // - thread structured cases telemetry classification back to route.ts
+// - thread structured review telemetry classification back to route.ts
 // - do NOT emit telemetry here yet
 // - route.ts remains the place that adds request/session/token context
 
@@ -21,7 +22,10 @@ import {
   runCasesFlow,
   type CasesFlowTelemetry,
 } from "@/lib/server/chat/casesFlowService";
-import { runReviewFlow } from "@/lib/server/chat/reviewFlowService";
+import {
+  runReviewFlow,
+  type ReviewFlowTelemetry,
+} from "@/lib/server/chat/reviewFlowService";
 
 export async function runPostModelFlow(args: {
   rawReply: string;
@@ -49,6 +53,11 @@ export async function runPostModelFlow(args: {
   // Structured cases telemetry classification returned to the route,
   // where full operational context is available for persistence.
   casesFlowTelemetry: CasesFlowTelemetry | null;
+
+  // M11:
+  // Structured review telemetry classification returned to the route,
+  // where full operational context is available for persistence.
+  reviewFlowTelemetry: ReviewFlowTelemetry | null;
 }> {
   let coachParsed: CoachResult | null = null;
   let replyTextForUser: string | null = null;
@@ -67,6 +76,10 @@ export async function runPostModelFlow(args: {
   // Default to null unless the cases flow produces a structured telemetry result.
   let casesFlowTelemetry: CasesFlowTelemetry | null = null;
 
+  // M11:
+  // Default to null unless the review flow produces a structured telemetry result.
+  let reviewFlowTelemetry: ReviewFlowTelemetry | null = null;
+
   if (args.executionMode === "review") {
     const reviewFlow = await runReviewFlow({
       rawReply: args.rawReply,
@@ -75,6 +88,10 @@ export async function runPostModelFlow(args: {
     reviewObj = reviewFlow.reviewObj;
     reviewRepaired = reviewFlow.reviewRepaired;
     assistantContentToStore = reviewFlow.assistantContentToStore;
+
+    // M11:
+    // Forward structured review telemetry classification to the route.
+    reviewFlowTelemetry = reviewFlow.reviewTelemetry;
   }
 
   if (args.executionMode === "coach" && !args.wantCases) {
@@ -126,5 +143,6 @@ export async function runPostModelFlow(args: {
     nextTestSuiteArtifact,
     testSuiteAddedCount,
     casesFlowTelemetry,
+    reviewFlowTelemetry,
   };
 }

@@ -48,12 +48,19 @@ import {
 
 import { executeChatCompletion } from "@/lib/server/chat/openaiService";
 import { getOpenAITraceFromError } from "@/lib/openai";
+
 import {
   applyGuidedArtifactPatch,
   persistGeneratedSuiteArtifact,
+  type RequirementRefinedTelemetry,
 } from "@/lib/server/chat/artifactUpdateService";
+
 import { runPostModelFlow } from "@/lib/server/chat/postModelFlowService";
-import { buildReviewFlowResponse } from "@/lib/server/chat/reviewFlowService";
+
+import {
+  buildReviewFlowResponse,
+  type ReviewFlowTelemetry,
+} from "@/lib/server/chat/reviewFlowService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -237,6 +244,10 @@ export async function POST(req: Request) {
     sessionArtifact = sessionState.sessionArtifact;
     artifactUpdatedAtIso = sessionState.artifactUpdatedAtIso;
 
+    // M11:
+    // Structured session lifecycle classification returned by sessionStore.
+    const sessionLifecycle = sessionState.sessionLifecycle;
+
     log("info", {
       event: "chat_start",
       requestId,
@@ -250,6 +261,27 @@ export async function POST(req: Request) {
         clientMode,
         guidedAnswer,
         explicitRegenerationRequest,
+        hasArtifact: !!sessionArtifact,
+        hasTestSuite: !!getTestSuite(sessionArtifact),
+      },
+    });
+
+    /*
+    ---------------------------------------------------------
+    M11 TELEMETRY
+    ---------------------------------------------------------
+    Session lifecycle event emitted immediately after successful
+    session load/create resolution.
+    */
+    await emitTelemetryEvent({
+      eventType: sessionLifecycle,
+      auth0Sub,
+      organizationId: orgId,
+      sessionId,
+      workflowStage: "session",
+      status: "success",
+      metadataJson: {
+        clientMode,
         hasArtifact: !!sessionArtifact,
         hasTestSuite: !!getTestSuite(sessionArtifact),
       },
@@ -314,6 +346,32 @@ export async function POST(req: Request) {
 
     sessionArtifact = guidedArtifactResult.sessionArtifact;
     artifactUpdatedAtIso = guidedArtifactResult.artifactUpdatedAtIso;
+
+    // M11:
+    // Structured refinement telemetry returned only when a guided
+    // requirement patch was successfully parsed and persisted.
+    const requirementTelemetry: RequirementRefinedTelemetry | null =
+      guidedArtifactResult.requirementTelemetry;
+
+    /*
+    ---------------------------------------------------------
+    M11 TELEMETRY
+    ---------------------------------------------------------
+    Requirement refinement event emitted only when a guided
+    requirement patch was successfully persisted.
+    */
+    if (requirementTelemetry) {
+      await emitTelemetryEvent({
+        eventType: requirementTelemetry.eventType,
+        auth0Sub,
+        organizationId: orgId,
+        sessionId,
+        workflowStage: "strategy",
+        status: "success",
+        artifactType: requirementTelemetry.artifactType,
+        metadataJson: requirementTelemetry.metadata,
+      });
+    }
 
     /*
     ---------------------------------------------------------
@@ -401,6 +459,12 @@ export async function POST(req: Request) {
     // via post-model orchestration. The route adds request/session/token context.
     const casesFlowTelemetry: CasesFlowTelemetry | null =
       postModel.casesFlowTelemetry;
+
+    // M11:
+    // Structured review telemetry classification comes from the review flow
+    // via post-model orchestration. The route adds request/session/token context.
+    const reviewFlowTelemetry: ReviewFlowTelemetry | null =
+      postModel.reviewFlowTelemetry;
 
     /*
     ---------------------------------------------------------
@@ -492,6 +556,33 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     */
     if (executionMode === "review") {
+      /*
+      ---------------------------------------------------------
+      M11 TELEMETRY
+      ---------------------------------------------------------
+      Review telemetry emitted for both successful and failed
+      review parsing outcomes.
+      */
+      if (reviewFlowTelemetry) {
+        await emitTelemetryEvent({
+          eventType: reviewFlowTelemetry.eventType,
+          auth0Sub,
+          organizationId: orgId,
+          sessionId,
+          workflowStage: "test_review",
+          status:
+            reviewFlowTelemetry.eventType === "review_failed"
+              ? "failed"
+              : "success",
+          durationMs: Date.now() - startTime,
+          tokenInput: promptTokens,
+          tokenOutput: completionTokens,
+          tokenTotal: totalTokens,
+          artifactType: reviewFlowTelemetry.artifactType,
+          metadataJson: reviewFlowTelemetry.metadata,
+        });
+      }
+
       await recordChatMetric({
         nowMs: Date.now(),
         mode: modeForMetric,
