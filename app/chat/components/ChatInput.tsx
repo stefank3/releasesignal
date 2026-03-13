@@ -12,6 +12,10 @@
 // - add theme-aware input/button styling
 // - remove mixed hardcoded dark/light styling
 // - improve visual consistency in light mode
+//
+// CHANGE (M10 Remaining Work - Assistant Tone Alignment):
+// - shift input wording from chatbot-style phrasing to workflow-assistant phrasing
+// - keep guidance task-oriented and QA-specific
 
 "use client";
 
@@ -31,14 +35,14 @@ type Props = {
 
 function getPlaceholder(mode: Mode): string {
   if (mode === "review") {
-    return "Paste a test suite or test plan to evaluate coverage...";
+    return "Paste a test suite or test plan to evaluate coverage.";
   }
 
   if (mode === "cases") {
-    return "Describe the feature, refined requirement, or additional coverage you want to generate...";
+    return "Describe the feature, refined requirement, or additional coverage to generate.";
   }
 
-  return "Describe the feature, workflow, scope, or new requirement refinement...";
+  return "Describe the feature, workflow, scope, or requirement to refine.";
 }
 
 function getButtonLabel(mode: Mode, disabled?: boolean): string {

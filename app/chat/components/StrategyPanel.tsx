@@ -20,6 +20,10 @@
 // CHANGE (M10 UI Pass):
 // - add theme-aware rendering for light / dark mode
 // - remove dark-only text / field styling assumptions
+//
+// CHANGE (M10 Remaining Work - Assistant Tone Alignment):
+// - shift helper copy from chatbot-style interaction to workflow-assistant guidance
+// - keep the panel focused on requirement refinement as part of the QA workflow
 
 "use client";
 
@@ -331,7 +335,8 @@ export default function StrategyPanel({
             color: isDark ? "#fff" : "#0f172a",
           }}
         >
-          Fill the fields below, then paste them into the main input and send.
+          Refine the requirement structure below, then paste it into the main
+          workflow input.
         </div>
 
         <div style={{ display: "grid", gap: 9 }}>
@@ -397,7 +402,7 @@ export default function StrategyPanel({
               requestAnimationFrame(() => focusChatInputBestEffort());
             }}
             disabled={!hasAnyInput}
-            title="Paste structured answers into the main chat input"
+            title="Paste structured requirement content into the main workflow input"
             resolvedTheme={resolvedTheme}
           >
             Paste into input
@@ -413,7 +418,7 @@ export default function StrategyPanel({
               setSuccessCriteria("");
             }}
             disabled={!hasAnyInput}
-            title="Clear all answers"
+            title="Clear all refinement fields"
             resolvedTheme={resolvedTheme}
           >
             Clear form
@@ -469,8 +474,9 @@ export default function StrategyPanel({
             color: isDark ? "#fff" : "#0f172a",
           }}
         >
-          Nothing is pinned yet. Fill the form, paste it into the input, and send
-          to create the Refined Requirement.
+          Nothing is pinned yet. Complete the refinement fields, paste the result
+          into the main workflow input, and run Strategy to create the Refined
+          Requirement.
         </div>
       )}
     </div>

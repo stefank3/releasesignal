@@ -28,6 +28,15 @@
 // - remove dark-only hardcoded shell assumptions
 // - prepare panel surfaces for light / dark / system theme support
 // - keep behavior unchanged
+//
+// CHANGE (M10 Remaining Work - Task 1):
+// - add visible AI processing indicator
+// - reduce the perception that the product is frozen during model execution
+// - keep messaging aligned with workflow assistant behavior
+//
+// CHANGE (M10 Remaining Work - Assistant Tone Alignment):
+// - shift onboarding language away from chatbot cues
+// - reinforce workflow-assistant positioning
 
 "use client";
 
@@ -74,9 +83,9 @@ function OnboardingHint(args: {
       </div>
 
       <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.5 }}>
-        Describe the feature, system, or requirement you want to test.
+        Start by describing the feature or system under test.
         {args.showStrategyHint
-          ? " Start with Strategy to clarify scope and risks, then continue to Test Design."
+          ? " Use Strategy to clarify scope and risks, then continue to Test Design."
           : ""}
       </div>
 
@@ -84,8 +93,8 @@ function OnboardingHint(args: {
         Example:
         <br />
         <span style={{ opacity: 0.88 }}>
-          Clarify the login flow with MFA, identify risks, then generate a
-          structured test suite.
+          Clarify the login flow with MFA, identify the main risks, then generate
+          a structured test suite.
         </span>
       </div>
     </div>
@@ -139,6 +148,12 @@ function buildRefinedRequirementInput(
   );
 
   return lines.join("\n");
+}
+
+function getProcessingLabel(mode: UseChatSessionReturn["mode"]): string {
+  if (mode === "review") return "Reviewing coverage…";
+  if (mode === "cases") return "Generating test cases…";
+  return "Analyzing requirement…";
 }
 
 export default function ChatPanel({
@@ -196,13 +211,9 @@ export default function ChatPanel({
     if (!isCoachSession) return "1fr";
     if (isNarrow) return "1fr";
 
-    // M8.4:
-    // Give the Strategy area slightly more presence during beta so the workflow is easier to understand.
     return "minmax(0, 1fr) 400px";
   }, [isCoachSession, isNarrow]);
 
-  // M10 UI:
-  // Theme-aware shell tokens for panel surfaces.
   const leftPanelStyle: React.CSSProperties = {
     border: isDark
       ? "1px solid rgba(255,255,255,0.10)"
@@ -232,12 +243,23 @@ export default function ChatPanel({
     background: isDark ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.55)",
   };
 
-  // M7.7 / M8.4:
+  const processingBannerStyle: React.CSSProperties = {
+    marginBottom: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.10)"
+      : "1px solid rgba(15,23,42,0.10)",
+    background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
+    color: isDark ? "#ffffff" : "#0f172a",
+    fontSize: 12,
+    fontWeight: 800,
+    lineHeight: 1.35,
+  };
+
   // Show the onboarding hint only for empty sessions before the first interaction.
   const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
 
-  // M8.4 / M10 UI:
-  // Strategy becomes a more distinct panel during beta, closer to a workflow workspace.
   const strategyPanelWrapStyle: React.CSSProperties = {
     border: isDark
       ? "1px solid rgba(255,255,255,0.12)"
@@ -251,8 +273,6 @@ export default function ChatPanel({
       : "0 8px 24px rgba(15,23,42,0.06)",
   };
 
-  // M8.8:
-  // Enable quick transfer from Strategy artifact to Test Design input.
   const canUseRefinedRequirement =
     isTestDesignSession &&
     chat.hasPinnedRequirement &&
@@ -307,6 +327,12 @@ export default function ChatPanel({
 
         <div style={leftPanelStyle}>
           <div ref={chatBoxRef} style={chatBoxStyle}>
+            {chat.isSending ? (
+              <div style={processingBannerStyle}>
+                {getProcessingLabel(chat.mode)}
+              </div>
+            ) : null}
+
             <ChatMessageList
               items={chat.items}
               mode={chat.mode}
@@ -346,7 +372,7 @@ export default function ChatPanel({
               </div>
             ) : null}
 
-           <ChatInput
+            <ChatInput
               ref={inputRef}
               mode={chat.mode}
               value={chat.input}

@@ -81,26 +81,26 @@ export function ModeBadge({
   const isDark = resolvedTheme === "dark";
 
   const meta =
-  mode === "coach"
-    ? {
-        label: "STRATEGY",
-        bg: isDark ? "rgba(56,189,248,0.16)" : "rgba(56,189,248,0.14)",
-        border: isDark ? "rgba(56,189,248,0.35)" : "rgba(14,116,144,0.30)",
-        color: isDark ? "#ffffff" : "#0b5f7a",
-      }
-    : mode === "review"
+    mode === "coach"
       ? {
-          label: "TEST REVIEW",
-          bg: isDark ? "rgba(34,197,94,0.16)" : "rgba(34,197,94,0.14)",
-          border: isDark ? "rgba(34,197,94,0.35)" : "rgba(21,128,61,0.30)",
-          color: isDark ? "#ffffff" : "#166534",
+          label: "STRATEGY",
+          bg: isDark ? "rgba(56,189,248,0.16)" : "rgba(14,116,144,0.10)",
+          border: isDark ? "rgba(56,189,248,0.35)" : "rgba(14,116,144,0.26)",
+          color: isDark ? "#ffffff" : "#075985",
         }
-      : {
-          label: "TEST DESIGN",
-          bg: isDark ? "rgba(168,85,247,0.16)" : "rgba(168,85,247,0.14)",
-          border: isDark ? "rgba(168,85,247,0.35)" : "rgba(126,34,206,0.30)",
-          color: isDark ? "#ffffff" : "#6b21a8",
-        };
+      : mode === "review"
+        ? {
+            label: "TEST REVIEW",
+            bg: isDark ? "rgba(34,197,94,0.16)" : "rgba(21,128,61,0.10)",
+            border: isDark ? "rgba(34,197,94,0.35)" : "rgba(21,128,61,0.26)",
+            color: isDark ? "#ffffff" : "#14532d",
+          }
+        : {
+            label: "TEST DESIGN",
+            bg: isDark ? "rgba(168,85,247,0.16)" : "rgba(126,34,206,0.10)",
+            border: isDark ? "rgba(168,85,247,0.35)" : "rgba(126,34,206,0.26)",
+            color: isDark ? "#ffffff" : "#581c87",
+          };
 
   return (
     <span
@@ -125,7 +125,6 @@ export function ModeBadge({
     </span>
   );
 }
-
 /** Header button style for toolbar actions and workflow-related controls. */
 export function HeaderButton({
   active,
