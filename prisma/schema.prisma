@@ -1,6 +1,16 @@
 // prisma/schema.prisma
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Prisma schema for Release Signal.
+//
+// M11 NOTE:
+// This pass introduces the first telemetry persistence model:
+// TelemetryEventLog
+//
+// Design rule:
+// - telemetry is stored as structured events
+// - telemetry is NOT derived from rendered chat text
+// - telemetry stays append-only and analytics-friendly
+//
+// Prisma 7 compatible.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,12 +21,17 @@ datasource db {
 }
 
 model Organization {
-  id        String        @id @default(uuid())
+  id        String          @id @default(uuid())
   name      String
-  createdAt DateTime      @default(now())
+  createdAt DateTime        @default(now())
   members   OrgMember[]
   plans     Subscription[]
   wallets   CreditWallet[]
+
+  // M11:
+  // Organization-level telemetry relation.
+  // This allows internal analytics to group events by organization.
+  telemetryEvents TelemetryEventLog[]
 }
 
 model OrgMember {
@@ -93,9 +108,10 @@ model ChatSession {
   // ==============================
   // Session Artifact (M7)
   // ==============================
-  // Stores the SessionArtifact JSON contract for the session (e.g., refined requirement).
+  // Stores the SessionArtifact JSON contract for the session
+  // (e.g. refined requirement, test suite, review result).
   // NOTE: Prisma Json is backed by Postgres JSONB under the hood.
-  artifactJson      Json?
+  artifactJson Json?
 
   // App-managed timestamp:
   // - set ONLY when artifactJson changes
@@ -104,6 +120,11 @@ model ChatSession {
   // ==============================
 
   messages ChatMessage[]
+
+  // M11:
+  // Session-level telemetry relation.
+  // Telemetry events are append-only and linked to the session when applicable.
+  telemetryEvents TelemetryEventLog[]
 
   @@index([auth0Sub, updatedAt, id])
 
@@ -132,4 +153,100 @@ model ChatMessage {
   // IDP: prevent duplicate messages for the same request within a session
   // Allow one user + one assistant message per requestId within the same session
   @@unique([sessionId, requestId, role])
+}
+
+model TelemetryEventLog {
+  id String @id @default(uuid())
+
+  // Core event timestamp.
+  // Keep this append-only for analytics and auditability.
+  createdAt DateTime @default(now())
+
+  // Event classification.
+  // Examples:
+  // - session_started
+  // - requirement_refined
+  // - test_suite_generated
+  // - review_performed
+  eventType String
+
+  // Actor / ownership context.
+  // auth0Sub remains nullable because some future internal/system events
+  // may not be tied to an authenticated end user.
+  auth0Sub       String?
+  organizationId String?
+  sessionId      String?
+
+  // Workflow context.
+  // Examples:
+  // - strategy
+  // - test_design
+  // - test_review
+  workflowStage String?
+
+  // Execution outcome.
+  // Examples:
+  // - started
+  // - success
+  // - failed
+  status String?
+
+  // Performance metrics.
+  // Store as Int milliseconds for efficient aggregation.
+  durationMs Int?
+
+  // Token metrics captured per operation.
+  tokenInput  Int?
+  tokenOutput Int?
+  tokenTotal  Int?
+
+  // Structured artifact linkage.
+  // Examples:
+  // - refinedRequirement
+  // - testSuite
+  // - reviewResult
+  artifactType    String?
+  artifactVersion Int?
+
+  // Flexible structured metadata.
+  // Examples:
+  // {
+  //   "suiteSize": 18,
+  //   "newCasesGenerated": 18,
+  //   "coverageScore": 82
+  // }
+  //
+  // Keep this JSON field for event-specific details that do not justify
+  // first-class columns in M11.
+  metadataJson Json?
+
+  // Optional relations.
+  // We use nullable foreign keys because not every telemetry event will
+  // belong to both an organization and a chat session.
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  session      ChatSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  // ==============================
+  // Analytics indexes
+  // ==============================
+  // Time-based scans
+  @@index([createdAt])
+
+  // Event aggregation
+  @@index([eventType, createdAt])
+
+  // User-level usage analysis
+  @@index([auth0Sub, createdAt])
+
+  // Organization-level analytics
+  @@index([organizationId, createdAt])
+
+  // Session-level timeline reconstruction
+  @@index([sessionId, createdAt])
+
+  // Workflow KPI queries
+  @@index([workflowStage, createdAt])
+
+  // Outcome / reliability queries
+  @@index([status, createdAt])
 }

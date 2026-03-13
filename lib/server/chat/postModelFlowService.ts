@@ -7,12 +7,20 @@
 // - route.ts delegates post-OpenAI flow branching here
 // - preserves existing coach / review / cases services
 // - keeps billing decision inputs stable
+//
+// M11 CHANGE:
+// - thread structured cases telemetry classification back to route.ts
+// - do NOT emit telemetry here yet
+// - route.ts remains the place that adds request/session/token context
 
 import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
 
 import { runCoachFlow } from "@/lib/server/chat/coachFlowService";
-import { runCasesFlow } from "@/lib/server/chat/casesFlowService";
+import {
+  runCasesFlow,
+  type CasesFlowTelemetry,
+} from "@/lib/server/chat/casesFlowService";
 import { runReviewFlow } from "@/lib/server/chat/reviewFlowService";
 
 export async function runPostModelFlow(args: {
@@ -36,6 +44,11 @@ export async function runPostModelFlow(args: {
   artifactUpdatedAtIso: string | null;
   nextTestSuiteArtifact: TestSuiteArtifact | null;
   testSuiteAddedCount: number;
+
+  // M11:
+  // Structured cases telemetry classification returned to the route,
+  // where full operational context is available for persistence.
+  casesFlowTelemetry: CasesFlowTelemetry | null;
 }> {
   let coachParsed: CoachResult | null = null;
   let replyTextForUser: string | null = null;
@@ -49,6 +62,10 @@ export async function runPostModelFlow(args: {
 
   let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
   let testSuiteAddedCount = 0;
+
+  // M11:
+  // Default to null unless the cases flow produces a structured telemetry result.
+  let casesFlowTelemetry: CasesFlowTelemetry | null = null;
 
   if (args.executionMode === "review") {
     const reviewFlow = await runReviewFlow({
@@ -88,6 +105,12 @@ export async function runPostModelFlow(args: {
     replyTextForUser = casesFlow.replyTextForUser;
     nextTestSuiteArtifact = casesFlow.nextTestSuiteArtifact;
     testSuiteAddedCount = casesFlow.testSuiteAddedCount;
+
+    // M11:
+    // Forward the structured telemetry classification to the route.
+    casesFlowTelemetry = casesFlow.telemetry;
+
+    // Cases mode should not return coach-parsed output.
     coachParsed = null;
   }
 
@@ -96,10 +119,12 @@ export async function runPostModelFlow(args: {
     replyTextForUser,
     reviewObj,
     reviewRepaired,
-    assistantContentToStore: assistantContentToStore ?? replyTextForUser ?? "No reply returned",
+    assistantContentToStore:
+      assistantContentToStore ?? replyTextForUser ?? "No reply returned",
     sessionArtifact,
     artifactUpdatedAtIso,
     nextTestSuiteArtifact,
     testSuiteAddedCount,
+    casesFlowTelemetry,
   };
 }

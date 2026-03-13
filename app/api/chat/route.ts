@@ -9,6 +9,9 @@ import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics
 
 import { type RateMeta } from "@/lib/chat/chatTypes";
 
+import { emitTelemetryEvent } from "@/lib/server/telemetry/telemetryService";
+import type { CasesFlowTelemetry } from "@/lib/server/chat/casesFlowService";
+
 import {
   type SessionArtifact,
   type TestSuiteArtifact,
@@ -378,20 +381,26 @@ export async function POST(req: Request) {
       explicitRegenerationRequest,
     });
 
-    let coachParsed: CoachResult | null = postModel.coachParsed;
-    let replyTextForUser: string | null = postModel.replyTextForUser;
+    const coachParsed: CoachResult | null = postModel.coachParsed;
+    const replyTextForUser: string | null = postModel.replyTextForUser;
 
-    let reviewObj: ReviewResult | null = postModel.reviewObj;
-    let reviewRepaired = postModel.reviewRepaired;
+    const reviewObj: ReviewResult | null = postModel.reviewObj;
+    const reviewRepaired = postModel.reviewRepaired;
 
-    let assistantContentToStore = postModel.assistantContentToStore;
+    const assistantContentToStore = postModel.assistantContentToStore;
 
-    let nextTestSuiteArtifact: TestSuiteArtifact | null =
+    const nextTestSuiteArtifact: TestSuiteArtifact | null =
       postModel.nextTestSuiteArtifact;
     const testSuiteAddedCount = postModel.testSuiteAddedCount;
 
     sessionArtifact = postModel.sessionArtifact;
     artifactUpdatedAtIso = postModel.artifactUpdatedAtIso;
+
+    // M11:
+    // Structured telemetry classification comes from the cases flow service
+    // via post-model orchestration. The route adds request/session/token context.
+    const casesFlowTelemetry: CasesFlowTelemetry | null =
+      postModel.casesFlowTelemetry;
 
     /*
     ---------------------------------------------------------
@@ -451,6 +460,31 @@ export async function POST(req: Request) {
 
     sessionArtifact = suitePersistResult.sessionArtifact;
     artifactUpdatedAtIso = suitePersistResult.artifactUpdatedAtIso;
+
+    /*
+    ---------------------------------------------------------
+    M11 TELEMETRY
+    ---------------------------------------------------------
+    First persisted telemetry event path for Cases mode.
+    Emit only after the suite artifact has been persisted successfully.
+    */
+    if (casesFlowTelemetry) {
+      await emitTelemetryEvent({
+        eventType: casesFlowTelemetry.eventType,
+        auth0Sub,
+        organizationId: orgId,
+        sessionId,
+        workflowStage: "test_design",
+        status: "success",
+        durationMs: Date.now() - startTime,
+        tokenInput: promptTokens,
+        tokenOutput: completionTokens,
+        tokenTotal: totalTokens,
+        artifactType: casesFlowTelemetry.artifactType,
+        artifactVersion: casesFlowTelemetry.artifactVersion,
+        metadataJson: casesFlowTelemetry.metadata,
+      });
+    }
 
     /*
     ---------------------------------------------------------

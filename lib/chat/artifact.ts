@@ -1,4 +1,21 @@
 // lib/chat/artifact.ts
+// Shared structured artifact contract for chat session state.
+//
+// Architectural rule:
+// platform behavior should rely on structured artifacts, not rendered assistant text.
+//
+// M11 NOTE:
+// This file is a key telemetry source because it defines the structured objects
+// that telemetry can safely reference:
+// - refinedRequirement
+// - testSuite
+//
+// From this contract we can derive telemetry metadata such as:
+// - artifact version
+// - suite size
+// - whether a suite already existed
+// - whether a requirement has structured sections
+
 import { Prisma } from "@prisma/client";
 
 export type RefinedRequirement = {
@@ -19,6 +36,10 @@ export type TestCase = {
 };
 
 // M9 CHANGE: suite artifact stored inside ChatSession.artifactJson.
+//
+// M11 NOTE:
+// version + cases.length are telemetry-friendly fields.
+// They let us measure suite evolution without parsing rendered output.
 export type TestSuiteArtifact = {
   version: number;
   cases: TestCase[];
@@ -28,7 +49,9 @@ export type TestSuiteArtifact = {
 
 export type SessionArtifact = {
   refinedRequirement?: RefinedRequirement;
+
   // M9 CHANGE: optional test suite state for incremental Cases mode.
+  // M11 NOTE: this is the structured source of truth for suite telemetry.
   testSuite?: TestSuiteArtifact;
 };
 
@@ -53,10 +76,14 @@ export function parseGuidedAnswerToRefinedRequirement(message: string): Partial<
 
   const getValueAfterPrefix = (prefix: string) => {
     const lowPrefix = prefix.toLowerCase();
+
     for (const l of lines) {
       const idx = l.toLowerCase().indexOf(lowPrefix);
-      if (idx === 0) return l.slice(prefix.length).trim().replace(/^[-–—:\s]+/, "").trim();
+      if (idx === 0) {
+        return l.slice(prefix.length).trim().replace(/^[-–—:\s]+/, "").trim();
+      }
     }
+
     return "";
   };
 
@@ -70,10 +97,12 @@ export function parseGuidedAnswerToRefinedRequirement(message: string): Partial<
   const splitList = (v: string): string[] => {
     const t = v.trim();
     if (!t) return [];
+
     const parts = t
       .split(/,|\s\/\s|\s\|\s/g)
       .map((p) => p.trim())
       .filter(Boolean);
+
     return Array.from(new Set(parts)).slice(0, 12);
   };
 
@@ -96,10 +125,16 @@ export function parseGuidedAnswerToRefinedRequirement(message: string): Partial<
       outOfScope.push(...splitList(outPart));
     }
 
-    if (inScope.length === 0 && outOfScope.length === 0) inScope.push(scopeRaw.trim().slice(0, 240));
+    // Fallback behavior:
+    // if no explicit "in:" / "out:" markers were found, keep the raw scope
+    // as a compact in-scope statement rather than losing the content.
+    if (inScope.length === 0 && outOfScope.length === 0) {
+      inScope.push(scopeRaw.trim().slice(0, 240));
+    }
   }
 
   const partial: Partial<RefinedRequirement> = {};
+
   if (objective) partial.objective = objective.slice(0, 240);
   if (constraintsRaw) partial.context = constraintsRaw.slice(0, 600);
   if (inScope.length) partial.inScope = inScope;
@@ -129,7 +164,9 @@ export function mergeArtifact(existing: SessionArtifact | null, patch: Partial<R
     ...(patch.context ? { context: patch.context } : {}),
     ...(patch.inScope?.length ? { inScope: dedupe([...(prevRR.inScope ?? []), ...patch.inScope]) } : {}),
     ...(patch.outOfScope?.length ? { outOfScope: dedupe([...(prevRR.outOfScope ?? []), ...patch.outOfScope]) } : {}),
-    ...(patch.integrations?.length ? { integrations: dedupe([...(prevRR.integrations ?? []), ...patch.integrations]) } : {}),
+    ...(patch.integrations?.length
+      ? { integrations: dedupe([...(prevRR.integrations ?? []), ...patch.integrations]) }
+      : {}),
     ...(patch.riskFocus?.length ? { riskFocus: dedupe([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) } : {}),
     ...(patch.acceptanceCriteria?.length
       ? { acceptanceCriteria: dedupe([...(prevRR.acceptanceCriteria ?? []), ...patch.acceptanceCriteria]) }
@@ -138,20 +175,28 @@ export function mergeArtifact(existing: SessionArtifact | null, patch: Partial<R
 
   return {
     refinedRequirement: nextRR,
+
     // M9 CHANGE: preserve existing testSuite when refinedRequirement is updated.
+    // M11 NOTE: this prevents telemetry context from being lost when only the
+    // requirement artifact is being updated.
     ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
   };
 }
 
 // M9 CHANGE: helper for future Cases-mode incremental behavior.
 // Safe no-op for old sessions that do not yet have a suite.
+//
+// M11 NOTE:
+// This helper should be used anywhere telemetry needs reliable suite access.
 export function getTestSuite(artifact: SessionArtifact | null | undefined): TestSuiteArtifact | null {
   const suite = artifact?.testSuite;
+
   if (!suite || typeof suite !== "object") return null;
   if (!Array.isArray(suite.cases)) return null;
   if (typeof suite.version !== "number") return null;
   if (typeof suite.createdAt !== "string") return null;
   if (typeof suite.lastUpdatedAt !== "string") return null;
+
   return suite;
 }
 
@@ -182,6 +227,10 @@ export function artifactToContextText(artifact: SessionArtifact): string {
 
   // M9 CHANGE: include compact test suite context only when it exists.
   // This is useful for future incremental generation prompts.
+  //
+  // M11 NOTE:
+  // This text is presentation/context support only.
+  // Telemetry must still use the structured suite object directly.
   const suite = getTestSuite(artifact);
   if (suite) {
     lines.push("");
@@ -199,5 +248,6 @@ export function artifactToContextText(artifact: SessionArtifact): string {
 }
 
 export function prismaJsonValue(artifact: SessionArtifact): Prisma.InputJsonValue {
+  // Central helper for writing structured session artifacts into Prisma Json fields.
   return artifact as unknown as Prisma.InputJsonValue;
 }
