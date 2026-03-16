@@ -6,7 +6,7 @@
 "use client";
 
 import React from "react";
-import type { WorkflowStatus } from "../hooks/useChatSession";
+import type { WorkflowStatus } from "../chat.types";
 
 type Props = {
   status: WorkflowStatus;

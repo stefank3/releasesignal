@@ -1,429 +1,47 @@
 // app/chat/hooks/useChatSession.ts
-// M7 Phase 2 (Structural Refactor)
-// CHANGE: Extract state + orchestration out of page.tsx into a reusable hook.
-// GOAL: page.tsx becomes mostly UI composition.
-//
-// ✅ FIXES INCLUDED (surgical):
-// 1) FIX: Expose `lastPending` in UseChatSessionReturn + return value (unblocks Retry button in page.tsx)
-// 2) FIX: Remove `React.*` namespace types (was not imported) -> use `Dispatch/SetStateAction/MutableRefObject` types
-// 3) IMPROVE: Type-narrow coach suggestions without `any` when possible (still safe if ChatItem union doesn't include suggestions)
-//
-// CHANGE (M7.7):
-// 4) ADD: sessionArtifact + artifactUpdatedAt in state + return type
-// 5) ADD: hydrate artifact from /api/chat response + /api/chat/history/:sessionId response
-// 6) ADD: reset artifact on newChat / startNewSessionInMode
-//
-// CHANGE (M8.6 Continuity Groundwork):
-// 7) ALIGN: visible workflow labels now use Strategy / Test Design / Test Review
-// 8) ADD: derived flags for strategy/design continuity-aware UI behavior
-// 9) KEEP: no backend contract change here; actual advisor continuity will be implemented in /api/chat/route.ts
-//
-// CHANGE (M9):
-// 10) ADD: derived flag for persisted test suite presence
-// 11) KEEP: artifact hydration logic unchanged; expanded SessionArtifact now carries testSuite automatically
-// 12) ADD: graceful client-side oversized-input handling before hitting /api/chat
-//
-// CHANGE (M12 Step 1 - Workflow Progression State):
-// 13) ADD: derived workflow status model from persisted artifacts + visible review state
-// 14) KEEP: no backend contract change; UI can now render workflow progression from hook state
-// 15) GOAL: move progression truth out of ChatPanel and into session orchestration
-
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 
 import type {
-  Mode,
-  ReviewResult,
-  CasesResult,
+  ChatApiResponse,
   ChatItem,
+  CoachSuggestions,
+  HistoryMessage,
+  Mode,
   PersistedState,
   RateMeta,
-  ChatApiResponse,
-  SessionListItem,
-  HistoryMessage,
-  CoachSuggestions,
+  ReviewResult,
   SessionArtifact,
+  SessionListItem,
+  WorkflowStatus,
 } from "../chat.types";
+
+import {
+  artifactHasReviewSignal,
+  buildOversizedInputMessage,
+  deriveWorkflowStatus,
+  extractCoachSuggestions,
+  getDisplayReplyText,
+  hasSuggestions,
+  isNearBottom,
+  mapHistoryItems,
+  MAX_MESSAGE_CHARS,
+  modeLabel,
+} from "./useChatSession.helpers";
+
+import {
+  createRequestId,
+  createSessionClientId,
+  fetchJSON,
+  fetchJSONWithMeta,
+  readArtifactFromResponse,
+} from "./useChatSession.net";
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
 
-// M9 CHANGE: match backend hard limit so we can fail gracefully in the client first.
-const MAX_MESSAGE_CHARS = 8000;
-
-/** Determine if user is already near the bottom of the chat window. */
-export function isNearBottom(el: HTMLDivElement, thresholdPx = 140) {
-  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-  return distance <= thresholdPx;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
-function readArtifactFromResponse(
-  data: unknown
-): { artifact: SessionArtifact | null; artifactUpdatedAt: string | null } | null {
-  if (!isRecord(data)) return null;
-
-  // Only hydrate when the server actually included these fields.
-  const hasArtifactField = "artifact" in data || "artifactUpdatedAt" in data;
-  if (!hasArtifactField) return null;
-
-  const artifact = (data["artifact"] ?? null) as SessionArtifact | null;
-  const artifactUpdatedAt =
-    typeof data["artifactUpdatedAt"] === "string" ? data["artifactUpdatedAt"] : null;
-
-  return { artifact, artifactUpdatedAt };
-}
-
-/** Minimal markdown safety for list items (Jira/Confluence paste). */
-function mdSafe(s: string) {
-  return String(s ?? "").replace(/\r/g, "").trim();
-}
-
-/** Generate a client-side request id for correlation. */
-function createRequestId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return (crypto as Crypto).randomUUID();
-  }
-  return `rid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-/** IDP: generate a stable client-side id for new-session creation. */
-function createSessionClientId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return (crypto as Crypto).randomUUID();
-  }
-  return `sid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-/**
- * M9 CHANGE:
- * Graceful UX for oversized single-pass requests.
- * This is especially helpful for Review mode and very large pasted suites.
- */
-function buildOversizedInputMessage(args: { mode: Mode; actualLength: number }): string {
-  const overBy = Math.max(0, args.actualLength - MAX_MESSAGE_CHARS);
-
-  if (args.mode === "review") {
-    return [
-      `This review input is too large for a single pass right now (${args.actualLength.toLocaleString()} characters, limit ${MAX_MESSAGE_CHARS.toLocaleString()}).`,
-      "",
-      "Try one of these:",
-      "- review a smaller section of the suite",
-      "- split the suite into parts",
-      "- review the highest-risk area first",
-      "",
-      `Current input exceeds the limit by ${overBy.toLocaleString()} characters.`,
-      "",
-      "Large-suite review will be expanded in a later milestone.",
-    ].join("\n");
-  }
-
-  if (args.mode === "cases") {
-    return [
-      `This test-design input is too large for a single request right now (${args.actualLength.toLocaleString()} characters, limit ${MAX_MESSAGE_CHARS.toLocaleString()}).`,
-      "",
-      "Try one of these:",
-      "- generate tests from a smaller requirement section",
-      "- paste only the core scope and constraints",
-      "- extend the suite incrementally in follow-up prompts",
-      "",
-      `Current input exceeds the limit by ${overBy.toLocaleString()} characters.`,
-    ].join("\n");
-  }
-
-  return [
-    `This Strategy input is too large for a single request right now (${args.actualLength.toLocaleString()} characters, limit ${MAX_MESSAGE_CHARS.toLocaleString()}).`,
-    "",
-    "Try one of these:",
-    "- shorten the description to the essential scope",
-    "- split the requirement into smaller parts",
-    "- start with the core workflow first",
-    "",
-    `Current input exceeds the limit by ${overBy.toLocaleString()} characters.`,
-  ].join("\n");
-}
-
-/**
- * Fetch helper:
- * - throws on non-JSON responses
- * - returns { status, headers, data } always
- */
-async function fetchJSONWithMeta<T>(
-  input: RequestInfo,
-  init?: RequestInit
-): Promise<{ status: number; headers: Headers; data: T }> {
-  const res = await fetch(input, init);
-
-  const text = await res.text().catch(() => "");
-  const ct = (res.headers.get("content-type") || "").toLowerCase();
-
-  const first = text
-    .trimStart()
-    .slice(0, 200)
-    .replace(/\s+/g, " ");
-  const looksHtml =
-    ct.includes("text/html") ||
-    first.startsWith("<!doctype") ||
-    first.startsWith("<html") ||
-    first.startsWith("<");
-
-  const looksJson =
-    ct.includes("application/json") || first.startsWith("{") || first.startsWith("[");
-
-  if (!looksJson) {
-    const hint = looksHtml
-      ? "Expected JSON but got HTML (redirect/login/error page)"
-      : "Expected JSON but got non-JSON";
-    throw new Error(`${hint} (HTTP ${res.status}). content-type=${ct || "(none)"} first=${first}`);
-  }
-
-  const data = text ? (JSON.parse(text) as unknown) : ({} as unknown);
-  return { status: res.status, headers: res.headers, data: data as T };
-}
-
-/** Wrapper that throws on non-2xx. */
-async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const { status, data } = await fetchJSONWithMeta<T>(input, init);
-  if (status >= 200 && status < 300) return data;
-  const err = (data as { error?: string })?.error;
-  throw new Error(err || `HTTP ${status}`);
-}
-
-/** Parse ReviewResult JSON in assistant messages. */
-function tryParseReview(text: string): ReviewResult | null {
-  try {
-    const obj = JSON.parse(text);
-    if (
-      obj &&
-      typeof obj.score === "number" &&
-      obj.breakdown &&
-      typeof obj.breakdown.businessRelevance === "number" &&
-      Array.isArray(obj.riskGaps) &&
-      Array.isArray(obj.antiPatterns) &&
-      Array.isArray(obj.improvements)
-    ) {
-      return obj as ReviewResult;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
-/** Legacy-only: old history might contain JSON CasesResult. */
-function tryParseCasesLegacy(text: string): CasesResult | null {
-  try {
-    const obj = JSON.parse(text);
-    if (
-      obj &&
-      typeof obj.suiteTitle === "string" &&
-      Array.isArray(obj.assumptions) &&
-      Array.isArray(obj.testCases)
-    ) {
-      return obj as CasesResult;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
-/**
- * ✅ Heuristic:
- * Some older sessions might have mode stored as coach/review, but the assistant content is clearly cases plain text.
- */
-function looksLikeCasesPlainText(text: string): boolean {
-  const t = String(text ?? "").replace(/\r/g, "");
-
-  const tcCount = (t.match(/^TC-\d{1,4}\b.*$/gim) || []).length;
-  const hasMarkers =
-    /(^|\n)\s*Preconditions\s*:/i.test(t) ||
-    /(^|\n)\s*Test Steps\s*:/i.test(t) ||
-    /(^|\n)\s*Steps\s*:/i.test(t) ||
-    /(^|\n)\s*Expected Result(s)?\s*:/i.test(t) ||
-    /(^|\n)\s*Priority\s*:/i.test(t) ||
-    /(^|\n)\s*Type\s*:/i.test(t);
-
-  if (tcCount >= 1 && hasMarkers) return true;
-  if (tcCount >= 2) return true;
-  return false;
-}
-
-/** Optional: make coach JSON readable if needed (keeps your existing behavior). */
-function looksLikeJson(s: string) {
-  const t = s.trimStart();
-  return t.startsWith("{") || t.startsWith("[");
-}
-
-export function tryFormatCoachJson(text: string): string | null {
-  try {
-    const obj = JSON.parse(text) as {
-      assumptions?: string[];
-      riskMatrix?: { risk?: string; likelihood?: string; impact?: string }[];
-      highSignalApproach?: { testIdeas?: string[] };
-      testCases?: { id?: string; title?: string; priority?: string; level?: string }[];
-      optionalClarifications?: string[];
-    };
-
-    const lines: string[] = [];
-
-    if (Array.isArray(obj.assumptions) && obj.assumptions.length) {
-      lines.push("Assumptions:");
-      for (const a of obj.assumptions.slice(0, 6)) lines.push(`- ${mdSafe(a)}`);
-      lines.push("");
-    }
-
-    if (Array.isArray(obj.riskMatrix) && obj.riskMatrix.length) {
-      lines.push("Top risks:");
-      for (const r of obj.riskMatrix.slice(0, 5)) {
-        const risk = mdSafe(r.risk ?? "Risk");
-        const li = mdSafe(r.likelihood ?? "");
-        const im = mdSafe(r.impact ?? "");
-        lines.push(`- ${risk}${li || im ? ` (${li}/${im})` : ""}`);
-      }
-      lines.push("");
-    }
-
-    if (Array.isArray(obj.testCases) && obj.testCases.length) {
-      lines.push("Draft test cases:");
-      for (const tc of obj.testCases.slice(0, 12)) {
-        const id = mdSafe(tc.id ?? "");
-        const title = mdSafe(tc.title ?? "");
-        const meta = [tc.priority, tc.level].filter(Boolean).join(" · ");
-        lines.push(
-          `- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim()
-        );
-      }
-      lines.push("");
-    } else if (
-      Array.isArray(obj.highSignalApproach?.testIdeas) &&
-      obj.highSignalApproach.testIdeas?.length
-    ) {
-      lines.push("Draft test ideas:");
-      for (const t of obj.highSignalApproach.testIdeas.slice(0, 12)) {
-        lines.push(`- ${mdSafe(t)}`);
-      }
-      lines.push("");
-    }
-
-    if (Array.isArray(obj.optionalClarifications) && obj.optionalClarifications.length) {
-      lines.push("Optional clarifications:");
-      for (const q of obj.optionalClarifications.slice(0, 3)) {
-        lines.push(`- ${mdSafe(q)}`);
-      }
-      lines.push("");
-    }
-
-    return lines.length ? lines.join("\n").trim() : null;
-  } catch {
-    return null;
-  }
-}
-
-function modeLabel(m: Mode) {
-  return m === "coach" ? "Strategy" : m === "review" ? "Test Review" : "Test Design";
-}
-
-function artifactHasReviewSignal(artifact: SessionArtifact | null): boolean {
-  if (!isRecord(artifact)) return false;
-
-  return (
-    "reviewResult" in artifact ||
-    "reviewArtifact" in artifact ||
-    "testReview" in artifact
-  );
-}
-
-export type WorkflowStage = "requirement" | "design" | "review" | "complete";
-
-export type WorkflowStatus = {
-  stage: WorkflowStage;
-  hasRequirement: boolean;
-  hasTestSuite: boolean;
-  hasReview: boolean;
-  title: string;
-  description: string;
-  nextAction: string;
-};
-
-function deriveWorkflowStatus(args: {
-  mode: Mode;
-  activeSessionMode: Mode;
-  hasRequirement: boolean;
-  hasTestSuite: boolean;
-  hasReview: boolean;
-}): WorkflowStatus {
-  const { mode, activeSessionMode, hasRequirement, hasTestSuite, hasReview } = args;
-
-  const effectiveMode = mode ?? activeSessionMode;
-
-  if (!hasRequirement) {
-    return {
-      stage: "requirement",
-      hasRequirement,
-      hasTestSuite,
-      hasReview,
-      title: "Workspace stage: Requirement refinement",
-      description:
-        "Define the feature scope, constraints, integrations, and risk focus before moving into structured test design.",
-      nextAction:
-        effectiveMode === "coach"
-          ? "Use Strategy to refine the requirement."
-          : "Switch to Strategy mode and refine the requirement.",
-    };
-  }
-
-  if (!hasTestSuite) {
-    return {
-      stage: "design",
-      hasRequirement,
-      hasTestSuite,
-      hasReview,
-      title: "Workspace stage: Test design",
-      description:
-        "A Refined Requirement is available. The next workflow step is to generate the structured test suite for this feature.",
-      nextAction:
-        effectiveMode === "cases"
-          ? "Generate the suite from the pinned Refined Requirement."
-          : "Switch to Test Design mode and generate the suite.",
-    };
-  }
-
-  if (!hasReview) {
-    return {
-      stage: "review",
-      hasRequirement,
-      hasTestSuite,
-      hasReview,
-      title: "Workspace stage: Coverage review",
-      description:
-        "A generated test suite exists. The next workflow step is to review coverage, gaps, duplication, and risk alignment.",
-      nextAction:
-        effectiveMode === "review"
-          ? "Run a review against the current generated suite."
-          : "Switch to Test Review mode and analyze the current suite.",
-    };
-  }
-
-  return {
-    stage: "complete",
-    hasRequirement,
-    hasTestSuite,
-    hasReview,
-    title: "Workspace stage: Workflow in progress",
-    description:
-      "Requirement, test design, and review artifacts are present. This workspace can now evolve through refinements, edits, and future execution-aware analysis.",
-    nextAction:
-      "Update the requirement or suite where needed, then regenerate or re-review from the latest artifact state.",
-  };
-}
-
-/** Track the last request payload needed to “Retry” safely. */
 export type LastPending = {
   requestId: string;
   text: string;
@@ -433,7 +51,6 @@ export type LastPending = {
 };
 
 export type UseChatSessionReturn = {
-  // state
   mode: Mode;
   setMode: (m: Mode) => void;
 
@@ -450,7 +67,6 @@ export type UseChatSessionReturn = {
   lastRequestId: string | null;
 
   modeLockMsg: { sessionMode: Mode; requestedMode: Mode } | null;
-
   lastPending: LastPending | null;
 
   sessions: SessionListItem[];
@@ -459,7 +75,6 @@ export type UseChatSessionReturn = {
 
   activeSessionId: string | null;
   activeSessionMode: Mode;
-
   pendingSessionClientId: string | null;
 
   messagesCursor: string | null;
@@ -478,30 +93,27 @@ export type UseChatSessionReturn = {
   setSidebarCollapsed: Dispatch<SetStateAction<boolean>>;
   sidebarWidth: number;
 
-  // M7.7: session artifact
   sessionArtifact: SessionArtifact | null;
   artifactUpdatedAt: string | null;
 
-  // M8.6: derived continuity/workflow flags
   isStrategySession: boolean;
   isTestDesignSession: boolean;
   isTestReviewSession: boolean;
   hasPinnedRequirement: boolean;
-
-  // M9 CHANGE: derived persistent suite flag
   hasPersistentTestSuite: boolean;
 
-  // M12: derived workflow progression state
   hasReviewArtifact: boolean;
   workflowStatus: WorkflowStatus;
 
-  // derived
   latestCoachSuggestions: CoachSuggestions | null;
   modeLabel: (m: Mode) => string;
 
-  // actions
   loadSessions: (reset: boolean) => Promise<void>;
-  loadSessionMessages: (sessionId: string, reset: boolean, sessionMode: Mode) => Promise<void>;
+  loadSessionMessages: (
+    sessionId: string,
+    reset: boolean,
+    sessionMode: Mode
+  ) => Promise<void>;
   selectSession: (sessionId: string, sessionMode: Mode) => Promise<void>;
 
   newChat: () => void;
@@ -513,7 +125,6 @@ export type UseChatSessionReturn = {
 
   send: (opts?: { replay?: boolean }) => Promise<void>;
 
-  // scroll helper flag (so page can keep its scroll logic)
   shouldAutoScrollRef: MutableRefObject<boolean>;
 };
 
@@ -540,7 +151,6 @@ export function useChatSession(): UseChatSessionReturn {
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSessionMode, setActiveSessionMode] = useState<Mode>("coach");
-
   const [pendingSessionClientId, setPendingSessionClientId] = useState<string | null>(null);
 
   const [messagesCursor, setMessagesCursor] = useState<string | null>(null);
@@ -553,36 +163,27 @@ export function useChatSession(): UseChatSessionReturn {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  // Scroll preference should remain stable even if UI re-renders.
   const shouldAutoScrollRef = useRef(true);
 
-  // Hydration-safe.
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const sidebarWidth = sidebarCollapsed ? 72 : 320;
 
-  // M7.7: artifact state
   const [sessionArtifact, setSessionArtifact] = useState<SessionArtifact | null>(null);
   const [artifactUpdatedAt, setArtifactUpdatedAt] = useState<string | null>(null);
 
-  // Load sidebar collapse state.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SIDEBAR_KEY);
       setSidebarCollapsed(raw === "1");
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
     try {
       localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? "1" : "0");
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [sidebarCollapsed]);
 
-  // Load persisted chat (mode/items/input).
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -641,7 +242,11 @@ export function useChatSession(): UseChatSessionReturn {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadSessionMessages = async (sessionId: string, reset: boolean, sessionMode: Mode) => {
+  const loadSessionMessages = async (
+    sessionId: string,
+    reset: boolean,
+    sessionMode: Mode
+  ) => {
     if (messagesLoading) return;
 
     setMessagesLoading(true);
@@ -674,40 +279,10 @@ export function useChatSession(): UseChatSessionReturn {
         }
       }
 
-      let effectiveSessionMode: Mode = sessionMode;
-      if (sessionMode !== "cases") {
-        const assistantMsgs = data.items
-          .filter((m) => m.role === "assistant")
-          .map((m) => m.content);
-
-        const anyReviewJson = assistantMsgs.some((t) => !!tryParseReview(t));
-        const anyLegacyCasesJson = assistantMsgs.some((t) => !!tryParseCasesLegacy(t));
-        const anyCasesText = assistantMsgs.some((t) => !!looksLikeCasesPlainText(t));
-
-        if (!anyReviewJson && (anyLegacyCasesJson || anyCasesText)) {
-          effectiveSessionMode = "cases";
-        }
-      }
-
-      const mapped: ChatItem[] = data.items
-        .filter((m) => m.role !== "system")
-        .map((m) => {
-          const isUser = m.role === "user";
-          if (isUser) return { kind: "text", role: "user", text: m.content };
-
-          if (effectiveSessionMode === "cases") {
-            const maybeCasesLegacy = tryParseCasesLegacy(m.content);
-            if (maybeCasesLegacy) {
-              return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
-            }
-            return { kind: "casesText", role: "bot", text: m.content };
-          }
-
-          const maybeReview = tryParseReview(m.content);
-          if (maybeReview) return { kind: "review", role: "bot", review: maybeReview };
-
-          return { kind: "text", role: "bot", text: m.content };
-        });
+      const { mapped } = mapHistoryItems({
+        items: data.items,
+        sessionMode,
+      });
 
       setItems((prev) => (reset ? mapped : [...mapped, ...prev]));
       setMessagesCursor(data.nextCursor);
@@ -734,7 +309,6 @@ export function useChatSession(): UseChatSessionReturn {
     setRate(null);
     setRateLimitMsg(null);
     setLastRequestId(null);
-
     setLastPending(null);
 
     setSessionArtifact(null);
@@ -760,7 +334,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     setRenamingId(null);
     setRenameValue("");
-
     setLastPending(null);
 
     setSessionArtifact(null);
@@ -844,7 +417,6 @@ export function useChatSession(): UseChatSessionReturn {
         setRateLimitMsg(null);
         setLastRequestId(null);
         setLastPending(null);
-
         setSessionArtifact(null);
         setArtifactUpdatedAt(null);
       }
@@ -934,16 +506,22 @@ export function useChatSession(): UseChatSessionReturn {
     });
 
     try {
-      const { status, headers, data } = await fetchJSONWithMeta<ChatApiResponse>("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-request-id": requestId },
-        body: JSON.stringify({
-          message: text,
-          mode: effectiveMode,
-          sessionId: sessionIdForRequest ?? undefined,
-          sessionClientId: sessionClientIdForRequest ?? undefined,
-        }),
-      });
+      const { status, headers, data } = await fetchJSONWithMeta<ChatApiResponse>(
+        "/api/chat",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-request-id": requestId,
+          },
+          body: JSON.stringify({
+            message: text,
+            mode: effectiveMode,
+            sessionId: sessionIdForRequest ?? undefined,
+            sessionClientId: sessionClientIdForRequest ?? undefined,
+          }),
+        }
+      );
 
       const serverRequestId = headers.get("x-request-id") || requestId;
       setLastRequestId(serverRequestId);
@@ -978,6 +556,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
         return;
       }
+
       if (status === 429) {
         setRateLimitMsg(
           `${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`
@@ -992,7 +571,8 @@ export function useChatSession(): UseChatSessionReturn {
             kind: "error",
             role: "bot",
             title: "Session expired",
-            details: data?.details ?? "Your sign-in session expired. Please sign in again and retry.",
+            details:
+              data?.details ?? "Your sign-in session expired. Please sign in again and retry.",
             requestId: serverRequestId,
           },
         ]);
@@ -1069,32 +649,12 @@ export function useChatSession(): UseChatSessionReturn {
         return;
       }
 
-      const rawValue =
-        isRecord(data) && typeof data["raw"] === "string"
-          ? (data["raw"] as string)
-          : undefined;
+      const finalText = getDisplayReplyText({
+        data,
+        effectiveMode,
+      });
 
-      const textToShow =
-        !data?.reply && typeof rawValue === "string"
-          ? rawValue
-          : data?.reply ?? "No reply returned";
-
-      const finalText =
-        effectiveMode === "coach" && looksLikeJson(textToShow)
-          ? tryFormatCoachJson(textToShow) ?? textToShow
-          : textToShow;
-
-      let suggestions: CoachSuggestions | null = null;
-      if (isRecord(data)) {
-        if (data["suggestions"]) {
-          suggestions = data["suggestions"] as CoachSuggestions;
-        } else if (
-          isRecord(data["coach"]) &&
-          (data["coach"] as Record<string, unknown>)["suggestions"]
-        ) {
-          suggestions = (data["coach"] as Record<string, unknown>)["suggestions"] as CoachSuggestions;
-        }
-      }
+      const suggestions = extractCoachSuggestions(data);
 
       setItems((prev) => [
         ...prev,
@@ -1127,11 +687,6 @@ export function useChatSession(): UseChatSessionReturn {
       setIsSending(false);
     }
   };
-
-  function hasSuggestions(v: unknown): v is { suggestions: CoachSuggestions } {
-    if (!v || typeof v !== "object") return false;
-    return "suggestions" in v && !!(v as { suggestions?: unknown }).suggestions;
-  }
 
   const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
     for (let i = items.length - 1; i >= 0; i--) {
@@ -1190,7 +745,6 @@ export function useChatSession(): UseChatSessionReturn {
     lastRequestId,
 
     modeLockMsg,
-
     lastPending,
 
     sessions,
@@ -1199,7 +753,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     activeSessionId,
     activeSessionMode,
-
     pendingSessionClientId,
 
     messagesCursor,
@@ -1225,7 +778,6 @@ export function useChatSession(): UseChatSessionReturn {
     isTestDesignSession,
     isTestReviewSession,
     hasPinnedRequirement,
-
     hasPersistentTestSuite,
 
     hasReviewArtifact,

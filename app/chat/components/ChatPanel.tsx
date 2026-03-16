@@ -47,7 +47,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
-import { isNearBottom } from "../hooks/useChatSession";
+import { isNearBottom } from "../hooks/useChatSession.helpers";
 
 import ChatInput from "./ChatInput";
 import ChatMessageList from "./ChatMessageList";
