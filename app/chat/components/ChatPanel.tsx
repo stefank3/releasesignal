@@ -37,6 +37,11 @@
 // CHANGE (M10 Remaining Work - Assistant Tone Alignment):
 // - shift onboarding language away from chatbot cues
 // - reinforce workflow-assistant positioning
+//
+// CHANGE (M12 Step 1 - Workflow Progression Awareness):
+// - consume workflow progression state from useChatSession
+// - extract workflow banner into a dedicated child component
+// - keep ChatPanel focused on workspace layout orchestration
 
 "use client";
 
@@ -44,16 +49,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { isNearBottom } from "../hooks/useChatSession";
 
-import ChatMessageList from "./ChatMessageList";
 import ChatInput from "./ChatInput";
+import ChatMessageList from "./ChatMessageList";
+import ChatWorkflowBanner from "./ChatWorkflowBanner";
 import StrategyPanel from "./StrategyPanel";
 
 type Props = {
   chat: UseChatSessionReturn;
   onAfterSendAction?: () => void;
-
-  // M10 UI:
-  // Theme is resolved by the page shell so child components stay consistent.
   resolvedTheme?: "light" | "dark";
 };
 
@@ -174,7 +177,6 @@ export default function ChatPanel({
     return () => mq.removeEventListener("change", apply);
   }, []);
 
-  // Keep scroll preference updated based on user scrolling
   useEffect(() => {
     const el = chatBoxRef.current;
     if (!el) return;
@@ -187,7 +189,6 @@ export default function ChatPanel({
     return () => el.removeEventListener("scroll", onScroll);
   }, [chat]);
 
-  // Auto-scroll when new items arrive (only if user is already near bottom)
   useEffect(() => {
     const el = chatBoxRef.current;
     if (!el) return;
@@ -204,13 +205,11 @@ export default function ChatPanel({
 
   const isCoachSession = effectiveSessionMode === "coach";
   const isTestDesignSession = effectiveSessionMode === "cases";
-
   const isDark = resolvedTheme === "dark";
 
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
     if (isNarrow) return "1fr";
-
     return "minmax(0, 1fr) 400px";
   }, [isCoachSession, isNarrow]);
 
@@ -257,9 +256,6 @@ export default function ChatPanel({
     lineHeight: 1.35,
   };
 
-  // Show the onboarding hint only for empty sessions before the first interaction.
-  const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
-
   const strategyPanelWrapStyle: React.CSSProperties = {
     border: isDark
       ? "1px solid rgba(255,255,255,0.12)"
@@ -272,11 +268,6 @@ export default function ChatPanel({
       ? "0 8px 30px rgba(0,0,0,0.18)"
       : "0 8px 24px rgba(15,23,42,0.06)",
   };
-
-  const canUseRefinedRequirement =
-    isTestDesignSession &&
-    chat.hasPinnedRequirement &&
-    !!buildRefinedRequirementInput(chat.sessionArtifact);
 
   const helperBannerStyle: React.CSSProperties = {
     display: "flex",
@@ -307,6 +298,13 @@ export default function ChatPanel({
     whiteSpace: "nowrap",
   };
 
+  const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
+
+  const canUseRefinedRequirement =
+    isTestDesignSession &&
+    chat.hasPinnedRequirement &&
+    !!buildRefinedRequirementInput(chat.sessionArtifact);
+
   return (
     <div
       style={{
@@ -316,7 +314,6 @@ export default function ChatPanel({
         gridTemplateColumns,
       }}
     >
-      {/* Left: unified chat surface (messages + input) */}
       <div>
         {showOnboardingHint ? (
           <OnboardingHint
@@ -324,6 +321,11 @@ export default function ChatPanel({
             resolvedTheme={resolvedTheme}
           />
         ) : null}
+
+        <ChatWorkflowBanner
+          status={chat.workflowStatus}
+          resolvedTheme={resolvedTheme}
+        />
 
         <div style={leftPanelStyle}>
           <div ref={chatBoxRef} style={chatBoxStyle}>
@@ -390,7 +392,6 @@ export default function ChatPanel({
         </div>
       </div>
 
-      {/* Right: Strategy panel */}
       {isCoachSession ? (
         <div style={strategyPanelWrapStyle}>
           <StrategyPanel chat={chat} resolvedTheme={resolvedTheme} />

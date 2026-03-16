@@ -52,6 +52,7 @@ import { getOpenAITraceFromError } from "@/lib/openai";
 import {
   applyGuidedArtifactPatch,
   persistGeneratedSuiteArtifact,
+  persistReviewArtifact,
   type RequirementRefinedTelemetry,
 } from "@/lib/server/chat/artifactUpdateService";
 
@@ -524,6 +525,24 @@ export async function POST(req: Request) {
 
     sessionArtifact = suitePersistResult.sessionArtifact;
     artifactUpdatedAtIso = suitePersistResult.artifactUpdatedAtIso;
+
+        /*
+    ---------------------------------------------------------
+    REVIEW ARTIFACT PERSIST
+    ---------------------------------------------------------
+    M12:
+    Persist the latest review result into session artifact state so
+    review remains aligned with the generated suite across reloads/history.
+    */
+    const reviewPersistResult = await persistReviewArtifact({
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      reviewResult: reviewObj,
+    });
+
+    sessionArtifact = reviewPersistResult.sessionArtifact;
+    artifactUpdatedAtIso = reviewPersistResult.artifactUpdatedAtIso;
 
     /*
     ---------------------------------------------------------

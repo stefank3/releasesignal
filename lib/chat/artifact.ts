@@ -15,8 +15,30 @@
 // - suite size
 // - whether a suite already existed
 // - whether a requirement has structured sections
+//
+// M12 CHANGE:
+// - add optional persisted review artifact support
+// - add optional feature-centric workspace wrapper
+// - keep existing top-level refinedRequirement + testSuite backward compatible
 
 import { Prisma } from "@prisma/client";
+
+export type ReviewBreakdown = {
+  businessRelevance: number;
+  riskCoverage: number;
+  designQuality: number;
+  levelAndScope: number;
+  diagnosticValue: number;
+};
+
+export type PersistedReviewResult = {
+  score: number;
+  verdict: string;
+  breakdown: ReviewBreakdown;
+  riskGaps: string[];
+  antiPatterns: string[];
+  improvements: string[];
+};
 
 export type RefinedRequirement = {
   objective?: string;
@@ -29,10 +51,22 @@ export type RefinedRequirement = {
 };
 
 // M9 CHANGE: persistent test case model for evolving suites.
+// M12 CHANGE: add optional structured/editable fields without breaking old usage.
 export type TestCase = {
   id: string; // e.g. TC-001
   title: string; // short title used for continuity + duplicate avoidance
   body: string; // full rendered case text
+
+  // M12 foundation:
+  // optional structured fields for future editable suite behavior.
+  priority?: "P0" | "P1" | "P2";
+  type?: "UI" | "API" | "Integration" | "E2E";
+  preconditions?: string[];
+  steps?: string[];
+  expectedResults?: string[];
+  tags?: string[];
+  edited?: boolean;
+  notes?: string;
 };
 
 // M9 CHANGE: suite artifact stored inside ChatSession.artifactJson.
@@ -47,12 +81,29 @@ export type TestSuiteArtifact = {
   lastUpdatedAt: string;
 };
 
+// M12:
+// Feature-centric grouping wrapper.
+// This is optional for now so current top-level artifact access remains valid.
+export type FeatureWorkspaceArtifact = {
+  featureTitle?: string;
+  refinedRequirement?: RefinedRequirement;
+  testSuite?: TestSuiteArtifact;
+  reviewResult?: PersistedReviewResult;
+  lastUpdatedAt?: string;
+};
+
 export type SessionArtifact = {
   refinedRequirement?: RefinedRequirement;
 
   // M9 CHANGE: optional test suite state for incremental Cases mode.
   // M11 NOTE: this is the structured source of truth for suite telemetry.
   testSuite?: TestSuiteArtifact;
+
+  // M12 CHANGE: persisted review result for design/review consistency.
+  reviewResult?: PersistedReviewResult;
+
+  // M12 CHANGE: optional feature-centric grouping wrapper.
+  featureWorkspace?: FeatureWorkspaceArtifact;
 };
 
 export function isGuidedClarificationAnswer(message: string): boolean {
@@ -180,6 +231,10 @@ export function mergeArtifact(existing: SessionArtifact | null, patch: Partial<R
     // M11 NOTE: this prevents telemetry context from being lost when only the
     // requirement artifact is being updated.
     ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
+
+    // M12 CHANGE: preserve persisted review + feature workspace when requirement updates.
+    ...(prev.reviewResult ? { reviewResult: prev.reviewResult } : {}),
+    ...(prev.featureWorkspace ? { featureWorkspace: prev.featureWorkspace } : {}),
   };
 }
 
@@ -242,6 +297,12 @@ export function artifactToContextText(artifact: SessionArtifact): string {
         lines.push(`  - ${c.id}: ${c.title}`);
       }
     }
+  }
+
+  if (artifact.reviewResult) {
+    lines.push("");
+    lines.push(`LATEST REVIEW (pinned): score ${artifact.reviewResult.score}/100`);
+    lines.push(`- Verdict: ${artifact.reviewResult.verdict}`);
   }
 
   return lines.join("\n");

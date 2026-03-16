@@ -11,6 +11,14 @@
 // - classify guided requirement refinement outcome
 // - return structured telemetry info to the caller
 // - do NOT emit telemetry directly from this service yet
+//
+// M12 CHANGE:
+// - add persisted review artifact writes after Review flow
+// - keep route.ts orchestration-only
+// - prepare artifact-driven design/review consistency
+// - mirror review into featureWorkspace only when that wrapper already exists
+
+import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
 import {
   type SessionArtifact,
@@ -38,6 +46,42 @@ export type RequirementRefinedTelemetry = {
     acceptanceCriteriaCount: number;
   };
 };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+/**
+ * M12:
+ * Persist the latest review result as artifact state so Review is not only
+ * represented as a chat response. This is the first backend step toward
+ * stronger suite/review consistency.
+ *
+ * Notes:
+ * - keeps existing top-level artifact structure intact
+ * - mirrors into featureWorkspace.reviewResult only if featureWorkspace exists
+ * - avoids forcing broader artifact migrations in this step
+ */
+function withUpdatedReviewArtifact(
+  artifact: SessionArtifact | null,
+  reviewResult: ReviewResult
+): SessionArtifact {
+  const base = isRecord(artifact) ? { ...artifact } : {};
+  const next = {
+    ...base,
+    reviewResult,
+  } as SessionArtifact & Record<string, unknown>;
+
+  if (isRecord(base.featureWorkspace)) {
+    next.featureWorkspace = {
+      ...base.featureWorkspace,
+      reviewResult,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+
+  return next as SessionArtifact;
+}
 
 export async function applyGuidedArtifactPatch(args: {
   sessionId: string;
@@ -123,6 +167,38 @@ export async function persistGeneratedSuiteArtifact(args: {
   const nextArtifact = withUpdatedTestSuiteArtifact(
     args.sessionArtifact,
     args.nextTestSuiteArtifact
+  );
+
+  const saved = await saveSessionArtifact({
+    sessionId: args.sessionId,
+    artifact: nextArtifact,
+  });
+
+  return {
+    sessionArtifact: saved.artifact,
+    artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
+  };
+}
+
+export async function persistReviewArtifact(args: {
+  sessionId: string;
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+  reviewResult: ReviewResult | null;
+}): Promise<{
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+}> {
+  if (!args.reviewResult) {
+    return {
+      sessionArtifact: args.sessionArtifact,
+      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+    };
+  }
+
+  const nextArtifact = withUpdatedReviewArtifact(
+    args.sessionArtifact,
+    args.reviewResult
   );
 
   const saved = await saveSessionArtifact({

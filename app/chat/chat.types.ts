@@ -1,6 +1,13 @@
 // app/chat/chat.types.ts
 // M7 Phase 2 (Structural Refactor)
 // CHANGE: extracted type definitions from page.tsx (no behavior change).
+//
+// CHANGE (M12 Foundation):
+// - add workflow progression types
+// - add forward-compatible editable test suite case shape
+// - add optional persisted review artifact support
+// - add feature-centric workspace grouping type
+// - keep all existing M7/M9 contracts backward compatible
 
 /**
  * Chat modes:
@@ -85,11 +92,51 @@ export type RefinedRequirement = {
   acceptanceCriteria?: string[];
 };
 
-// M9 CHANGE: persistent suite types mirrored from backend artifact model.
+// ==============================
+// M12: Workflow progression types
+// ==============================
+export type WorkflowStage = "requirement" | "design" | "review" | "complete";
+
+export type WorkflowStatus = {
+  stage: WorkflowStage;
+  hasRequirement: boolean;
+  hasTestSuite: boolean;
+  hasReview: boolean;
+  title: string;
+  description: string;
+  nextAction: string;
+};
+
+// ==============================
+// M9 / M12: Persistent suite types
+// ==============================
+
+/**
+ * M9 origin:
+ * persisted suite was intentionally lightweight (id/title/body).
+ *
+ * M12 foundation:
+ * keep those fields stable, but add optional structured fields so generated
+ * cases can evolve into editable artifacts without breaking current consumers.
+ */
 export type TestSuiteCase = {
   id: string; // e.g. TC-001
   title: string;
   body: string;
+
+  // M12 forward-compatible editable structure
+  priority?: TestCasePriority;
+  type?: TestCaseType;
+  preconditions?: string[];
+  steps?: string[];
+  expectedResults?: string[];
+  tags?: string[];
+
+  // Tracks whether the case has been manually adjusted after generation.
+  edited?: boolean;
+
+  // Optional freeform note for future QA edits / workspace annotations.
+  notes?: string;
 };
 
 export type TestSuiteArtifact = {
@@ -99,10 +146,39 @@ export type TestSuiteArtifact = {
   lastUpdatedAt: string;
 };
 
+// ==============================
+// M12: Feature-centric workspace grouping
+// ==============================
+export type FeatureWorkspaceArtifact = {
+  featureTitle?: string;
+  refinedRequirement?: RefinedRequirement;
+  testSuite?: TestSuiteArtifact;
+  reviewResult?: ReviewResult;
+  lastUpdatedAt?: string;
+};
+
+/**
+ * Current persisted session artifact.
+ *
+ * Backward compatibility:
+ * - refinedRequirement remains top-level
+ * - testSuite remains top-level
+ *
+ * M12 foundation:
+ * - add optional persisted review result
+ * - add optional feature-centric grouping wrapper
+ */
 export type SessionArtifact = {
   refinedRequirement?: RefinedRequirement;
+
   // M9 CHANGE: evolving persisted test suite for Cases mode continuity.
   testSuite?: TestSuiteArtifact;
+
+  // M12: optional persisted review artifact for stronger suite/review alignment.
+  reviewResult?: ReviewResult;
+
+  // M12: optional workspace grouping model. Not required yet by existing UI.
+  featureWorkspace?: FeatureWorkspaceArtifact;
 };
 
 /**

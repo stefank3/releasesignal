@@ -22,6 +22,11 @@
 // 10) ADD: derived flag for persisted test suite presence
 // 11) KEEP: artifact hydration logic unchanged; expanded SessionArtifact now carries testSuite automatically
 // 12) ADD: graceful client-side oversized-input handling before hitting /api/chat
+//
+// CHANGE (M12 Step 1 - Workflow Progression State):
+// 13) ADD: derived workflow status model from persisted artifacts + visible review state
+// 14) KEEP: no backend contract change; UI can now render workflow progression from hook state
+// 15) GOAL: move progression truth out of ChatPanel and into session orchestration
 
 "use client";
 
@@ -167,7 +172,8 @@ async function fetchJSONWithMeta<T>(
     first.startsWith("<html") ||
     first.startsWith("<");
 
-  const looksJson = ct.includes("application/json") || first.startsWith("{") || first.startsWith("[");
+  const looksJson =
+    ct.includes("application/json") || first.startsWith("{") || first.startsWith("[");
 
   if (!looksJson) {
     const hint = looksHtml
@@ -323,6 +329,100 @@ function modeLabel(m: Mode) {
   return m === "coach" ? "Strategy" : m === "review" ? "Test Review" : "Test Design";
 }
 
+function artifactHasReviewSignal(artifact: SessionArtifact | null): boolean {
+  if (!isRecord(artifact)) return false;
+
+  return (
+    "reviewResult" in artifact ||
+    "reviewArtifact" in artifact ||
+    "testReview" in artifact
+  );
+}
+
+export type WorkflowStage = "requirement" | "design" | "review" | "complete";
+
+export type WorkflowStatus = {
+  stage: WorkflowStage;
+  hasRequirement: boolean;
+  hasTestSuite: boolean;
+  hasReview: boolean;
+  title: string;
+  description: string;
+  nextAction: string;
+};
+
+function deriveWorkflowStatus(args: {
+  mode: Mode;
+  activeSessionMode: Mode;
+  hasRequirement: boolean;
+  hasTestSuite: boolean;
+  hasReview: boolean;
+}): WorkflowStatus {
+  const { mode, activeSessionMode, hasRequirement, hasTestSuite, hasReview } = args;
+
+  const effectiveMode = mode ?? activeSessionMode;
+
+  if (!hasRequirement) {
+    return {
+      stage: "requirement",
+      hasRequirement,
+      hasTestSuite,
+      hasReview,
+      title: "Workspace stage: Requirement refinement",
+      description:
+        "Define the feature scope, constraints, integrations, and risk focus before moving into structured test design.",
+      nextAction:
+        effectiveMode === "coach"
+          ? "Use Strategy to refine the requirement."
+          : "Switch to Strategy mode and refine the requirement.",
+    };
+  }
+
+  if (!hasTestSuite) {
+    return {
+      stage: "design",
+      hasRequirement,
+      hasTestSuite,
+      hasReview,
+      title: "Workspace stage: Test design",
+      description:
+        "A Refined Requirement is available. The next workflow step is to generate the structured test suite for this feature.",
+      nextAction:
+        effectiveMode === "cases"
+          ? "Generate the suite from the pinned Refined Requirement."
+          : "Switch to Test Design mode and generate the suite.",
+    };
+  }
+
+  if (!hasReview) {
+    return {
+      stage: "review",
+      hasRequirement,
+      hasTestSuite,
+      hasReview,
+      title: "Workspace stage: Coverage review",
+      description:
+        "A generated test suite exists. The next workflow step is to review coverage, gaps, duplication, and risk alignment.",
+      nextAction:
+        effectiveMode === "review"
+          ? "Run a review against the current generated suite."
+          : "Switch to Test Review mode and analyze the current suite.",
+    };
+  }
+
+  return {
+    stage: "complete",
+    hasRequirement,
+    hasTestSuite,
+    hasReview,
+    title: "Workspace stage: Workflow in progress",
+    description:
+      "Requirement, test design, and review artifacts are present. This workspace can now evolve through refinements, edits, and future execution-aware analysis.",
+    nextAction:
+      "Update the requirement or suite where needed, then regenerate or re-review from the latest artifact state.",
+  };
+}
+
 /** Track the last request payload needed to “Retry” safely. */
 export type LastPending = {
   requestId: string;
@@ -390,6 +490,10 @@ export type UseChatSessionReturn = {
 
   // M9 CHANGE: derived persistent suite flag
   hasPersistentTestSuite: boolean;
+
+  // M12: derived workflow progression state
+  hasReviewArtifact: boolean;
+  workflowStatus: WorkflowStatus;
 
   // derived
   latestCoachSuggestions: CoachSuggestions | null;
@@ -552,14 +656,10 @@ export function useChatSession(): UseChatSessionReturn {
         hasMore?: boolean;
         sessionMode?: Mode;
         effectiveMode?: Mode;
-
-        // M7.7: artifact hydration from history GET
         artifact?: SessionArtifact | null;
         artifactUpdatedAt?: string | null;
       }>(url.toString());
 
-      // M7.7 / M9:
-      // hydrate artifact on reset (select session).
       if (reset) {
         setSessionArtifact(data.artifact ?? null);
         setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
@@ -574,7 +674,6 @@ export function useChatSession(): UseChatSessionReturn {
         }
       }
 
-      // Upgrade mis-labeled sessions to cases if content strongly suggests it.
       let effectiveSessionMode: Mode = sessionMode;
       if (sessionMode !== "cases") {
         const assistantMsgs = data.items
@@ -638,7 +737,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
-    // M7.7 / M9: artifact will be hydrated by loadSessionMessages(reset=true).
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -665,7 +763,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending(null);
 
-    // M7.7 / M9: new chat has no artifact until the server returns one.
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -689,7 +786,6 @@ export function useChatSession(): UseChatSessionReturn {
     setLastRequestId(null);
     setLastPending(null);
 
-    // M7.7 / M9
     setSessionArtifact(null);
     setArtifactUpdatedAt(null);
 
@@ -749,7 +845,6 @@ export function useChatSession(): UseChatSessionReturn {
         setLastRequestId(null);
         setLastPending(null);
 
-        // M7.7 / M9
         setSessionArtifact(null);
         setArtifactUpdatedAt(null);
       }
@@ -776,8 +871,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
 
-    // M9 CHANGE: graceful client-side oversized-input handling.
-    // We stop before creating a server error and explain how to proceed.
     if (text.length > MAX_MESSAGE_CHARS) {
       setLastRequestId(requestId);
       setItems((prev) => [
@@ -832,7 +925,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     setIsSending(true);
 
-    // ✅ this is what Retry reuses.
     setLastPending({
       requestId,
       text,
@@ -858,9 +950,6 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.rate) setRate(data.rate);
 
-      // M7.7 / M9:
-      // hydrate artifact from /api/chat response (success or replay).
-      // Expanded SessionArtifact now carries refinedRequirement + optional testSuite.
       const artifactPayload = readArtifactFromResponse(data);
       if (artifactPayload) {
         setSessionArtifact(artifactPayload.artifact);
@@ -980,7 +1069,6 @@ export function useChatSession(): UseChatSessionReturn {
         return;
       }
 
-      // Default text reply (coach mode can include suggestions).
       const rawValue =
         isRecord(data) && typeof data["raw"] === "string"
           ? (data["raw"] as string)
@@ -1040,13 +1128,11 @@ export function useChatSession(): UseChatSessionReturn {
     }
   };
 
-  // ✅ CHANGE (BUGFIX): these MUST be defined at hook scope, not inside send()
   function hasSuggestions(v: unknown): v is { suggestions: CoachSuggestions } {
     if (!v || typeof v !== "object") return false;
     return "suggestions" in v && !!(v as { suggestions?: unknown }).suggestions;
   }
 
-  // ✅ Derived: grab suggestions from the latest assistant message (coach mode only)
   const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
@@ -1057,15 +1143,35 @@ export function useChatSession(): UseChatSessionReturn {
     return null;
   }, [items]);
 
-  // M8.6: lightweight workflow/continuity flags for UI components.
   const isStrategySession = mode === "coach" && activeSessionMode === "coach";
   const isTestDesignSession = mode === "cases" && activeSessionMode === "cases";
   const isTestReviewSession = mode === "review" && activeSessionMode === "review";
   const hasPinnedRequirement = !!sessionArtifact?.refinedRequirement;
 
-  // M9 CHANGE: derived suite flag for evolving test suite UI.
   const hasPersistentTestSuite =
     !!sessionArtifact?.testSuite && Array.isArray(sessionArtifact.testSuite.cases);
+
+  const hasReviewArtifact =
+    artifactHasReviewSignal(sessionArtifact) ||
+    items.some((it) => it.kind === "review" && it.role === "bot");
+
+  const workflowStatus = useMemo(
+    () =>
+      deriveWorkflowStatus({
+        mode,
+        activeSessionMode,
+        hasRequirement: hasPinnedRequirement,
+        hasTestSuite: hasPersistentTestSuite,
+        hasReview: hasReviewArtifact,
+      }),
+    [
+      mode,
+      activeSessionMode,
+      hasPinnedRequirement,
+      hasPersistentTestSuite,
+      hasReviewArtifact,
+    ]
+  );
 
   return {
     mode,
@@ -1112,18 +1218,18 @@ export function useChatSession(): UseChatSessionReturn {
     setSidebarCollapsed,
     sidebarWidth,
 
-    // M7.7
     sessionArtifact,
     artifactUpdatedAt,
 
-    // M8.6
     isStrategySession,
     isTestDesignSession,
     isTestReviewSession,
     hasPinnedRequirement,
 
-    // M9
     hasPersistentTestSuite,
+
+    hasReviewArtifact,
+    workflowStatus,
 
     latestCoachSuggestions,
     modeLabel,
