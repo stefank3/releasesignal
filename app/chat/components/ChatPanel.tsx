@@ -52,6 +52,7 @@ import { isNearBottom } from "../hooks/useChatSession.helpers";
 import ChatInput from "./ChatInput";
 import ChatMessageList from "./ChatMessageList";
 import ChatWorkflowBanner from "./ChatWorkflowBanner";
+import FeatureWorkspaceSummary from "./FeatureWorkspaceSummary";
 import StrategyPanel from "./StrategyPanel";
 
 type Props = {
@@ -321,6 +322,11 @@ export default function ChatPanel({
             resolvedTheme={resolvedTheme}
           />
         ) : null}
+
+        <FeatureWorkspaceSummary
+          chat={chat}
+          resolvedTheme={resolvedTheme}
+        />
 
         <ChatWorkflowBanner
           status={chat.workflowStatus}
