@@ -267,3 +267,85 @@ export async function DELETE(_req: NextRequest, ctx: Ctx) {
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
+
+/**
+ * PATCH /api/chat/history/:sessionId/artifact
+ *
+ * M12 Step 4B:
+ * Persist updated SessionArtifact (e.g. editable test suite)
+ *
+ * SECURITY:
+ * - Requires Auth0 session
+ * - Only allows updating own session
+ */
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const authSession = await auth0.getSession();
+  const sub = authSession?.user?.sub;
+
+  if (!sub) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const params = await resolveParams(ctx);
+  const sessionId = params?.sessionId;
+
+  if (!sessionId) {
+    return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
+  }
+
+  let body: unknown;
+
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const artifact = (body as any)?.artifact;
+
+  if (!artifact || typeof artifact !== "object") {
+    return NextResponse.json(
+      { error: "Invalid artifact payload" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    // SECURITY: ownership check
+    const existing = await prisma.chatSession.findFirst({
+      where: { id: sessionId, auth0Sub: sub },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const updated = await prisma.chatSession.update({
+      where: { id: sessionId },
+      data: {
+        artifactJson: artifact,
+        artifactUpdatedAt: new Date(),
+      },
+      select: {
+        artifactJson: true,
+        artifactUpdatedAt: true,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      artifact: readArtifact(updated.artifactJson),
+      artifactUpdatedAt: updated.artifactUpdatedAt
+        ? updated.artifactUpdatedAt.toISOString()
+        : null,
+    });
+  } catch (err) {
+    console.error("Artifact update failed", err);
+
+    return NextResponse.json(
+      { error: "Failed to update artifact" },
+      { status: 500 }
+    );
+  }
+}

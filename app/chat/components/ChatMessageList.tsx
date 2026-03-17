@@ -16,10 +16,17 @@
 // - add theme-aware message rendering
 // - remove hardcoded dark-only text/surface assumptions
 // - keep behavior unchanged while supporting light / dark / system themes
+//
+// CHANGE (M12 Step 4B):
+// - add callback bridge for editable test suite persistence
+// - allow CasesTextCard to send edited cases back into session orchestration
+// - keep this component as a prop-passing layer only
 
 "use client";
 
 import React from "react";
+
+import type { TestCase } from "@/lib/chat/artifact";
 
 import type { ChatItem, Mode, ReviewResult, CasesResult } from "../chat.types";
 
@@ -127,20 +134,32 @@ function tryFormatCoachJson(text: string): string | null {
   }
 }
 
+type Props = {
+  items: ChatItem[];
+  mode: Mode;
+  resolvedTheme?: "light" | "dark";
+
+  // M12 Step 4B:
+  // callback passed down from session orchestration so editable cases
+  // can persist through the artifact layer.
+  onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
+};
+
 export default function ChatMessageList({
   items,
   mode,
   resolvedTheme = "dark",
-}: {
-  items: ChatItem[];
-  mode: Mode;
-  resolvedTheme?: "light" | "dark";
-}) {
+  onUpdateTestSuiteAction,
+}: Props) {
   const isDark = resolvedTheme === "dark";
 
-  const emptyStateColor = isDark ? "rgba(255,255,255,0.78)" : "rgba(15,23,42,0.78)";
+  const emptyStateColor = isDark
+    ? "rgba(255,255,255,0.78)"
+    : "rgba(15,23,42,0.78)";
   const requestIdColor = isDark ? "#ffffff" : "#0f172a";
-  const unknownColor = isDark ? "rgba(255,255,255,0.7)" : "rgba(15,23,42,0.7)";
+  const unknownColor = isDark
+    ? "rgba(255,255,255,0.7)"
+    : "rgba(15,23,42,0.7)";
 
   if (items.length === 0) {
     return (
@@ -220,7 +239,7 @@ export default function ChatMessageList({
                   <div style={bubbleStyle}>
                     {textToShow}
 
-                    {it.requestId && (
+                    {it.requestId ? (
                       <div
                         style={{
                           marginTop: 10,
@@ -230,7 +249,7 @@ export default function ChatMessageList({
                       >
                         requestId: {it.requestId.slice(0, 8)}…
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -280,7 +299,10 @@ export default function ChatMessageList({
                 </div>
               ) : null}
 
-              <CasesTextCard text={it.text} />
+              <CasesTextCard
+                text={it.text}
+                onUpdateTestSuiteAction={onUpdateTestSuiteAction}
+              />
             </div>
           );
         }
@@ -311,7 +333,9 @@ export default function ChatMessageList({
                 color: isDark ? "#ffffff" : "#7f1d1d",
               }}
             >
-              <div style={{ fontWeight: 950, marginBottom: 10 }}>{it.title}</div>
+              <div style={{ fontWeight: 950, marginBottom: 10 }}>
+                {it.title}
+              </div>
               <pre
                 style={{
                   margin: 0,
@@ -327,7 +351,10 @@ export default function ChatMessageList({
         }
 
         return (
-          <div key={key} style={{ fontSize: 12, opacity: 0.7, color: unknownColor }}>
+          <div
+            key={key}
+            style={{ fontSize: 12, opacity: 0.7, color: unknownColor }}
+          >
             Unknown message type
           </div>
         );

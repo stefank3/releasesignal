@@ -1,17 +1,15 @@
 // app/chat/cards/CasesTextCard.tsx
-// M7 Phase 2 (Structural Refactor)
-// CHANGE: extracted CasesTextCard from page.tsx (no behavior change).
-//
-// CHANGE (M12 Step 4 - Editable Test Suite UX, first pass):
-// - parse generated plain-text suite into visible case blocks
-// - allow local editing per test case
-// - allow copy of edited suite output
-// - preserve raw fallback rendering when parsing is weak
-// - keep persistence/backend unchanged for now
+// M12 Step 4 — Editable Test Suite UX
+// CHANGE:
+// - keep editable local suite UI
+// - add explicit persistence callback bridge
+// - persist edited cases through session orchestration
+// - use keyed inner component so local edit state resets cleanly when new suite text arrives
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
+import type { TestCase } from "@/lib/chat/artifact";
 
 type ParsedCase = {
   id: string;
@@ -19,22 +17,31 @@ type ParsedCase = {
   body: string;
 };
 
+type Props = {
+  text: string;
+  onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
+};
+
 function SmallButton(args: {
   children: React.ReactNode;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={args.onClick}
+      disabled={args.disabled}
       style={{
         padding: "6px 10px",
         borderRadius: 10,
         border: "1px solid rgba(255,255,255,0.18)",
-        background: "rgba(255,255,255,0.06)",
-        color: "#fff",
+        background: args.disabled
+          ? "rgba(255,255,255,0.03)"
+          : "rgba(255,255,255,0.06)",
+        color: args.disabled ? "rgba(255,255,255,0.45)" : "#fff",
         fontWeight: 900,
-        cursor: "pointer",
+        cursor: args.disabled ? "not-allowed" : "pointer",
       }}
     >
       {args.children}
@@ -67,7 +74,9 @@ function parseCases(text: string): ParsedCase[] {
     const idMatch = firstLine.match(/^(TC-\d{1,4})\b/i);
     const id = idMatch?.[1] ?? `TC-${String(i + 1).padStart(3, "0")}`;
 
-    const title = firstLine.replace(/^(TC-\d{1,4})\b\s*[:\-–—]?\s*/i, "").trim();
+    const title = firstLine
+      .replace(/^(TC-\d{1,4})\b\s*[:\-–—]?\s*/i, "")
+      .trim();
 
     cases.push({
       id,
@@ -84,28 +93,38 @@ function rebuildSuiteText(cases: ParsedCase[], fallbackText: string): string {
   return cases.map((c) => c.body.trim()).join("\n\n");
 }
 
-export default function CasesTextCard({ text }: { text: string }) {
+function toPersistedCases(cases: ParsedCase[]): TestCase[] {
+  return cases.map((c) => ({
+    id: c.id,
+    title: c.title || "Untitled test case",
+    body: c.body,
+  }));
+}
+
+function CasesTextCardContent({
+  parsedCases,
+  text,
+  hasStructuredCases,
+  onUpdateTestSuiteAction,
+}: {
+  parsedCases: ParsedCase[];
+  text: string;
+  hasStructuredCases: boolean;
+  onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
+}) {
   const [toast, setToast] = useState<string | null>(null);
-  const [editedCases, setEditedCases] = useState<ParsedCase[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editedCases, setEditedCases] = useState<ParsedCase[]>(parsedCases);
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  const parsedCases = useMemo(() => parseCases(text), [text]);
-  const hasStructuredCases = parsedCases.length > 0;
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 1200);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  useEffect(() => {
-    setEditedCases(parsedCases);
-    setEditingId(null);
-  }, [parsedCases]);
 
   const renderedText = useMemo(() => {
     return rebuildSuiteText(editedCases, text);
   }, [editedCases, text]);
+
+  const isDirty = useMemo(() => {
+    if (!hasStructuredCases) return false;
+    return renderedText.trim() !== text.trim();
+  }, [hasStructuredCases, renderedText, text]);
 
   const copyText = async () => {
     try {
@@ -113,7 +132,7 @@ export default function CasesTextCard({ text }: { text: string }) {
       setToast("Copied ✓");
       return;
     } catch {
-      // continue to fallback below
+      // continue to fallback
     }
 
     try {
@@ -121,23 +140,38 @@ export default function CasesTextCard({ text }: { text: string }) {
       textarea.value = renderedText;
       textarea.style.position = "fixed";
       textarea.style.left = "-9999px";
-      textarea.style.top = "0";
-      textarea.setAttribute("readonly", "true");
 
       document.body.appendChild(textarea);
       textarea.select();
-      textarea.setSelectionRange(0, textarea.value.length);
-
-      const ok = document.execCommand("copy");
+      document.execCommand("copy");
       document.body.removeChild(textarea);
 
-      setToast(ok ? "Copied ✓" : "Copy failed (clipboard blocked)");
+      setToast("Copied ✓");
     } catch {
-      setToast("Copy failed (clipboard blocked)");
+      setToast("Copy failed");
     }
   };
 
-  const updateCaseField = (id: string, field: "title" | "body", value: string) => {
+  const saveSuite = async () => {
+    if (!onUpdateTestSuiteAction || !hasStructuredCases || !isDirty) return;
+
+    try {
+      setIsSaving(true);
+      await onUpdateTestSuiteAction(toPersistedCases(editedCases));
+      setToast("Saved ✓");
+      setEditingId(null);
+    } catch {
+      setToast("Save failed");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateCaseField = (
+    id: string,
+    field: "title" | "body",
+    value: string
+  ) => {
     setEditedCases((prev) =>
       prev.map((c) => {
         if (c.id !== id) return c;
@@ -145,7 +179,10 @@ export default function CasesTextCard({ text }: { text: string }) {
         if (field === "title") {
           const nextTitle = value.trim();
           const nextBodyLines = c.body.split("\n");
-          nextBodyLines[0] = `${c.id}: ${nextTitle || "Untitled test case"}`;
+
+          nextBodyLines[0] = `${c.id}: ${
+            nextTitle || "Untitled test case"
+          }`;
 
           return {
             ...c,
@@ -169,7 +206,6 @@ export default function CasesTextCard({ text }: { text: string }) {
         borderRadius: 18,
         padding: 20,
         background: "rgba(255,255,255,0.05)",
-        boxShadow: "0 10px 26px rgba(0,0,0,0.22)",
         color: "#fff",
       }}
     >
@@ -177,90 +213,80 @@ export default function CasesTextCard({ text }: { text: string }) {
         style={{
           display: "flex",
           justifyContent: "space-between",
-          gap: 14,
+          gap: 12,
           alignItems: "flex-start",
           flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 15, fontWeight: 950 }}>Generated Test Cases</div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
-            {hasStructuredCases
-              ? "Editable workspace view for generated test cases"
-              : "Copy-paste into Jira/Xray"}
+        <div>
+          <div style={{ fontWeight: 900 }}>Generated Test Cases</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            {hasStructuredCases ? "Editable workspace" : "Copy-paste output"}
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <SmallButton onClick={copyText}>Copy</SmallButton>
+
+          {hasStructuredCases ? (
+            <SmallButton
+              onClick={() => {
+                void saveSuite();
+              }}
+              disabled={!isDirty || isSaving || !onUpdateTestSuiteAction}
+            >
+              {isSaving ? "Saving..." : "Save"}
+            </SmallButton>
+          ) : null}
         </div>
       </div>
 
       {toast ? (
-        <div
-          style={{
-            marginTop: 12,
-            display: "inline-block",
-            padding: "6px 10px",
-            borderRadius: 999,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(255,255,255,0.06)",
-            color: "#fff",
-            fontSize: 12,
-            fontWeight: 800,
-          }}
-        >
-          {toast}
-        </div>
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.9 }}>{toast}</div>
       ) : null}
 
       {hasStructuredCases ? (
-        <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-          <div
-            style={{
-              fontSize: 12,
-              color: "rgba(255,255,255,0.72)",
-              lineHeight: 1.5,
-            }}
-          >
-            Local editing is enabled for this generated suite. You can adjust wording
-            and then copy the updated output.
-          </div>
-
-          {editedCases.map((testCase) => {
-            const isEditing = editingId === testCase.id;
+        <div style={{ marginTop: 14 }}>
+          {editedCases.map((tc) => {
+            const isEditing = editingId === tc.id;
 
             return (
               <div
-                key={testCase.id}
+                key={tc.id}
                 style={{
+                  marginBottom: 12,
                   border: "1px solid rgba(255,255,255,0.10)",
-                  borderRadius: 16,
-                  padding: 14,
-                  background: "rgba(0,0,0,0.18)",
-                  display: "grid",
-                  gap: 10,
+                  borderRadius: 14,
+                  padding: 12,
+                  background: "rgba(0,0,0,0.16)",
                 }}
               >
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
-                    gap: 10,
+                    gap: 12,
                     alignItems: "flex-start",
-                    flexWrap: "wrap",
+                    marginBottom: 10,
                   }}
                 >
-                  <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.62)", fontWeight: 900 }}>
-                      {testCase.id}
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        opacity: 0.65,
+                        fontWeight: 900,
+                        marginBottom: 4,
+                      }}
+                    >
+                      {tc.id}
                     </div>
 
                     {isEditing ? (
                       <input
-                        value={testCase.title}
+                        value={tc.title}
                         onChange={(e) =>
-                          updateCaseField(testCase.id, "title", e.target.value)
+                          updateCaseField(tc.id, "title", e.target.value)
                         }
                         style={{
                           width: "100%",
@@ -276,26 +302,22 @@ export default function CasesTextCard({ text }: { text: string }) {
                         }}
                       />
                     ) : (
-                      <div style={{ fontSize: 14, fontWeight: 950, color: "#fff" }}>
-                        {testCase.title}
-                      </div>
+                      <div style={{ fontWeight: 900 }}>{tc.title}</div>
                     )}
                   </div>
 
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {isEditing ? (
-                      <SmallButton onClick={() => setEditingId(null)}>Done</SmallButton>
-                    ) : (
-                      <SmallButton onClick={() => setEditingId(testCase.id)}>Edit</SmallButton>
-                    )}
-                  </div>
+                  <SmallButton
+                    onClick={() => setEditingId(isEditing ? null : tc.id)}
+                  >
+                    {isEditing ? "Done" : "Edit"}
+                  </SmallButton>
                 </div>
 
                 {isEditing ? (
                   <textarea
-                    value={testCase.body}
+                    value={tc.body}
                     onChange={(e) =>
-                      updateCaseField(testCase.id, "body", e.target.value)
+                      updateCaseField(tc.id, "body", e.target.value)
                     }
                     style={{
                       width: "100%",
@@ -326,7 +348,7 @@ export default function CasesTextCard({ text }: { text: string }) {
                       color: "rgba(255,255,255,0.92)",
                     }}
                   >
-                    {testCase.body}
+                    {tc.body}
                   </pre>
                 )}
               </div>
@@ -335,13 +357,12 @@ export default function CasesTextCard({ text }: { text: string }) {
 
           <div
             style={{
+              marginTop: 14,
               borderTop: "1px solid rgba(255,255,255,0.08)",
               paddingTop: 12,
-              display: "grid",
-              gap: 8,
             }}
           >
-            <div style={{ fontSize: 12, fontWeight: 900 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
               Copy-ready suite output
             </div>
 
@@ -382,5 +403,27 @@ export default function CasesTextCard({ text }: { text: string }) {
         </pre>
       )}
     </div>
+  );
+}
+
+export default function CasesTextCard({
+  text,
+  onUpdateTestSuiteAction,
+}: Props) {
+  const parsedCases = useMemo(() => parseCases(text), [text]);
+  const hasStructuredCases = parsedCases.length > 0;
+
+  const casesKey = useMemo(() => {
+    return `${text.length}:${parsedCases.map((c) => c.id).join("|")}`;
+  }, [text, parsedCases]);
+
+  return (
+    <CasesTextCardContent
+      key={casesKey}
+      parsedCases={parsedCases}
+      text={text}
+      hasStructuredCases={hasStructuredCases}
+      onUpdateTestSuiteAction={onUpdateTestSuiteAction}
+    />
   );
 }

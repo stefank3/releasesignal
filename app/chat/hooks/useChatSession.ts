@@ -1,8 +1,16 @@
 // app/chat/hooks/useChatSession.ts
+// M12 Step 4B:
+// - add explicit test suite update path
+// - allow editable suite UI to persist changes into SessionArtifact.testSuite
+// - keep send() flow unchanged
+// - keep hook as orchestration layer
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+
+import type { TestCase } from "@/lib/chat/artifact";
 
 import type {
   ChatApiResponse,
@@ -25,7 +33,6 @@ import {
   extractCoachSuggestions,
   getDisplayReplyText,
   hasSuggestions,
-  isNearBottom,
   mapHistoryItems,
   MAX_MESSAGE_CHARS,
   modeLabel,
@@ -123,6 +130,10 @@ export type UseChatSessionReturn = {
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
 
+  // M12 Step 4B:
+  // explicit editable-suite persistence path
+  updateTestSuite: (cases: TestCase[]) => Promise<void>;
+
   send: (opts?: { replay?: boolean }) => Promise<void>;
 
   shouldAutoScrollRef: MutableRefObject<boolean>;
@@ -151,7 +162,9 @@ export function useChatSession(): UseChatSessionReturn {
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSessionMode, setActiveSessionMode] = useState<Mode>("coach");
-  const [pendingSessionClientId, setPendingSessionClientId] = useState<string | null>(null);
+  const [pendingSessionClientId, setPendingSessionClientId] = useState<
+    string | null
+  >(null);
 
   const [messagesCursor, setMessagesCursor] = useState<string | null>(null);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -168,20 +181,34 @@ export function useChatSession(): UseChatSessionReturn {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const sidebarWidth = sidebarCollapsed ? 72 : 320;
 
-  const [sessionArtifact, setSessionArtifact] = useState<SessionArtifact | null>(null);
-  const [artifactUpdatedAt, setArtifactUpdatedAt] = useState<string | null>(null);
+  const [sessionArtifact, setSessionArtifact] = useState<SessionArtifact | null>(
+    null
+  );
+  const [artifactUpdatedAt, setArtifactUpdatedAt] = useState<string | null>(
+    null
+  );
+
+  /*
+  ---------------------------------------------------------
+  LOCAL PERSISTENCE
+  ---------------------------------------------------------
+  */
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SIDEBAR_KEY);
       setSidebarCollapsed(raw === "1");
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
     try {
       localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? "1" : "0");
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [sidebarCollapsed]);
 
   useEffect(() => {
@@ -203,6 +230,12 @@ export function useChatSession(): UseChatSessionReturn {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }, [mode, items, input]);
 
+  /*
+  ---------------------------------------------------------
+  TRANSIENT UI MESSAGES
+  ---------------------------------------------------------
+  */
+
   useEffect(() => {
     if (!rateLimitMsg) return;
     const t = setTimeout(() => setRateLimitMsg(null), 4000);
@@ -215,6 +248,12 @@ export function useChatSession(): UseChatSessionReturn {
     return () => clearTimeout(t);
   }, [modeLockMsg]);
 
+  /*
+  ---------------------------------------------------------
+  SESSION LIST
+  ---------------------------------------------------------
+  */
+
   const loadSessions = async (reset: boolean) => {
     if (sessionsLoading) return;
 
@@ -222,11 +261,14 @@ export function useChatSession(): UseChatSessionReturn {
     try {
       const url = new URL("/api/chat/history", window.location.origin);
       url.searchParams.set("limit", "25");
-      if (!reset && sessionsCursor) url.searchParams.set("cursor", sessionsCursor);
+      if (!reset && sessionsCursor) {
+        url.searchParams.set("cursor", sessionsCursor);
+      }
 
-      const data = await fetchJSON<{ items: SessionListItem[]; nextCursor: string | null }>(
-        url.toString()
-      );
+      const data = await fetchJSON<{
+        items: SessionListItem[];
+        nextCursor: string | null;
+      }>(url.toString());
 
       setSessions((prev) => (reset ? data.items : [...prev, ...data.items]));
       setSessionsCursor(data.nextCursor);
@@ -242,6 +284,12 @@ export function useChatSession(): UseChatSessionReturn {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /*
+  ---------------------------------------------------------
+  SESSION HISTORY
+  ---------------------------------------------------------
+  */
+
   const loadSessionMessages = async (
     sessionId: string,
     reset: boolean,
@@ -251,9 +299,14 @@ export function useChatSession(): UseChatSessionReturn {
 
     setMessagesLoading(true);
     try {
-      const url = new URL(`/api/chat/history/${sessionId}`, window.location.origin);
+      const url = new URL(
+        `/api/chat/history/${sessionId}`,
+        window.location.origin
+      );
       url.searchParams.set("limit", "120");
-      if (!reset && messagesCursor) url.searchParams.set("cursor", messagesCursor);
+      if (!reset && messagesCursor) {
+        url.searchParams.set("cursor", messagesCursor);
+      }
 
       const data = await fetchJSON<{
         items: HistoryMessage[];
@@ -317,6 +370,12 @@ export function useChatSession(): UseChatSessionReturn {
     await loadSessionMessages(sessionId, true, sessionMode);
   };
 
+  /*
+  ---------------------------------------------------------
+  SESSION CREATION / MODE CONTROL
+  ---------------------------------------------------------
+  */
+
   const newChat = () => {
     setModeLockMsg(null);
 
@@ -367,12 +426,24 @@ export function useChatSession(): UseChatSessionReturn {
 
   const trySetMode = (next: Mode) => {
     if (activeSessionId && next !== activeSessionMode) {
-      setModeLockMsg({ sessionMode: activeSessionMode, requestedMode: next });
+      setModeLockMsg({
+        sessionMode: activeSessionMode,
+        requestedMode: next,
+      });
       return;
     }
+
     setMode(next);
-    if (!activeSessionId) setActiveSessionMode(next);
+    if (!activeSessionId) {
+      setActiveSessionMode(next);
+    }
   };
+
+  /*
+  ---------------------------------------------------------
+  SESSION TITLE / DELETE
+  ---------------------------------------------------------
+  */
 
   const renameSession = async (sessionId: string, title: string) => {
     const nextTitle = title.trim();
@@ -432,13 +503,68 @@ export function useChatSession(): UseChatSessionReturn {
     }
   };
 
+  /*
+  ---------------------------------------------------------
+  M12 STEP 4B: EDITABLE TEST SUITE PERSISTENCE
+  ---------------------------------------------------------
+  This provides a controlled mutation path for suite edits.
+  UI components should call this method instead of mutating artifact state
+  directly. The hook remains the orchestration layer.
+  */
+
+  const updateTestSuite = async (cases: TestCase[]) => {
+    if (!activeSessionId) return;
+
+    try {
+      const nowIso = new Date().toISOString();
+
+      const nextArtifact: SessionArtifact = {
+        ...(sessionArtifact ?? {}),
+        testSuite: {
+          ...(sessionArtifact?.testSuite ?? {
+            version: 1,
+            createdAt: nowIso,
+          }),
+          cases,
+          lastUpdatedAt: nowIso,
+        },
+      };
+
+      // Optimistic local update so the workspace feels immediate.
+      setSessionArtifact(nextArtifact);
+      setArtifactUpdatedAt(nowIso);
+
+      // Persist full artifact through history artifact endpoint.
+      await fetchJSON(`/api/chat/history/${activeSessionId}/artifact`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artifact: nextArtifact,
+        }),
+      });
+
+      // Refresh sidebar/session metadata after suite mutation.
+      void loadSessions(true);
+    } catch (err) {
+      console.error("Failed to update test suite", err);
+    }
+  };
+
+  /*
+  ---------------------------------------------------------
+  SEND FLOW
+  ---------------------------------------------------------
+  */
+
   const send = async (opts?: { replay?: boolean }) => {
     const replay = opts?.replay ?? false;
 
     const text = replay ? lastPending?.text ?? "" : input.trim();
     if (!text || isSending) return;
 
-    const requestId = replay ? lastPending?.requestId ?? "" : createRequestId();
+    const requestId = replay
+      ? lastPending?.requestId ?? ""
+      : createRequestId();
     if (!requestId) return;
 
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
@@ -466,15 +592,17 @@ export function useChatSession(): UseChatSessionReturn {
       : activeSessionId;
 
     if (sessionIdForRequest && effectiveMode !== activeSessionMode) {
-      setModeLockMsg({ sessionMode: activeSessionMode, requestedMode: effectiveMode });
+      setModeLockMsg({
+        sessionMode: activeSessionMode,
+        requestedMode: effectiveMode,
+      });
       return;
     }
 
-    const sessionClientIdForRequest =
-      sessionIdForRequest
-        ? null
-        : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ??
-          createSessionClientId();
+    const sessionClientIdForRequest = sessionIdForRequest
+      ? null
+      : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ??
+        createSessionClientId();
 
     if (!sessionIdForRequest && !pendingSessionClientId && !replay) {
       setPendingSessionClientId(sessionClientIdForRequest);
@@ -490,7 +618,10 @@ export function useChatSession(): UseChatSessionReturn {
     }
 
     if (!replay) {
-      setItems((prev) => [...prev, { kind: "text", role: "user", text, requestId }]);
+      setItems((prev) => [
+        ...prev,
+        { kind: "text", role: "user", text, requestId },
+      ]);
       setInput("");
       shouldAutoScrollRef.current = true;
     }
@@ -526,7 +657,9 @@ export function useChatSession(): UseChatSessionReturn {
       const serverRequestId = headers.get("x-request-id") || requestId;
       setLastRequestId(serverRequestId);
 
-      if (data?.rate) setRate(data.rate);
+      if (data?.rate) {
+        setRate(data.rate);
+      }
 
       const artifactPayload = readArtifactFromResponse(data);
       if (artifactPayload) {
@@ -572,7 +705,8 @@ export function useChatSession(): UseChatSessionReturn {
             role: "bot",
             title: "Session expired",
             details:
-              data?.details ?? "Your sign-in session expired. Please sign in again and retry.",
+              data?.details ??
+              "Your sign-in session expired. Please sign in again and retry.",
             requestId: serverRequestId,
           },
         ]);
@@ -663,7 +797,9 @@ export function useChatSession(): UseChatSessionReturn {
           role: "bot",
           text: finalText,
           requestId: serverRequestId,
-          ...(effectiveMode === "coach" && suggestions ? { suggestions } : {}),
+          ...(effectiveMode === "coach" && suggestions
+            ? { suggestions }
+            : {}),
         } as ChatItem,
       ]);
 
@@ -688,6 +824,12 @@ export function useChatSession(): UseChatSessionReturn {
     }
   };
 
+  /*
+  ---------------------------------------------------------
+  DERIVED SESSION STATE
+  ---------------------------------------------------------
+  */
+
   const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
@@ -701,10 +843,12 @@ export function useChatSession(): UseChatSessionReturn {
   const isStrategySession = mode === "coach" && activeSessionMode === "coach";
   const isTestDesignSession = mode === "cases" && activeSessionMode === "cases";
   const isTestReviewSession = mode === "review" && activeSessionMode === "review";
+
   const hasPinnedRequirement = !!sessionArtifact?.refinedRequirement;
 
   const hasPersistentTestSuite =
-    !!sessionArtifact?.testSuite && Array.isArray(sessionArtifact.testSuite.cases);
+    !!sessionArtifact?.testSuite &&
+    Array.isArray(sessionArtifact.testSuite.cases);
 
   const hasReviewArtifact =
     artifactHasReviewSignal(sessionArtifact) ||
@@ -796,6 +940,8 @@ export function useChatSession(): UseChatSessionReturn {
 
     renameSession,
     deleteSession,
+
+    updateTestSuite,
 
     send,
 
