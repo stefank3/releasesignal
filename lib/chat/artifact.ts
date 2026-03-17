@@ -20,6 +20,11 @@
 // - add optional persisted review artifact support
 // - add optional feature-centric workspace wrapper
 // - keep existing top-level refinedRequirement + testSuite backward compatible
+//
+// M12 Step 5 CHANGE:
+// - add deterministic suite normalization helpers
+// - add duplicate signature + validation helpers
+// - keep suite intelligence artifact-based and reusable outside UI
 
 import { Prisma } from "@prisma/client";
 
@@ -69,6 +74,11 @@ export type TestCase = {
   notes?: string;
 };
 
+export type DuplicateCaseGroup = {
+  signature: string;
+  ids: string[];
+};
+
 // M9 CHANGE: suite artifact stored inside ChatSession.artifactJson.
 //
 // M11 NOTE:
@@ -106,6 +116,129 @@ export type SessionArtifact = {
   featureWorkspace?: FeatureWorkspaceArtifact;
 };
 
+export type TestSuiteValidationResult = {
+  duplicateGroups: DuplicateCaseGroup[];
+  hasDuplicates: boolean;
+  totalCases: number;
+};
+
+export function normalizeWhitespace(value: string): string {
+  return String(value ?? "")
+    .replace(/\r/g, "")
+    .replace(/\t/g, " ")
+    .replace(/[ ]{2,}/g, " ")
+    .trim();
+}
+
+export function normalizeMultilineText(value: string): string {
+  return String(value ?? "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .trim();
+}
+
+export function normalizeList(values: string[] | undefined): string[] {
+  if (!Array.isArray(values) || values.length === 0) return [];
+
+  return Array.from(
+    new Set(values.map((item) => normalizeWhitespace(item)).filter(Boolean))
+  );
+}
+
+export function normalizeCaseTitle(value: string): string {
+  return normalizeWhitespace(value)
+    .replace(/[–—]/g, "-")
+    .replace(/\s*[:\-–—]\s*/g, " ")
+    .toLowerCase();
+}
+
+export function buildTestCaseHeader(id: string, title: string): string {
+  return `${id}: ${title || "Untitled test case"}`;
+}
+
+export function ensureTestCaseBodyConsistency(testCase: Pick<TestCase, "id" | "title" | "body">): string {
+  const normalizedBody = normalizeMultilineText(testCase.body);
+  const lines = normalizedBody ? normalizedBody.split("\n") : [];
+  const header = buildTestCaseHeader(
+    String(testCase.id ?? "").toUpperCase(),
+    normalizeWhitespace(testCase.title) || "Untitled test case"
+  );
+
+  if (!lines.length) return header;
+
+  lines[0] = header;
+  return lines.join("\n").trim();
+}
+
+export function normalizeTestCase(testCase: TestCase): TestCase {
+  const id = String(testCase.id ?? "").trim().toUpperCase();
+  const title = normalizeWhitespace(testCase.title) || "Untitled test case";
+
+  return {
+    ...testCase,
+    id,
+    title,
+    body: ensureTestCaseBodyConsistency({
+      id,
+      title,
+      body: testCase.body,
+    }),
+    preconditions: normalizeList(testCase.preconditions),
+    steps: normalizeList(testCase.steps),
+    expectedResults: normalizeList(testCase.expectedResults),
+    tags: normalizeList(testCase.tags),
+    notes: testCase.notes ? normalizeMultilineText(testCase.notes) : testCase.notes,
+  };
+}
+
+export function buildTestCaseSignature(testCase: Pick<TestCase, "title" | "body">): string {
+  const normalizedTitle = normalizeCaseTitle(testCase.title);
+
+  const detailLines = normalizeMultilineText(testCase.body)
+    .split("\n")
+    .slice(1)
+    .map((line) => normalizeWhitespace(line).toLowerCase())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return [normalizedTitle, ...detailLines].join(" | ");
+}
+
+export function findDuplicateTestCases(cases: TestCase[]): DuplicateCaseGroup[] {
+  const grouped = new Map<string, string[]>();
+
+  for (const rawCase of cases) {
+    const testCase = normalizeTestCase(rawCase);
+    const signature = buildTestCaseSignature(testCase);
+
+    if (!signature) continue;
+
+    const existing = grouped.get(signature) ?? [];
+    existing.push(testCase.id);
+    grouped.set(signature, existing);
+  }
+
+  return Array.from(grouped.entries())
+    .filter(([, ids]) => ids.length > 1)
+    .map(([signature, ids]) => ({
+      signature,
+      ids,
+    }));
+}
+
+export function validateTestSuite(suite: TestSuiteArtifact | null | undefined): TestSuiteValidationResult {
+  const cases = suite?.cases ?? [];
+  const duplicateGroups = findDuplicateTestCases(cases);
+
+  return {
+    duplicateGroups,
+    hasDuplicates: duplicateGroups.length > 0,
+    totalCases: cases.length,
+  };
+}
+
 export function isGuidedClarificationAnswer(message: string): boolean {
   const t = message.toLowerCase();
   return (
@@ -118,7 +251,9 @@ export function isGuidedClarificationAnswer(message: string): boolean {
   );
 }
 
-export function parseGuidedAnswerToRefinedRequirement(message: string): Partial<RefinedRequirement> | null {
+export function parseGuidedAnswerToRefinedRequirement(
+  message: string
+): Partial<RefinedRequirement> | null {
   const raw = String(message ?? "").replace(/\r/g, "");
   const lines = raw
     .split("\n")
@@ -167,7 +302,8 @@ export function parseGuidedAnswerToRefinedRequirement(message: string): Partial<
 
     if (inIdx >= 0) {
       const inPart = scopeRaw.slice(inIdx + 3);
-      const inPartCut = outIdx >= 0 ? inPart.slice(0, Math.max(0, outIdx - (inIdx + 3))) : inPart;
+      const inPartCut =
+        outIdx >= 0 ? inPart.slice(0, Math.max(0, outIdx - (inIdx + 3))) : inPart;
       inScope.push(...splitList(inPartCut));
     }
 
@@ -202,25 +338,42 @@ export function parseGuidedAnswerToRefinedRequirement(message: string): Partial<
   return Object.keys(partial).length ? partial : null;
 }
 
-export function mergeArtifact(existing: SessionArtifact | null, patch: Partial<RefinedRequirement>): SessionArtifact {
+export function mergeArtifact(
+  existing: SessionArtifact | null,
+  patch: Partial<RefinedRequirement>
+): SessionArtifact {
   const prev: SessionArtifact = existing && typeof existing === "object" ? existing : {};
   const prevRR: RefinedRequirement =
-    prev.refinedRequirement && typeof prev.refinedRequirement === "object" ? prev.refinedRequirement : {};
+    prev.refinedRequirement && typeof prev.refinedRequirement === "object"
+      ? prev.refinedRequirement
+      : {};
 
-  const dedupe = (arr: string[]) => Array.from(new Set(arr.map((x) => x.trim()).filter(Boolean)));
+  const dedupe = (arr: string[]) =>
+    Array.from(new Set(arr.map((x) => x.trim()).filter(Boolean)));
 
   const nextRR: RefinedRequirement = {
     ...prevRR,
     ...(patch.objective ? { objective: patch.objective } : {}),
     ...(patch.context ? { context: patch.context } : {}),
-    ...(patch.inScope?.length ? { inScope: dedupe([...(prevRR.inScope ?? []), ...patch.inScope]) } : {}),
-    ...(patch.outOfScope?.length ? { outOfScope: dedupe([...(prevRR.outOfScope ?? []), ...patch.outOfScope]) } : {}),
+    ...(patch.inScope?.length
+      ? { inScope: dedupe([...(prevRR.inScope ?? []), ...patch.inScope]) }
+      : {}),
+    ...(patch.outOfScope?.length
+      ? { outOfScope: dedupe([...(prevRR.outOfScope ?? []), ...patch.outOfScope]) }
+      : {}),
     ...(patch.integrations?.length
       ? { integrations: dedupe([...(prevRR.integrations ?? []), ...patch.integrations]) }
       : {}),
-    ...(patch.riskFocus?.length ? { riskFocus: dedupe([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) } : {}),
+    ...(patch.riskFocus?.length
+      ? { riskFocus: dedupe([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) }
+      : {}),
     ...(patch.acceptanceCriteria?.length
-      ? { acceptanceCriteria: dedupe([...(prevRR.acceptanceCriteria ?? []), ...patch.acceptanceCriteria]) }
+      ? {
+          acceptanceCriteria: dedupe([
+            ...(prevRR.acceptanceCriteria ?? []),
+            ...patch.acceptanceCriteria,
+          ]),
+        }
       : {}),
   };
 
@@ -243,7 +396,9 @@ export function mergeArtifact(existing: SessionArtifact | null, patch: Partial<R
 //
 // M11 NOTE:
 // This helper should be used anywhere telemetry needs reliable suite access.
-export function getTestSuite(artifact: SessionArtifact | null | undefined): TestSuiteArtifact | null {
+export function getTestSuite(
+  artifact: SessionArtifact | null | undefined
+): TestSuiteArtifact | null {
   const suite = artifact?.testSuite;
 
   if (!suite || typeof suite !== "object") return null;
@@ -272,8 +427,13 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     for (const s of rr.outOfScope.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
-  if (rr.integrations?.length) lines.push(`- Integrations: ${rr.integrations.slice(0, 12).join(", ")}`);
-  if (rr.riskFocus?.length) lines.push(`- Risk focus: ${rr.riskFocus.slice(0, 12).join(", ")}`);
+  if (rr.integrations?.length) {
+    lines.push(`- Integrations: ${rr.integrations.slice(0, 12).join(", ")}`);
+  }
+
+  if (rr.riskFocus?.length) {
+    lines.push(`- Risk focus: ${rr.riskFocus.slice(0, 12).join(", ")}`);
+  }
 
   if (rr.acceptanceCriteria?.length) {
     lines.push("- Acceptance criteria:");
@@ -288,8 +448,14 @@ export function artifactToContextText(artifact: SessionArtifact): string {
   // Telemetry must still use the structured suite object directly.
   const suite = getTestSuite(artifact);
   if (suite) {
+    const validation = validateTestSuite(suite);
+
     lines.push("");
     lines.push(`TEST SUITE (pinned): v${suite.version}, total cases: ${suite.cases.length}`);
+
+    if (validation.hasDuplicates) {
+      lines.push(`- Duplicate groups detected: ${validation.duplicateGroups.length}`);
+    }
 
     if (suite.cases.length) {
       lines.push("- Existing test case titles:");
