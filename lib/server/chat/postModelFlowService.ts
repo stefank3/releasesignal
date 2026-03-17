@@ -18,6 +18,7 @@
 // - preserve deterministic cases-flow outcome propagation
 // - keep unchanged / duplicate-aware suite results explicit
 // - avoid hidden branching at route boundary
+// - keep suite diff-aware outcome intact for route/persist layers
 
 import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
@@ -136,8 +137,8 @@ export async function runPostModelFlow(args: {
     // Cases mode should not return coach-parsed output.
     coachParsed = null;
 
-    // Cases mode response should stay aligned with the deterministic suite-flow
-    // output rather than falling back to unrelated reply sources.
+    // Cases mode storage must remain aligned with the deterministic suite-flow
+    // output, including unchanged / duplicate-aware messaging.
     assistantContentToStore = casesFlow.replyTextForUser;
   }
 
