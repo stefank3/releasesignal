@@ -461,6 +461,12 @@ export async function POST(req: Request) {
     const casesFlowTelemetry: CasesFlowTelemetry | null =
       postModel.casesFlowTelemetry;
 
+    // M12 Step 5:
+    // Do not emit a successful suite-evolution telemetry event when the
+    // structured cases flow reports that the suite remained unchanged.
+    const shouldEmitCasesTelemetry =
+      !!casesFlowTelemetry && !casesFlowTelemetry.metadata.unchanged;
+
     // M11:
     // Structured review telemetry classification comes from the review flow
     // via post-model orchestration. The route adds request/session/token context.
@@ -526,7 +532,7 @@ export async function POST(req: Request) {
     sessionArtifact = suitePersistResult.sessionArtifact;
     artifactUpdatedAtIso = suitePersistResult.artifactUpdatedAtIso;
 
-        /*
+    /*
     ---------------------------------------------------------
     REVIEW ARTIFACT PERSIST
     ---------------------------------------------------------
@@ -551,7 +557,7 @@ export async function POST(req: Request) {
     First persisted telemetry event path for Cases mode.
     Emit only after the suite artifact has been persisted successfully.
     */
-    if (casesFlowTelemetry) {
+    if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
       await emitTelemetryEvent({
         eventType: casesFlowTelemetry.eventType,
         auth0Sub,
@@ -655,6 +661,9 @@ export async function POST(req: Request) {
         testSuiteAddedCount,
         hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
         hasTestSuite: !!getTestSuite(sessionArtifact),
+        suiteTelemetrySuppressed: !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
+        suiteDuplicateGroups: casesFlowTelemetry?.metadata.duplicateGroups ?? 0,
+        suiteUnchanged: casesFlowTelemetry?.metadata.unchanged ?? false,
       },
     });
 
