@@ -1,20 +1,32 @@
 // app/chat/cards/CasesTextCard.tsx
-// M12 Step 4 — Editable Test Suite UX
+// M12 Step 5 — Suite Intelligence Layer (UI safety pass)
 // CHANGE:
-// - keep editable local suite UI
-// - add explicit persistence callback bridge
-// - persist edited cases through session orchestration
-// - use keyed inner component so local edit state resets cleanly when new suite text arrives
+// - reuse shared artifact normalization helpers
+// - add duplicate ID / malformed header / empty-case validation
+// - block save when suite validation issues exist
+// - keep editable local suite UI and persistence bridge intact
 
 "use client";
 
 import React, { useMemo, useState } from "react";
 import type { TestCase } from "@/lib/chat/artifact";
+import {
+  ensureTestCaseBodyConsistency,
+  findDuplicateTestCases,
+  normalizeTestCase,
+  normalizeWhitespace,
+} from "@/lib/chat/artifact";
 
 type ParsedCase = {
   id: string;
   title: string;
   body: string;
+};
+
+type CaseValidation = {
+  duplicateIds: string[];
+  malformedHeaderIds: string[];
+  emptyCaseIds: string[];
 };
 
 type Props = {
@@ -72,16 +84,22 @@ function parseCases(text: string): ParsedCase[] {
     const firstLine = blockLines[0].trim();
 
     const idMatch = firstLine.match(/^(TC-\d{1,4})\b/i);
-    const id = idMatch?.[1] ?? `TC-${String(i + 1).padStart(3, "0")}`;
+    const id = idMatch?.[1]?.toUpperCase() ?? `TC-${String(i + 1).padStart(3, "0")}`;
 
     const title = firstLine
       .replace(/^(TC-\d{1,4})\b\s*[:\-–—]?\s*/i, "")
       .trim();
 
-    cases.push({
+    const normalizedCase = normalizeTestCase({
       id,
       title: title || "Untitled test case",
       body: blockLines.join("\n").trim(),
+    });
+
+    cases.push({
+      id: normalizedCase.id,
+      title: normalizedCase.title,
+      body: normalizedCase.body,
     });
   }
 
@@ -94,11 +112,59 @@ function rebuildSuiteText(cases: ParsedCase[], fallbackText: string): string {
 }
 
 function toPersistedCases(cases: ParsedCase[]): TestCase[] {
-  return cases.map((c) => ({
-    id: c.id,
-    title: c.title || "Untitled test case",
-    body: c.body,
-  }));
+  return cases.map((c) =>
+    normalizeTestCase({
+      id: c.id,
+      title: c.title || "Untitled test case",
+      body: c.body,
+    })
+  );
+}
+
+function validateEditedCases(cases: ParsedCase[]): CaseValidation {
+  const idCounts = new Map<string, number>();
+
+  for (const tc of cases) {
+    const id = String(tc.id ?? "").trim().toUpperCase();
+    idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+  }
+
+  const duplicateIds = Array.from(idCounts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([id]) => id);
+
+  const malformedHeaderIds: string[] = [];
+  const emptyCaseIds: string[] = [];
+
+  for (const tc of cases) {
+    const normalized = normalizeTestCase({
+      id: tc.id,
+      title: tc.title,
+      body: tc.body,
+    });
+
+    const lines = normalized.body.split("\n");
+    const firstLine = lines[0]?.trim() ?? "";
+    const expectedHeader = `${normalized.id}: ${normalized.title}`;
+    const detailLines = lines
+      .slice(1)
+      .map((line) => normalizeWhitespace(line))
+      .filter(Boolean);
+
+    if (firstLine !== expectedHeader) {
+      malformedHeaderIds.push(normalized.id);
+    }
+
+    if (!normalized.title.trim() || detailLines.length === 0) {
+      emptyCaseIds.push(normalized.id);
+    }
+  }
+
+  return {
+    duplicateIds,
+    malformedHeaderIds,
+    emptyCaseIds,
+  };
 }
 
 function CasesTextCardContent({
@@ -117,9 +183,47 @@ function CasesTextCardContent({
   const [editedCases, setEditedCases] = useState<ParsedCase[]>(parsedCases);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  const persistedCases = useMemo(() => {
+    return toPersistedCases(editedCases);
+  }, [editedCases]);
+
+  const duplicateGroups = useMemo(() => {
+    return findDuplicateTestCases(persistedCases);
+  }, [persistedCases]);
+
+  const duplicateCaseIds = useMemo(() => {
+    return new Set(duplicateGroups.flatMap((group) => group.ids));
+  }, [duplicateGroups]);
+
+  const validation = useMemo(() => {
+    return validateEditedCases(editedCases);
+  }, [editedCases]);
+
+  const invalidCaseIds = useMemo(() => {
+    return new Set([
+      ...validation.duplicateIds,
+      ...validation.malformedHeaderIds,
+      ...validation.emptyCaseIds,
+      ...duplicateGroups.flatMap((group) => group.ids),
+    ]);
+  }, [validation, duplicateGroups]);
+
+  const hasValidationIssues =
+    duplicateGroups.length > 0 ||
+    validation.duplicateIds.length > 0 ||
+    validation.malformedHeaderIds.length > 0 ||
+    validation.emptyCaseIds.length > 0;
+
   const renderedText = useMemo(() => {
-    return rebuildSuiteText(editedCases, text);
-  }, [editedCases, text]);
+    return rebuildSuiteText(
+      persistedCases.map((c) => ({
+        id: c.id,
+        title: c.title,
+        body: c.body,
+      })),
+      text
+    );
+  }, [persistedCases, text]);
 
   const isDirty = useMemo(() => {
     if (!hasStructuredCases) return false;
@@ -155,9 +259,14 @@ function CasesTextCardContent({
   const saveSuite = async () => {
     if (!onUpdateTestSuiteAction || !hasStructuredCases || !isDirty) return;
 
+    if (hasValidationIssues) {
+      setToast("Resolve suite issues before saving");
+      return;
+    }
+
     try {
       setIsSaving(true);
-      await onUpdateTestSuiteAction(toPersistedCases(editedCases));
+      await onUpdateTestSuiteAction(persistedCases);
       setToast("Saved ✓");
       setEditingId(null);
     } catch {
@@ -177,23 +286,28 @@ function CasesTextCardContent({
         if (c.id !== id) return c;
 
         if (field === "title") {
-          const nextTitle = value.trim();
-          const nextBodyLines = c.body.split("\n");
-
-          nextBodyLines[0] = `${c.id}: ${
-            nextTitle || "Untitled test case"
-          }`;
+          const nextTitle = normalizeWhitespace(value) || "Untitled test case";
 
           return {
             ...c,
             title: nextTitle,
-            body: nextBodyLines.join("\n"),
+            body: ensureTestCaseBodyConsistency({
+              id: c.id,
+              title: nextTitle,
+              body: c.body,
+            }),
           };
         }
 
+        const nextBody = ensureTestCaseBodyConsistency({
+          id: c.id,
+          title: c.title || "Untitled test case",
+          body: value,
+        });
+
         return {
           ...c,
-          body: value,
+          body: nextBody,
         };
       })
     );
@@ -233,7 +347,12 @@ function CasesTextCardContent({
               onClick={() => {
                 void saveSuite();
               }}
-              disabled={!isDirty || isSaving || !onUpdateTestSuiteAction}
+              disabled={
+                !isDirty ||
+                isSaving ||
+                !onUpdateTestSuiteAction ||
+                hasValidationIssues
+              }
             >
               {isSaving ? "Saving..." : "Save"}
             </SmallButton>
@@ -247,18 +366,64 @@ function CasesTextCardContent({
 
       {hasStructuredCases ? (
         <div style={{ marginTop: 14 }}>
+          {hasValidationIssues ? (
+            <div
+              style={{
+                marginBottom: 14,
+                border: "1px solid rgba(255,200,0,0.28)",
+                borderRadius: 12,
+                padding: 12,
+                background: "rgba(255,200,0,0.08)",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                Suite issues must be resolved before save
+              </div>
+
+              {duplicateGroups.length ? (
+                <div style={{ fontSize: 12, opacity: 0.88, marginBottom: 4 }}>
+                  Duplicate cases:{" "}
+                  {duplicateGroups.map((group) => group.ids.join(", ")).join(" • ")}
+                </div>
+              ) : null}
+
+              {validation.duplicateIds.length ? (
+                <div style={{ fontSize: 12, opacity: 0.88, marginBottom: 4 }}>
+                  Duplicate IDs: {validation.duplicateIds.join(", ")}
+                </div>
+              ) : null}
+
+              {validation.emptyCaseIds.length ? (
+                <div style={{ fontSize: 12, opacity: 0.88, marginBottom: 4 }}>
+                  Empty cases: {validation.emptyCaseIds.join(", ")}
+                </div>
+              ) : null}
+
+              {validation.malformedHeaderIds.length ? (
+                <div style={{ fontSize: 12, opacity: 0.88 }}>
+                  Header/body mismatch: {validation.malformedHeaderIds.join(", ")}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {editedCases.map((tc) => {
             const isEditing = editingId === tc.id;
+            const isInvalid = invalidCaseIds.has(tc.id);
 
             return (
               <div
                 key={tc.id}
                 style={{
                   marginBottom: 12,
-                  border: "1px solid rgba(255,255,255,0.10)",
+                  border: isInvalid
+                    ? "1px solid rgba(255,200,0,0.28)"
+                    : "1px solid rgba(255,255,255,0.10)",
                   borderRadius: 14,
                   padding: 12,
-                  background: "rgba(0,0,0,0.16)",
+                  background: isInvalid
+                    ? "rgba(255,200,0,0.06)"
+                    : "rgba(0,0,0,0.16)",
                 }}
               >
                 <div
@@ -270,16 +435,41 @@ function CasesTextCardContent({
                     marginBottom: 10,
                   }}
                 >
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <div
                       style={{
-                        fontSize: 11,
-                        opacity: 0.65,
-                        fontWeight: 900,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
                         marginBottom: 4,
                       }}
                     >
-                      {tc.id}
+                      <div
+                        style={{
+                          fontSize: 11,
+                          opacity: 0.65,
+                          fontWeight: 900,
+                        }}
+                      >
+                        {tc.id}
+                      </div>
+
+                      {isInvalid ? (
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            padding: "2px 6px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(255,200,0,0.32)",
+                            background: "rgba(255,200,0,0.12)",
+                            color: "rgba(255,240,180,0.95)",
+                          }}
+                        >
+                          CHECK
+                        </div>
+                      ) : null}
                     </div>
 
                     {isEditing ? (
