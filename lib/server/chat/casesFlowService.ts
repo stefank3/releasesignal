@@ -12,6 +12,7 @@
 // - classify unchanged suite outcomes deterministically
 // - surface duplicate-blocked / no-new-case outcomes safely
 // - keep workflow artifact-based
+// - thread suite diff summary upward for change awareness
 
 import type {
   SessionArtifact,
@@ -37,6 +38,10 @@ export type CasesFlowTelemetry = {
     suiteSize: number;
     newCasesGenerated: number;
     duplicateGroups?: number;
+    duplicateSkippedCount?: number;
+    addedCaseIds?: string[];
+    previousVersion?: number | null;
+    nextVersion?: number | null;
     unchanged?: boolean;
   };
 };
@@ -45,6 +50,7 @@ function buildNoChangeReply(args: {
   existingSuite: TestSuiteArtifact | null;
   explicitRegenerationRequest: boolean;
   hasDuplicates: boolean;
+  duplicateSkippedCount: number;
 }): string {
   if (args.existingSuite) {
     const base = renderTestSuiteForUser(args.existingSuite);
@@ -52,6 +58,14 @@ function buildNoChangeReply(args: {
     if (args.hasDuplicates) {
       return [
         "No new cases were added because duplicate cases were detected in the generated output.",
+        "",
+        base,
+      ].join("\n");
+    }
+
+    if (args.duplicateSkippedCount > 0) {
+      return [
+        `No new unique test cases were added. ${args.duplicateSkippedCount} generated case(s) matched existing suite coverage and were skipped.`,
         "",
         base,
       ].join("\n");
@@ -76,8 +90,8 @@ function buildNoChangeReply(args: {
     return "No valid test cases were produced for regeneration.";
   }
 
-  if (args.hasDuplicates) {
-    return "Generated output matched existing duplicate cases, so no suite changes were applied.";
+  if (args.hasDuplicates || args.duplicateSkippedCount > 0) {
+    return "Generated output matched existing suite coverage, so no suite changes were applied.";
   }
 
   return "No valid test cases were produced.";
@@ -109,23 +123,20 @@ export async function runCasesFlow(args: {
 
   const nextTestSuiteArtifact = merged.nextSuite;
   const testSuiteAddedCount = merged.addedCount;
+  const diffSummary = merged.diffSummary;
   const validation = validateTestSuite(nextTestSuiteArtifact);
-
-  const suiteUnchanged =
-    !!existingSuite &&
-    !!nextTestSuiteArtifact &&
-    testSuiteAddedCount === 0 &&
-    nextTestSuiteArtifact.version === existingSuite.version &&
-    nextTestSuiteArtifact.cases.length === existingSuite.cases.length;
 
   // Render user-facing output from the structured suite when available.
   const replyTextForUser =
-    nextTestSuiteArtifact && !suiteUnchanged && !validation.hasDuplicates
+    nextTestSuiteArtifact &&
+    !diffSummary.unchanged &&
+    !validation.hasDuplicates
       ? renderTestSuiteForUser(nextTestSuiteArtifact)
       : buildNoChangeReply({
           existingSuite: nextTestSuiteArtifact ?? existingSuite,
           explicitRegenerationRequest: args.explicitRegenerationRequest,
           hasDuplicates: validation.hasDuplicates,
+          duplicateSkippedCount: diffSummary.duplicateSkippedCount,
         });
 
   // M11:
@@ -138,8 +149,8 @@ export async function runCasesFlow(args: {
       args.explicitRegenerationRequest
         ? "test_suite_regenerated"
         : existingSuiteForMerge
-        ? "test_suite_extended"
-        : "test_suite_generated";
+          ? "test_suite_extended"
+          : "test_suite_generated";
 
     telemetry = {
       eventType,
@@ -149,7 +160,11 @@ export async function runCasesFlow(args: {
         suiteSize: nextTestSuiteArtifact.cases.length,
         newCasesGenerated: testSuiteAddedCount,
         duplicateGroups: validation.duplicateGroups.length,
-        unchanged: suiteUnchanged,
+        duplicateSkippedCount: diffSummary.duplicateSkippedCount,
+        addedCaseIds: diffSummary.addedCaseIds,
+        previousVersion: diffSummary.previousVersion,
+        nextVersion: diffSummary.nextVersion,
+        unchanged: diffSummary.unchanged,
       },
     };
   }
