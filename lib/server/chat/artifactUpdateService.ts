@@ -17,6 +17,11 @@
 // - keep route.ts orchestration-only
 // - prepare artifact-driven design/review consistency
 // - mirror review into featureWorkspace only when that wrapper already exists
+//
+// M12 Step 5 CHANGE:
+// - enforce deterministic suite normalization before persist
+// - validate suite before save
+// - mirror testSuite into featureWorkspace only when that wrapper already exists
 
 import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
@@ -24,7 +29,9 @@ import {
   type SessionArtifact,
   type TestSuiteArtifact,
   mergeArtifact,
+  normalizeTestCase,
   parseGuidedAnswerToRefinedRequirement,
+  validateTestSuite,
 } from "@/lib/chat/artifact";
 
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
@@ -81,6 +88,24 @@ function withUpdatedReviewArtifact(
   }
 
   return next as SessionArtifact;
+}
+
+function withFeatureWorkspaceSuiteMirror(
+  artifact: SessionArtifact,
+  testSuite: TestSuiteArtifact
+): SessionArtifact {
+  if (!isRecord(artifact.featureWorkspace)) {
+    return artifact;
+  }
+
+  return {
+    ...artifact,
+    featureWorkspace: {
+      ...artifact.featureWorkspace,
+      testSuite,
+      lastUpdatedAt: new Date().toISOString(),
+    },
+  };
 }
 
 export async function applyGuidedArtifactPatch(args: {
@@ -164,9 +189,21 @@ export async function persistGeneratedSuiteArtifact(args: {
     };
   }
 
-  const nextArtifact = withUpdatedTestSuiteArtifact(
+  const normalizedSuite: TestSuiteArtifact = {
+    ...args.nextTestSuiteArtifact,
+    cases: args.nextTestSuiteArtifact.cases.map((c) => normalizeTestCase(c)),
+  };
+
+  const validation = validateTestSuite(normalizedSuite);
+
+  const nextArtifactBase = withUpdatedTestSuiteArtifact(
     args.sessionArtifact,
-    args.nextTestSuiteArtifact
+    normalizedSuite
+  );
+
+  const nextArtifact = withFeatureWorkspaceSuiteMirror(
+    nextArtifactBase,
+    normalizedSuite
   );
 
   const saved = await saveSessionArtifact({
@@ -174,8 +211,24 @@ export async function persistGeneratedSuiteArtifact(args: {
     artifact: nextArtifact,
   });
 
+  const savedSuiteValidation = validateTestSuite(saved.artifact?.testSuite ?? normalizedSuite);
+
   return {
-    sessionArtifact: saved.artifact,
+    sessionArtifact: {
+      ...saved.artifact,
+      testSuite: saved.artifact?.testSuite ?? normalizedSuite,
+      featureWorkspace: isRecord(saved.artifact?.featureWorkspace)
+        ? {
+            ...saved.artifact.featureWorkspace,
+            testSuite: saved.artifact.featureWorkspace.testSuite ?? normalizedSuite,
+            suiteValidation: {
+              duplicateGroups: savedSuiteValidation.duplicateGroups.length,
+              hasDuplicates: savedSuiteValidation.hasDuplicates,
+              totalCases: savedSuiteValidation.totalCases,
+            },
+          }
+        : saved.artifact?.featureWorkspace,
+    } as SessionArtifact,
     artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
   };
 }
