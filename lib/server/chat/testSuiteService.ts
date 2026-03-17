@@ -8,6 +8,7 @@
 // - enforce deterministic duplicate-aware merge behavior
 // - normalize cases before persist/render
 // - keep merge logic artifact-based and predictable
+// - add suite diff summary groundwork for change awareness
 
 import type {
   SessionArtifact,
@@ -18,6 +19,15 @@ import {
   buildTestCaseSignature,
   normalizeTestCase,
 } from "@/lib/chat/artifact";
+
+export type TestSuiteDiffSummary = {
+  previousVersion: number | null;
+  nextVersion: number | null;
+  addedCaseIds: string[];
+  addedCount: number;
+  duplicateSkippedCount: number;
+  unchanged: boolean;
+};
 
 /**
  * Normalize titles for lightweight duplicate filtering.
@@ -117,6 +127,17 @@ function buildExistingSignatureSet(cases: TestCase[]): Set<string> {
   );
 }
 
+function buildEmptyDiffSummary(): TestSuiteDiffSummary {
+  return {
+    previousVersion: null,
+    nextVersion: null,
+    addedCaseIds: [],
+    addedCount: 0,
+    duplicateSkippedCount: 0,
+    unchanged: false,
+  };
+}
+
 /**
  * Build baseline summary directly from persisted artifact suite.
  */
@@ -155,12 +176,24 @@ export function mergeGeneratedCasesIntoSuite(args: {
 }): {
   nextSuite: TestSuiteArtifact | null;
   addedCount: number;
+  diffSummary: TestSuiteDiffSummary;
 } {
   const parsed = parseGeneratedTestCases(args.generatedText);
   if (!parsed.length) {
+    const previousVersion = args.existingSuite?.version ?? null;
+    const nextVersion = args.explicitReset
+      ? null
+      : args.existingSuite?.version ?? null;
+
     return {
       nextSuite: args.explicitReset ? null : args.existingSuite,
       addedCount: 0,
+      diffSummary: {
+        ...buildEmptyDiffSummary(),
+        previousVersion,
+        nextVersion,
+        unchanged: !!args.existingSuite && !args.explicitReset,
+      },
     };
   }
 
@@ -180,6 +213,14 @@ export function mergeGeneratedCasesIntoSuite(args: {
         lastUpdatedAt: nowIso,
       },
       addedCount: freshCases.length,
+      diffSummary: {
+        previousVersion: args.existingSuite?.version ?? null,
+        nextVersion: 1,
+        addedCaseIds: freshCases.map((c) => c.id),
+        addedCount: freshCases.length,
+        duplicateSkippedCount: 0,
+        unchanged: false,
+      },
     };
   }
 
@@ -192,6 +233,7 @@ export function mergeGeneratedCasesIntoSuite(args: {
   let nextNumber = getMaxCaseNumber(normalizedExistingCases) + 1;
 
   const appended: TestCase[] = [];
+  let duplicateSkippedCount = 0;
 
   for (const generated of parsed) {
     const caseId = `TC-${String(nextNumber).padStart(3, "0")}`;
@@ -199,7 +241,11 @@ export function mergeGeneratedCasesIntoSuite(args: {
     const signature = buildTestCaseSignature(candidate);
 
     if (!signature) continue;
-    if (existingSignatures.has(signature)) continue;
+
+    if (existingSignatures.has(signature)) {
+      duplicateSkippedCount += 1;
+      continue;
+    }
 
     nextNumber += 1;
     existingSignatures.add(signature);
@@ -213,6 +259,14 @@ export function mergeGeneratedCasesIntoSuite(args: {
         cases: normalizedExistingCases,
       },
       addedCount: 0,
+      diffSummary: {
+        previousVersion: existingSuite.version,
+        nextVersion: existingSuite.version,
+        addedCaseIds: [],
+        addedCount: 0,
+        duplicateSkippedCount,
+        unchanged: true,
+      },
     };
   }
 
@@ -224,6 +278,14 @@ export function mergeGeneratedCasesIntoSuite(args: {
       lastUpdatedAt: nowIso,
     },
     addedCount: appended.length,
+    diffSummary: {
+      previousVersion: existingSuite.version,
+      nextVersion: existingSuite.version + 1,
+      addedCaseIds: appended.map((c) => c.id),
+      addedCount: appended.length,
+      duplicateSkippedCount,
+      unchanged: false,
+    },
   };
 }
 
