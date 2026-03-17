@@ -6,12 +6,18 @@
 // M11 CHANGE:
 // This service now classifies the structured cases-flow outcome so telemetry
 // can be emitted from artifact state rather than rendered chat text.
+//
+// M12 Step 5 CHANGE:
+// - validate merged suite before rendering
+// - classify unchanged suite outcomes deterministically
+// - surface duplicate-blocked / no-new-case outcomes safely
+// - keep workflow artifact-based
 
 import type {
   SessionArtifact,
   TestSuiteArtifact,
 } from "@/lib/chat/artifact";
-import { getTestSuite } from "@/lib/chat/artifact";
+import { getTestSuite, validateTestSuite } from "@/lib/chat/artifact";
 
 import type { TelemetryEventType } from "@/lib/server/telemetry/telemetryTypes";
 
@@ -30,8 +36,52 @@ export type CasesFlowTelemetry = {
   metadata: {
     suiteSize: number;
     newCasesGenerated: number;
+    duplicateGroups?: number;
+    unchanged?: boolean;
   };
 };
+
+function buildNoChangeReply(args: {
+  existingSuite: TestSuiteArtifact | null;
+  explicitRegenerationRequest: boolean;
+  hasDuplicates: boolean;
+}): string {
+  if (args.existingSuite) {
+    const base = renderTestSuiteForUser(args.existingSuite);
+
+    if (args.hasDuplicates) {
+      return [
+        "No new cases were added because duplicate cases were detected in the generated output.",
+        "",
+        base,
+      ].join("\n");
+    }
+
+    if (args.explicitRegenerationRequest) {
+      return [
+        "No valid replacement test cases were produced, so the existing suite was kept unchanged.",
+        "",
+        base,
+      ].join("\n");
+    }
+
+    return [
+      "No new unique test cases were added. The current suite remains unchanged.",
+      "",
+      base,
+    ].join("\n");
+  }
+
+  if (args.explicitRegenerationRequest) {
+    return "No valid test cases were produced for regeneration.";
+  }
+
+  if (args.hasDuplicates) {
+    return "Generated output matched existing duplicate cases, so no suite changes were applied.";
+  }
+
+  return "No valid test cases were produced.";
+}
 
 export async function runCasesFlow(args: {
   rawReply: string;
@@ -45,9 +95,10 @@ export async function runCasesFlow(args: {
 }> {
   // If regeneration was explicitly requested, the previous suite is ignored
   // so the next generated suite becomes a fresh baseline.
+  const existingSuite = getTestSuite(args.sessionArtifact);
   const existingSuiteForMerge = args.explicitRegenerationRequest
     ? null
-    : getTestSuite(args.sessionArtifact);
+    : existingSuite;
 
   // Merge raw generated content into the structured suite artifact.
   const merged = mergeGeneratedCasesIntoSuite({
@@ -58,11 +109,24 @@ export async function runCasesFlow(args: {
 
   const nextTestSuiteArtifact = merged.nextSuite;
   const testSuiteAddedCount = merged.addedCount;
+  const validation = validateTestSuite(nextTestSuiteArtifact);
+
+  const suiteUnchanged =
+    !!existingSuite &&
+    !!nextTestSuiteArtifact &&
+    testSuiteAddedCount === 0 &&
+    nextTestSuiteArtifact.version === existingSuite.version &&
+    nextTestSuiteArtifact.cases.length === existingSuite.cases.length;
 
   // Render user-facing output from the structured suite when available.
-  const replyTextForUser = nextTestSuiteArtifact
-    ? renderTestSuiteForUser(nextTestSuiteArtifact)
-    : args.rawReply.trim();
+  const replyTextForUser =
+    nextTestSuiteArtifact && !suiteUnchanged && !validation.hasDuplicates
+      ? renderTestSuiteForUser(nextTestSuiteArtifact)
+      : buildNoChangeReply({
+          existingSuite: nextTestSuiteArtifact ?? existingSuite,
+          explicitRegenerationRequest: args.explicitRegenerationRequest,
+          hasDuplicates: validation.hasDuplicates,
+        });
 
   // M11:
   // Build structured telemetry classification only when a suite artifact exists.
@@ -84,6 +148,8 @@ export async function runCasesFlow(args: {
       metadata: {
         suiteSize: nextTestSuiteArtifact.cases.length,
         newCasesGenerated: testSuiteAddedCount,
+        duplicateGroups: validation.duplicateGroups.length,
+        unchanged: suiteUnchanged,
       },
     };
   }
