@@ -13,6 +13,11 @@
 // - thread structured review telemetry classification back to route.ts
 // - do NOT emit telemetry here yet
 // - route.ts remains the place that adds request/session/token context
+//
+// M12 Step 5 CHANGE:
+// - preserve deterministic cases-flow outcome propagation
+// - keep unchanged / duplicate-aware suite results explicit
+// - avoid hidden branching at route boundary
 
 import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
@@ -123,12 +128,17 @@ export async function runPostModelFlow(args: {
     nextTestSuiteArtifact = casesFlow.nextTestSuiteArtifact;
     testSuiteAddedCount = casesFlow.testSuiteAddedCount;
 
-    // M11:
-    // Forward the structured telemetry classification to the route.
+    // M12 Step 5:
+    // Preserve the exact structured outcome from the cases flow so the route
+    // can decide whether this was a real suite evolution or an unchanged result.
     casesFlowTelemetry = casesFlow.telemetry;
 
     // Cases mode should not return coach-parsed output.
     coachParsed = null;
+
+    // Cases mode response should stay aligned with the deterministic suite-flow
+    // output rather than falling back to unrelated reply sources.
+    assistantContentToStore = casesFlow.replyTextForUser;
   }
 
   return {
