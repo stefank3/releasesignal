@@ -2,15 +2,27 @@
 // M10 extraction:
 // Cases-mode parsing, normalization, merge, and rendering logic.
 // This keeps persistent suite evolution out of route.ts.
+//
+// M12 Step 5 CHANGE:
+// - use shared artifact normalization helpers
+// - enforce deterministic duplicate-aware merge behavior
+// - normalize cases before persist/render
+// - keep merge logic artifact-based and predictable
 
 import type {
   SessionArtifact,
   TestCase,
   TestSuiteArtifact,
 } from "@/lib/chat/artifact";
+import {
+  buildTestCaseSignature,
+  normalizeTestCase,
+} from "@/lib/chat/artifact";
 
 /**
  * Normalize titles for lightweight duplicate filtering.
+ * Kept for compatibility with older callers, but Step 5 merge safety
+ * now relies on shared artifact signature logic.
  */
 export function normalizeCaseTitle(title: string): string {
   return String(title ?? "")
@@ -42,7 +54,8 @@ export function parseGeneratedTestCases(
   for (let i = 0; i < matches.length; i++) {
     const match = matches[i];
     const start = match.index ?? 0;
-    const end = i + 1 < matches.length ? matches[i + 1].index ?? raw.length : raw.length;
+    const end =
+      i + 1 < matches.length ? matches[i + 1].index ?? raw.length : raw.length;
 
     const block = raw.slice(start, end).trim();
     const title = String(match[2] ?? "").trim();
@@ -76,6 +89,34 @@ export function buildNormalizedCaseBody(
   return `${normalizedHeader}\n${cleaned}`.trim();
 }
 
+function buildStructuredCase(
+  caseId: string,
+  title: string,
+  rawBody: string
+): TestCase {
+  return normalizeTestCase({
+    id: caseId,
+    title,
+    body: buildNormalizedCaseBody(caseId, title, rawBody),
+  });
+}
+
+function getMaxCaseNumber(cases: TestCase[]): number {
+  return cases.reduce((max, c) => {
+    const match = /^TC-(\d{1,4})$/i.exec(String(c.id ?? "").trim());
+    const n = match ? Number(match[1]) : 0;
+    return Math.max(max, n);
+  }, 0);
+}
+
+function buildExistingSignatureSet(cases: TestCase[]): Set<string> {
+  return new Set(
+    cases
+      .map((c) => buildTestCaseSignature(normalizeTestCase(c)))
+      .filter(Boolean)
+  );
+}
+
 /**
  * Build baseline summary directly from persisted artifact suite.
  */
@@ -94,17 +135,13 @@ export function buildExistingSuiteBaselineFromArtifact(
     };
   }
 
-  const headers = suite.cases.map((c) => `${c.id} - ${c.title}`);
-  const maxCaseNumber = suite.cases.reduce((max, c) => {
-    const match = /^TC-(\d{1,4})$/i.exec(String(c.id ?? "").trim());
-    const n = match ? Number(match[1]) : 0;
-    return Math.max(max, n);
-  }, 0);
+  const normalizedCases = suite.cases.map((c) => normalizeTestCase(c));
+  const headers = normalizedCases.map((c) => `${c.id} - ${c.title}`);
 
   return {
     suiteSummary: headers.join("\n"),
-    maxCaseNumber,
-    existingCount: suite.cases.length,
+    maxCaseNumber: getMaxCaseNumber(normalizedCases),
+    existingCount: normalizedCases.length,
   };
 }
 
@@ -132,11 +169,7 @@ export function mergeGeneratedCasesIntoSuite(args: {
   if (args.explicitReset || !args.existingSuite) {
     const freshCases: TestCase[] = parsed.map((c, idx) => {
       const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
-      return {
-        id: caseId,
-        title: c.title,
-        body: buildNormalizedCaseBody(caseId, c.title, c.body),
-      };
+      return buildStructuredCase(caseId, c.title, c.body);
     });
 
     return {
@@ -151,36 +184,34 @@ export function mergeGeneratedCasesIntoSuite(args: {
   }
 
   const existingSuite = args.existingSuite;
-  const existingKeys = new Set(existingSuite.cases.map((c) => normalizeCaseTitle(c.title)));
+  const normalizedExistingCases = existingSuite.cases.map((c) =>
+    normalizeTestCase(c)
+  );
+  const existingSignatures = buildExistingSignatureSet(normalizedExistingCases);
 
-  let nextNumber =
-    existingSuite.cases.reduce((max, c) => {
-      const match = /^TC-(\d{1,4})$/i.exec(String(c.id ?? "").trim());
-      const n = match ? Number(match[1]) : 0;
-      return Math.max(max, n);
-    }, 0) + 1;
+  let nextNumber = getMaxCaseNumber(normalizedExistingCases) + 1;
 
   const appended: TestCase[] = [];
 
   for (const generated of parsed) {
-    const key = normalizeCaseTitle(generated.title);
-    if (!key) continue;
-    if (existingKeys.has(key)) continue;
-
     const caseId = `TC-${String(nextNumber).padStart(3, "0")}`;
-    nextNumber += 1;
-    existingKeys.add(key);
+    const candidate = buildStructuredCase(caseId, generated.title, generated.body);
+    const signature = buildTestCaseSignature(candidate);
 
-    appended.push({
-      id: caseId,
-      title: generated.title,
-      body: buildNormalizedCaseBody(caseId, generated.title, generated.body),
-    });
+    if (!signature) continue;
+    if (existingSignatures.has(signature)) continue;
+
+    nextNumber += 1;
+    existingSignatures.add(signature);
+    appended.push(candidate);
   }
 
   if (!appended.length) {
     return {
-      nextSuite: existingSuite,
+      nextSuite: {
+        ...existingSuite,
+        cases: normalizedExistingCases,
+      },
       addedCount: 0,
     };
   }
@@ -189,7 +220,7 @@ export function mergeGeneratedCasesIntoSuite(args: {
     nextSuite: {
       ...existingSuite,
       version: existingSuite.version + 1,
-      cases: [...existingSuite.cases, ...appended],
+      cases: [...normalizedExistingCases, ...appended],
       lastUpdatedAt: nowIso,
     },
     addedCount: appended.length,
@@ -204,11 +235,20 @@ export function withUpdatedTestSuiteArtifact(
   testSuite: TestSuiteArtifact
 ): SessionArtifact {
   const prev: SessionArtifact =
-    existingArtifact && typeof existingArtifact === "object" ? existingArtifact : {};
+    existingArtifact && typeof existingArtifact === "object"
+      ? existingArtifact
+      : {};
 
   return {
-    ...(prev.refinedRequirement ? { refinedRequirement: prev.refinedRequirement } : {}),
-    testSuite,
+    ...(prev.refinedRequirement
+      ? { refinedRequirement: prev.refinedRequirement }
+      : {}),
+    ...(prev.reviewResult ? { reviewResult: prev.reviewResult } : {}),
+    ...(prev.featureWorkspace ? { featureWorkspace: prev.featureWorkspace } : {}),
+    testSuite: {
+      ...testSuite,
+      cases: testSuite.cases.map((c) => normalizeTestCase(c)),
+    },
   };
 }
 
@@ -216,15 +256,16 @@ export function withUpdatedTestSuiteArtifact(
  * Render the persisted suite for the user.
  */
 export function renderTestSuiteForUser(suite: TestSuiteArtifact): string {
+  const normalizedCases = suite.cases.map((c) => normalizeTestCase(c));
   const lines: string[] = [];
 
   lines.push(`Test Suite v${suite.version}`);
-  lines.push(`Total test cases: ${suite.cases.length}`);
+  lines.push(`Total test cases: ${normalizedCases.length}`);
   lines.push("");
 
-  for (let i = 0; i < suite.cases.length; i++) {
-    lines.push(suite.cases[i].body.trim());
-    if (i < suite.cases.length - 1) lines.push("");
+  for (let i = 0; i < normalizedCases.length; i++) {
+    lines.push(normalizedCases[i].body.trim());
+    if (i < normalizedCases.length - 1) lines.push("");
   }
 
   return lines.join("\n").trim();
