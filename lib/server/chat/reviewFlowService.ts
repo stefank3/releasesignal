@@ -12,9 +12,15 @@
 // - classify structured review telemetry outcome
 // - return telemetry classification to the caller
 // - do NOT emit telemetry directly from this service
+//
+// M12 Step 7 CHANGE:
+// - make review flow artifact-aware
+// - capture whether suite / requirement context existed during review
+// - prepare design ↔ review consistency without changing scoring behavior yet
 
 import type { ClientMode, RateMeta } from "@/lib/chat/chatTypes";
 import type { SessionArtifact } from "@/lib/chat/artifact";
+import { getTestSuite } from "@/lib/chat/artifact";
 import type { ReviewResult } from "@/lib/framework/reviewSchema";
 
 import { parseReviewResponse } from "@/lib/server/chat/modelResponseParser";
@@ -38,11 +44,30 @@ export type ReviewFlowTelemetry = {
   metadata: {
     parseSucceeded: boolean;
     repaired: boolean;
+    suitePresent: boolean;
+    requirementPresent: boolean;
+    reviewContext: "artifact_aligned" | "partial_artifact_context" | "raw_only";
   };
 };
 
+function classifyReviewContext(args: {
+  suitePresent: boolean;
+  requirementPresent: boolean;
+}): ReviewFlowTelemetry["metadata"]["reviewContext"] {
+  if (args.suitePresent && args.requirementPresent) {
+    return "artifact_aligned";
+  }
+
+  if (args.suitePresent || args.requirementPresent) {
+    return "partial_artifact_context";
+  }
+
+  return "raw_only";
+}
+
 export async function runReviewFlow(args: {
   rawReply: string;
+  sessionArtifact?: SessionArtifact | null;
 }): Promise<{
   reviewObj: ReviewResult | null;
   reviewStoredJson: string | null;
@@ -55,12 +80,21 @@ export async function runReviewFlow(args: {
 }> {
   const parsedReview = await parseReviewResponse(args.rawReply);
 
+  const suitePresent = !!getTestSuite(args.sessionArtifact);
+  const requirementPresent = !!args.sessionArtifact?.refinedRequirement;
+
   const reviewTelemetry: ReviewFlowTelemetry = {
     eventType: parsedReview.reviewObj ? "review_performed" : "review_failed",
     artifactType: "reviewResult",
     metadata: {
       parseSucceeded: !!parsedReview.reviewObj,
       repaired: parsedReview.repaired,
+      suitePresent,
+      requirementPresent,
+      reviewContext: classifyReviewContext({
+        suitePresent,
+        requirementPresent,
+      }),
     },
   };
 
