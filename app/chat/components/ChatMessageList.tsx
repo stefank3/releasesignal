@@ -22,9 +22,9 @@
 // - allow CasesTextCard to send edited cases back into session orchestration
 // - keep this component as a prop-passing layer only
 //
-// CHANGE (M12 Step 6):
+// CHANGE (M12 Step 6 / UI hardening):
 // - surface deterministic workflow guidance for cases responses
-// - keep UI minimal and non-invasive
+// - tolerate multiple message payload shapes while UI mapping is stabilized
 
 "use client";
 
@@ -139,14 +139,50 @@ function tryFormatCoachJson(text: string): string | null {
   }
 }
 
-function getWorkflowGuidance(item: ChatItem): WorkflowGuidance | null {
-  const guidance = (item as ChatItem & { workflowGuidance?: WorkflowGuidance | null })
-    .workflowGuidance;
+function isWorkflowGuidance(value: unknown): value is WorkflowGuidance {
+  if (!value || typeof value !== "object") return false;
 
-  return guidance ?? null;
+  const candidate = value as Partial<WorkflowGuidance>;
+
+  return (
+    typeof candidate.message === "string" &&
+    typeof candidate.rationale === "string" &&
+    (candidate.recommendedAction === "generate_more_cases" ||
+      candidate.recommendedAction === "review_suite" ||
+      candidate.recommendedAction === "refine_requirement" ||
+      candidate.recommendedAction === "ready_for_execution")
+  );
 }
 
-function formatRecommendedAction(action: WorkflowGuidance["recommendedAction"]): string {
+function getWorkflowGuidance(item: ChatItem): WorkflowGuidance | null {
+  const candidate = item as ChatItem & {
+    workflowGuidance?: unknown;
+    payload?: { workflowGuidance?: unknown };
+    response?: { workflowGuidance?: unknown };
+    data?: { workflowGuidance?: unknown };
+    meta?: { workflowGuidance?: unknown };
+  };
+
+  const possibleValues = [
+    candidate.workflowGuidance,
+    candidate.payload?.workflowGuidance,
+    candidate.response?.workflowGuidance,
+    candidate.data?.workflowGuidance,
+    candidate.meta?.workflowGuidance,
+  ];
+
+  for (const value of possibleValues) {
+    if (isWorkflowGuidance(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function formatRecommendedAction(
+  action: WorkflowGuidance["recommendedAction"]
+): string {
   switch (action) {
     case "generate_more_cases":
       return "Generate more test cases";
@@ -181,7 +217,9 @@ function WorkflowGuidanceCard(args: {
         color: isDark ? "#ffffff" : "#0f172a",
       }}
     >
-      <div style={{ fontSize: 11, opacity: 0.72, fontWeight: 900, marginBottom: 6 }}>
+      <div
+        style={{ fontSize: 11, opacity: 0.72, fontWeight: 900, marginBottom: 6 }}
+      >
         Assistant Insight
       </div>
 
@@ -193,7 +231,9 @@ function WorkflowGuidanceCard(args: {
         {args.guidance.message}
       </div>
 
-      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72, marginTop: 8 }}>
+      <div
+        style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72, marginTop: 8 }}
+      >
         Why: {args.guidance.rationale}
       </div>
     </div>
