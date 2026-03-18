@@ -22,6 +22,10 @@
 // - enforce deterministic suite normalization before persist
 // - validate suite before save
 // - mirror testSuite into featureWorkspace only when that wrapper already exists
+//
+// M12 Step 7 CHANGE:
+// - keep persisted review aligned with latest suite / requirement context
+// - remove ad hoc artifact shape drift from returned state
 
 import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
@@ -59,15 +63,10 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * M12:
+ * M12 / Step 7:
  * Persist the latest review result as artifact state so Review is not only
- * represented as a chat response. This is the first backend step toward
- * stronger suite/review consistency.
- *
- * Notes:
- * - keeps existing top-level artifact structure intact
- * - mirrors into featureWorkspace.reviewResult only if featureWorkspace exists
- * - avoids forcing broader artifact migrations in this step
+ * represented as a chat response, and keep it aligned with the latest
+ * requirement + suite context when featureWorkspace already exists.
  */
 function withUpdatedReviewArtifact(
   artifact: SessionArtifact | null,
@@ -82,6 +81,10 @@ function withUpdatedReviewArtifact(
   if (isRecord(base.featureWorkspace)) {
     next.featureWorkspace = {
       ...base.featureWorkspace,
+      ...(base.refinedRequirement
+        ? { refinedRequirement: base.refinedRequirement }
+        : {}),
+      ...(base.testSuite ? { testSuite: base.testSuite } : {}),
       reviewResult,
       lastUpdatedAt: new Date().toISOString(),
     };
@@ -103,6 +106,9 @@ function withFeatureWorkspaceSuiteMirror(
     featureWorkspace: {
       ...artifact.featureWorkspace,
       testSuite,
+      ...(artifact.refinedRequirement
+        ? { refinedRequirement: artifact.refinedRequirement }
+        : {}),
       lastUpdatedAt: new Date().toISOString(),
     },
   };
@@ -194,7 +200,7 @@ export async function persistGeneratedSuiteArtifact(args: {
     cases: args.nextTestSuiteArtifact.cases.map((c) => normalizeTestCase(c)),
   };
 
-  const validation = validateTestSuite(normalizedSuite);
+  validateTestSuite(normalizedSuite);
 
   const nextArtifactBase = withUpdatedTestSuiteArtifact(
     args.sessionArtifact,
@@ -211,24 +217,8 @@ export async function persistGeneratedSuiteArtifact(args: {
     artifact: nextArtifact,
   });
 
-  const savedSuiteValidation = validateTestSuite(saved.artifact?.testSuite ?? normalizedSuite);
-
   return {
-    sessionArtifact: {
-      ...saved.artifact,
-      testSuite: saved.artifact?.testSuite ?? normalizedSuite,
-      featureWorkspace: isRecord(saved.artifact?.featureWorkspace)
-        ? {
-            ...saved.artifact.featureWorkspace,
-            testSuite: saved.artifact.featureWorkspace.testSuite ?? normalizedSuite,
-            suiteValidation: {
-              duplicateGroups: savedSuiteValidation.duplicateGroups.length,
-              hasDuplicates: savedSuiteValidation.hasDuplicates,
-              totalCases: savedSuiteValidation.totalCases,
-            },
-          }
-        : saved.artifact?.featureWorkspace,
-    } as SessionArtifact,
+    sessionArtifact: saved.artifact,
     artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
   };
 }
