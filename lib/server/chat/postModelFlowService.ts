@@ -23,6 +23,9 @@
 // M12 Step 6 CHANGE:
 // - propagate deterministic suite analysis and workflow guidance upward
 // - keep cases-mode response/store flow aligned with casesFlow output
+//
+// M12 Step 7 CHANGE:
+// - pass artifact context into review flow for design ↔ review consistency tracking
 
 import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
@@ -105,6 +108,7 @@ export async function runPostModelFlow(args: {
   if (args.executionMode === "review") {
     const reviewFlow = await runReviewFlow({
       rawReply: args.rawReply,
+      sessionArtifact,
     });
 
     reviewObj = reviewFlow.reviewObj;
