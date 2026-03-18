@@ -21,12 +21,17 @@
 // - add callback bridge for editable test suite persistence
 // - allow CasesTextCard to send edited cases back into session orchestration
 // - keep this component as a prop-passing layer only
+//
+// CHANGE (M12 Step 6):
+// - surface deterministic workflow guidance for cases responses
+// - keep UI minimal and non-invasive
 
 "use client";
 
 import React from "react";
 
 import type { TestCase } from "@/lib/chat/artifact";
+import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 
 import type { ChatItem, Mode, ReviewResult, CasesResult } from "../chat.types";
 
@@ -132,6 +137,67 @@ function tryFormatCoachJson(text: string): string | null {
   } catch {
     return null;
   }
+}
+
+function getWorkflowGuidance(item: ChatItem): WorkflowGuidance | null {
+  const guidance = (item as ChatItem & { workflowGuidance?: WorkflowGuidance | null })
+    .workflowGuidance;
+
+  return guidance ?? null;
+}
+
+function formatRecommendedAction(action: WorkflowGuidance["recommendedAction"]): string {
+  switch (action) {
+    case "generate_more_cases":
+      return "Generate more test cases";
+    case "review_suite":
+      return "Review the suite";
+    case "refine_requirement":
+      return "Refine the requirement";
+    case "ready_for_execution":
+      return "Ready for execution";
+    default:
+      return "Next step";
+  }
+}
+
+function WorkflowGuidanceCard(args: {
+  guidance: WorkflowGuidance;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        border: isDark
+          ? "1px solid rgba(120,180,255,0.28)"
+          : "1px solid rgba(37,99,235,0.20)",
+        borderRadius: 14,
+        padding: 12,
+        background: isDark
+          ? "rgba(120,180,255,0.08)"
+          : "rgba(37,99,235,0.05)",
+        color: isDark ? "#ffffff" : "#0f172a",
+      }}
+    >
+      <div style={{ fontSize: 11, opacity: 0.72, fontWeight: 900, marginBottom: 6 }}>
+        Assistant Insight
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 900, marginBottom: 6 }}>
+        {formatRecommendedAction(args.guidance.recommendedAction)}
+      </div>
+
+      <div style={{ fontSize: 12, lineHeight: 1.5, opacity: 0.9 }}>
+        {args.guidance.message}
+      </div>
+
+      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72, marginTop: 8 }}>
+        Why: {args.guidance.rationale}
+      </div>
+    </div>
+  );
 }
 
 type Props = {
@@ -284,6 +350,7 @@ export default function ChatMessageList({
         // ---------------- CASES TEXT ----------------
         if (it.kind === "casesText") {
           const isPersistedSuite = looksLikePersistedTestSuiteText(it.text);
+          const workflowGuidance = getWorkflowGuidance(it);
 
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
@@ -297,6 +364,13 @@ export default function ChatMessageList({
                 >
                   Persistent suite workspace
                 </div>
+              ) : null}
+
+              {workflowGuidance ? (
+                <WorkflowGuidanceCard
+                  guidance={workflowGuidance}
+                  resolvedTheme={resolvedTheme}
+                />
               ) : null}
 
               <CasesTextCard
