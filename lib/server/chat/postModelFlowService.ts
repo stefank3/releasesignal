@@ -19,6 +19,10 @@
 // - keep unchanged / duplicate-aware suite results explicit
 // - avoid hidden branching at route boundary
 // - keep suite diff-aware outcome intact for route/persist layers
+//
+// M12 Step 6 CHANGE:
+// - propagate deterministic suite analysis and workflow guidance upward
+// - keep cases-mode response/store flow aligned with casesFlow output
 
 import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
@@ -28,6 +32,8 @@ import {
   runCasesFlow,
   type CasesFlowTelemetry,
 } from "@/lib/server/chat/casesFlowService";
+import type { SuiteAnalysis } from "@/lib/server/chat/suiteAnalysisService";
+import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 import {
   runReviewFlow,
   type ReviewFlowTelemetry,
@@ -64,6 +70,11 @@ export async function runPostModelFlow(args: {
   // Structured review telemetry classification returned to the route,
   // where full operational context is available for persistence.
   reviewFlowTelemetry: ReviewFlowTelemetry | null;
+
+  // M12 Step 6:
+  // Deterministic suite analysis + workflow recommendation from cases flow.
+  suiteAnalysis: SuiteAnalysis | null;
+  workflowGuidance: WorkflowGuidance | null;
 }> {
   let coachParsed: CoachResult | null = null;
   let replyTextForUser: string | null = null;
@@ -85,6 +96,11 @@ export async function runPostModelFlow(args: {
   // M11:
   // Default to null unless the review flow produces a structured telemetry result.
   let reviewFlowTelemetry: ReviewFlowTelemetry | null = null;
+
+  // M12 Step 6:
+  // Default to null unless cases flow produces structured suite intelligence.
+  let suiteAnalysis: SuiteAnalysis | null = null;
+  let workflowGuidance: WorkflowGuidance | null = null;
 
   if (args.executionMode === "review") {
     const reviewFlow = await runReviewFlow({
@@ -134,6 +150,11 @@ export async function runPostModelFlow(args: {
     // can decide whether this was a real suite evolution or an unchanged result.
     casesFlowTelemetry = casesFlow.telemetry;
 
+    // M12 Step 6:
+    // Forward deterministic suite intelligence to the route.
+    suiteAnalysis = casesFlow.analysis;
+    workflowGuidance = casesFlow.guidance;
+
     // Cases mode should not return coach-parsed output.
     coachParsed = null;
 
@@ -155,5 +176,7 @@ export async function runPostModelFlow(args: {
     testSuiteAddedCount,
     casesFlowTelemetry,
     reviewFlowTelemetry,
+    suiteAnalysis,
+    workflowGuidance,
   };
 }
