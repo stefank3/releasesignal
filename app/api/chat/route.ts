@@ -461,6 +461,11 @@ export async function POST(req: Request) {
     const casesFlowTelemetry: CasesFlowTelemetry | null =
       postModel.casesFlowTelemetry;
 
+    // M12 Step 6:
+    // Deterministic suite intelligence returned from cases flow.
+    const suiteAnalysis = postModel.suiteAnalysis;
+    const workflowGuidance = postModel.workflowGuidance;
+
     // M12 Step 5:
     // Do not emit a successful suite-evolution telemetry event when the
     // structured cases flow reports that the suite remained unchanged.
@@ -664,6 +669,11 @@ export async function POST(req: Request) {
         suiteTelemetrySuppressed: !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
         suiteDuplicateGroups: casesFlowTelemetry?.metadata.duplicateGroups ?? 0,
         suiteUnchanged: casesFlowTelemetry?.metadata.unchanged ?? false,
+        suiteCoverageLevel: suiteAnalysis?.coverageLevel,
+        suiteDuplicateRisk: suiteAnalysis?.duplicateRisk,
+        suiteMissingAreasCount: suiteAnalysis?.missingAreas.length ?? 0,
+        workflowRecommendedAction: workflowGuidance?.recommendedAction,
+        workflowGuidanceMessage: workflowGuidance?.message,
       },
     });
 
