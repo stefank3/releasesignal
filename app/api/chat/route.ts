@@ -687,6 +687,7 @@ export async function POST(req: Request) {
       creditsRemaining,
       usage,
       rateMeta,
+      workflowGuidance,
       artifact: sessionArtifact,
       artifactUpdatedAt: artifactUpdatedAtIso,
     });
