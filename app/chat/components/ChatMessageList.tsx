@@ -413,10 +413,11 @@ export default function ChatMessageList({
                 />
               ) : null}
 
-              <CasesTextCard
-                text={it.text}
-                onUpdateTestSuiteAction={onUpdateTestSuiteAction}
-              />
+            <CasesTextCard
+              text={it.text}
+              resolvedTheme={resolvedTheme}
+              onUpdateTestSuiteAction={onUpdateTestSuiteAction}
+            />
             </div>
           );
         }

@@ -5,6 +5,11 @@
 // - add duplicate ID / malformed header / empty-case validation
 // - block save when suite validation issues exist
 // - keep editable local suite UI and persistence bridge intact
+//
+// M12 UI FIX:
+// - add resolvedTheme support
+// - remove dark-only styling assumptions
+// - keep editable suite readable in light and dark mode
 
 "use client";
 
@@ -31,6 +36,7 @@ type CaseValidation = {
 
 type Props = {
   text: string;
+  resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 };
 
@@ -38,7 +44,10 @@ function SmallButton(args: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  resolvedTheme: "light" | "dark";
 }) {
+  const isDark = args.resolvedTheme === "dark";
+
   return (
     <button
       type="button"
@@ -47,11 +56,23 @@ function SmallButton(args: {
       style={{
         padding: "6px 10px",
         borderRadius: 10,
-        border: "1px solid rgba(255,255,255,0.18)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.18)"
+          : "1px solid rgba(15,23,42,0.14)",
         background: args.disabled
-          ? "rgba(255,255,255,0.03)"
-          : "rgba(255,255,255,0.06)",
-        color: args.disabled ? "rgba(255,255,255,0.45)" : "#fff",
+          ? isDark
+            ? "rgba(255,255,255,0.03)"
+            : "rgba(15,23,42,0.03)"
+          : isDark
+            ? "rgba(255,255,255,0.06)"
+            : "rgba(15,23,42,0.05)",
+        color: args.disabled
+          ? isDark
+            ? "rgba(255,255,255,0.45)"
+            : "rgba(15,23,42,0.45)"
+          : isDark
+            ? "#fff"
+            : "#0f172a",
         fontWeight: 900,
         cursor: args.disabled ? "not-allowed" : "pointer",
       }}
@@ -84,7 +105,8 @@ function parseCases(text: string): ParsedCase[] {
     const firstLine = blockLines[0].trim();
 
     const idMatch = firstLine.match(/^(TC-\d{1,4})\b/i);
-    const id = idMatch?.[1]?.toUpperCase() ?? `TC-${String(i + 1).padStart(3, "0")}`;
+    const id =
+      idMatch?.[1]?.toUpperCase() ?? `TC-${String(i + 1).padStart(3, "0")}`;
 
     const title = firstLine
       .replace(/^(TC-\d{1,4})\b\s*[:\-–—]?\s*/i, "")
@@ -171,13 +193,17 @@ function CasesTextCardContent({
   parsedCases,
   text,
   hasStructuredCases,
+  resolvedTheme = "dark",
   onUpdateTestSuiteAction,
 }: {
   parsedCases: ParsedCase[];
   text: string;
   hasStructuredCases: boolean;
+  resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 }) {
+  const isDark = resolvedTheme === "dark";
+
   const [toast, setToast] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [editedCases, setEditedCases] = useState<ParsedCase[]>(parsedCases);
@@ -190,10 +216,6 @@ function CasesTextCardContent({
   const duplicateGroups = useMemo(() => {
     return findDuplicateTestCases(persistedCases);
   }, [persistedCases]);
-
-  const duplicateCaseIds = useMemo(() => {
-    return new Set(duplicateGroups.flatMap((group) => group.ids));
-  }, [duplicateGroups]);
 
   const validation = useMemo(() => {
     return validateEditedCases(editedCases);
@@ -316,11 +338,13 @@ function CasesTextCardContent({
   return (
     <div
       style={{
-        border: "1px solid rgba(255,255,255,0.12)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.12)"
+          : "1px solid rgba(15,23,42,0.12)",
         borderRadius: 18,
         padding: 20,
-        background: "rgba(255,255,255,0.05)",
-        color: "#fff",
+        background: isDark ? "rgba(255,255,255,0.05)" : "#ffffff",
+        color: isDark ? "#fff" : "#0f172a",
       }}
     >
       <div
@@ -340,7 +364,9 @@ function CasesTextCardContent({
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <SmallButton onClick={copyText}>Copy</SmallButton>
+          <SmallButton onClick={copyText} resolvedTheme={resolvedTheme}>
+            Copy
+          </SmallButton>
 
           {hasStructuredCases ? (
             <SmallButton
@@ -353,6 +379,7 @@ function CasesTextCardContent({
                 !onUpdateTestSuiteAction ||
                 hasValidationIssues
               }
+              resolvedTheme={resolvedTheme}
             >
               {isSaving ? "Saving..." : "Save"}
             </SmallButton>
@@ -370,10 +397,14 @@ function CasesTextCardContent({
             <div
               style={{
                 marginBottom: 14,
-                border: "1px solid rgba(255,200,0,0.28)",
+                border: isDark
+                  ? "1px solid rgba(255,200,0,0.28)"
+                  : "1px solid rgba(202,138,4,0.28)",
                 borderRadius: 12,
                 padding: 12,
-                background: "rgba(255,200,0,0.08)",
+                background: isDark
+                  ? "rgba(255,200,0,0.08)"
+                  : "rgba(234,179,8,0.10)",
               }}
             >
               <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
@@ -417,13 +448,21 @@ function CasesTextCardContent({
                 style={{
                   marginBottom: 12,
                   border: isInvalid
-                    ? "1px solid rgba(255,200,0,0.28)"
-                    : "1px solid rgba(255,255,255,0.10)",
+                    ? isDark
+                      ? "1px solid rgba(255,200,0,0.28)"
+                      : "1px solid rgba(202,138,4,0.28)"
+                    : isDark
+                      ? "1px solid rgba(255,255,255,0.10)"
+                      : "1px solid rgba(15,23,42,0.10)",
                   borderRadius: 14,
                   padding: 12,
                   background: isInvalid
-                    ? "rgba(255,200,0,0.06)"
-                    : "rgba(0,0,0,0.16)",
+                    ? isDark
+                      ? "rgba(255,200,0,0.06)"
+                      : "rgba(234,179,8,0.08)"
+                    : isDark
+                      ? "rgba(0,0,0,0.16)"
+                      : "rgba(15,23,42,0.03)",
                 }}
               >
                 <div
@@ -462,9 +501,15 @@ function CasesTextCardContent({
                             fontWeight: 900,
                             padding: "2px 6px",
                             borderRadius: 999,
-                            border: "1px solid rgba(255,200,0,0.32)",
-                            background: "rgba(255,200,0,0.12)",
-                            color: "rgba(255,240,180,0.95)",
+                            border: isDark
+                              ? "1px solid rgba(255,200,0,0.32)"
+                              : "1px solid rgba(202,138,4,0.28)",
+                            background: isDark
+                              ? "rgba(255,200,0,0.12)"
+                              : "rgba(234,179,8,0.12)",
+                            color: isDark
+                              ? "rgba(255,240,180,0.95)"
+                              : "#854d0e",
                           }}
                         >
                           CHECK
@@ -483,9 +528,13 @@ function CasesTextCardContent({
                           minWidth: 260,
                           padding: "8px 10px",
                           borderRadius: 10,
-                          border: "1px solid rgba(255,255,255,0.14)",
-                          background: "rgba(255,255,255,0.06)",
-                          color: "#fff",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.14)"
+                            : "1px solid rgba(15,23,42,0.14)",
+                          background: isDark
+                            ? "rgba(255,255,255,0.06)"
+                            : "#ffffff",
+                          color: isDark ? "#fff" : "#0f172a",
                           fontSize: 14,
                           fontWeight: 900,
                           outline: "none",
@@ -498,6 +547,7 @@ function CasesTextCardContent({
 
                   <SmallButton
                     onClick={() => setEditingId(isEditing ? null : tc.id)}
+                    resolvedTheme={resolvedTheme}
                   >
                     {isEditing ? "Done" : "Edit"}
                   </SmallButton>
@@ -514,9 +564,15 @@ function CasesTextCardContent({
                       minHeight: 220,
                       resize: "vertical",
                       borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      background: "rgba(255,255,255,0.05)",
-                      color: "rgba(255,255,255,0.94)",
+                      border: isDark
+                        ? "1px solid rgba(255,255,255,0.12)"
+                        : "1px solid rgba(15,23,42,0.12)",
+                      background: isDark
+                        ? "rgba(255,255,255,0.05)"
+                        : "#ffffff",
+                      color: isDark
+                        ? "rgba(255,255,255,0.94)"
+                        : "rgba(15,23,42,0.94)",
                       padding: 12,
                       fontSize: 13,
                       lineHeight: 1.55,
@@ -531,11 +587,17 @@ function CasesTextCardContent({
                       whiteSpace: "pre-wrap",
                       fontSize: 13,
                       lineHeight: 1.55,
-                      background: "rgba(255,255,255,0.03)",
-                      border: "1px solid rgba(255,255,255,0.08)",
+                      background: isDark
+                        ? "rgba(255,255,255,0.03)"
+                        : "rgba(15,23,42,0.03)",
+                      border: isDark
+                        ? "1px solid rgba(255,255,255,0.08)"
+                        : "1px solid rgba(15,23,42,0.08)",
                       borderRadius: 12,
                       padding: 12,
-                      color: "rgba(255,255,255,0.92)",
+                      color: isDark
+                        ? "rgba(255,255,255,0.92)"
+                        : "rgba(15,23,42,0.92)",
                     }}
                   >
                     {tc.body}
@@ -548,7 +610,9 @@ function CasesTextCardContent({
           <div
             style={{
               marginTop: 14,
-              borderTop: "1px solid rgba(255,255,255,0.08)",
+              borderTop: isDark
+                ? "1px solid rgba(255,255,255,0.08)"
+                : "1px solid rgba(15,23,42,0.08)",
               paddingTop: 12,
             }}
           >
@@ -562,11 +626,17 @@ function CasesTextCardContent({
                 whiteSpace: "pre-wrap",
                 fontSize: 12,
                 lineHeight: 1.5,
-                background: "rgba(0,0,0,0.22)",
-                border: "1px solid rgba(255,255,255,0.10)",
+                background: isDark
+                  ? "rgba(0,0,0,0.22)"
+                  : "rgba(15,23,42,0.04)",
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.10)"
+                  : "1px solid rgba(15,23,42,0.10)",
                 borderRadius: 14,
                 padding: 12,
-                color: "rgba(255,255,255,0.86)",
+                color: isDark
+                  ? "rgba(255,255,255,0.86)"
+                  : "rgba(15,23,42,0.86)",
                 maxHeight: 240,
                 overflow: "auto",
               }}
@@ -582,11 +652,15 @@ function CasesTextCardContent({
             whiteSpace: "pre-wrap",
             fontSize: 13,
             lineHeight: 1.55,
-            background: "rgba(0,0,0,0.22)",
-            border: "1px solid rgba(255,255,255,0.10)",
+            background: isDark ? "rgba(0,0,0,0.22)" : "rgba(15,23,42,0.04)",
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.10)"
+              : "1px solid rgba(15,23,42,0.10)",
             borderRadius: 16,
             padding: 14,
-            color: "rgba(255,255,255,0.92)",
+            color: isDark
+              ? "rgba(255,255,255,0.92)"
+              : "rgba(15,23,42,0.92)",
           }}
         >
           {text}
@@ -598,6 +672,7 @@ function CasesTextCardContent({
 
 export default function CasesTextCard({
   text,
+  resolvedTheme = "dark",
   onUpdateTestSuiteAction,
 }: Props) {
   const parsedCases = useMemo(() => parseCases(text), [text]);
@@ -613,6 +688,7 @@ export default function CasesTextCard({
       parsedCases={parsedCases}
       text={text}
       hasStructuredCases={hasStructuredCases}
+      resolvedTheme={resolvedTheme}
       onUpdateTestSuiteAction={onUpdateTestSuiteAction}
     />
   );
