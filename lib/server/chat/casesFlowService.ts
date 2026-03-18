@@ -13,6 +13,10 @@
 // - surface duplicate-blocked / no-new-case outcomes safely
 // - keep workflow artifact-based
 // - thread suite diff summary upward for change awareness
+//
+// M12 Step 6 CHANGE:
+// - add deterministic suite analysis
+// - add workflow guidance derived from artifact state
 
 import type {
   SessionArtifact,
@@ -26,6 +30,8 @@ import {
   mergeGeneratedCasesIntoSuite,
   renderTestSuiteForUser,
 } from "@/lib/server/chat/testSuiteService";
+import { analyzeTestSuite } from "@/lib/server/chat/suiteAnalysisService";
+import { buildWorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 
 export type CasesFlowTelemetry = {
   eventType: Extract<
@@ -106,6 +112,8 @@ export async function runCasesFlow(args: {
   nextTestSuiteArtifact: TestSuiteArtifact | null;
   testSuiteAddedCount: number;
   telemetry: CasesFlowTelemetry | null;
+  analysis: ReturnType<typeof analyzeTestSuite>;
+  guidance: ReturnType<typeof buildWorkflowGuidance>;
 }> {
   // If regeneration was explicitly requested, the previous suite is ignored
   // so the next generated suite becomes a fresh baseline.
@@ -125,6 +133,11 @@ export async function runCasesFlow(args: {
   const testSuiteAddedCount = merged.addedCount;
   const diffSummary = merged.diffSummary;
   const validation = validateTestSuite(nextTestSuiteArtifact);
+
+  // M12 Step 6:
+  // Deterministic suite intelligence layer
+  const analysis = analyzeTestSuite(nextTestSuiteArtifact);
+  const guidance = buildWorkflowGuidance(analysis);
 
   // Render user-facing output from the structured suite when available.
   const replyTextForUser =
@@ -174,5 +187,7 @@ export async function runCasesFlow(args: {
     nextTestSuiteArtifact,
     testSuiteAddedCount,
     telemetry,
+    analysis,
+    guidance,
   };
 }
