@@ -163,7 +163,10 @@ export function tryFormatCoachJson(text: string): string | null {
         lines.push(`- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim());
       }
       lines.push("");
-    } else if (Array.isArray(obj.highSignalApproach?.testIdeas) && obj.highSignalApproach.testIdeas.length) {
+    } else if (
+      Array.isArray(obj.highSignalApproach?.testIdeas) &&
+      obj.highSignalApproach.testIdeas.length
+    ) {
       lines.push("Draft test ideas:");
       for (const t of obj.highSignalApproach.testIdeas.slice(0, 12)) {
         lines.push(`- ${mdSafe(t)}`);
@@ -233,6 +236,19 @@ export function modeLabel(m: Mode) {
 export function artifactHasReviewSignal(artifact: SessionArtifact | null): boolean {
   if (!isRecord(artifact)) return false;
   return "reviewResult" in artifact || "reviewArtifact" in artifact || "testReview" in artifact;
+}
+
+// CHANGE (M12 Step 7B):
+// Detect test-suite presence from artifact so history replay can use
+// artifact truth before any UI mode assumption.
+export function artifactHasTestSuiteSignal(artifact: SessionArtifact | null): boolean {
+  if (!isRecord(artifact)) return false;
+  return (
+    "testSuite" in artifact ||
+    "testSuiteArtifact" in artifact ||
+    "suite" in artifact ||
+    "casesResult" in artifact
+  );
 }
 
 export function deriveWorkflowStatus(args: {
@@ -306,27 +322,91 @@ export function deriveWorkflowStatus(args: {
   };
 }
 
+// CHANGE (M12 Step 7B):
+// Assistant history must be classified per message.
+// Content wins first, artifact/workspace is only contextual fallback.
+function mapAssistantHistoryItem(args: {
+  content: string;
+  sessionArtifact?: SessionArtifact | null;
+  fallbackMode: Mode;
+}): ChatItem {
+  const { content, fallbackMode } = args;
+  const sessionArtifact = args.sessionArtifact ?? null;
+
+  const maybeReview = tryParseReview(content);
+  if (maybeReview) {
+    return { kind: "review", role: "bot", review: maybeReview };
+  }
+
+  const maybeCasesLegacy = tryParseCasesLegacy(content);
+  if (maybeCasesLegacy) {
+    return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
+  }
+
+  if (looksLikeCasesPlainText(content)) {
+    return { kind: "casesText", role: "bot", text: content };
+  }
+
+  // CHANGE (M12 Step 7B):
+  // Artifact/session are weak fallbacks only.
+  if (artifactHasTestSuiteSignal(sessionArtifact) && fallbackMode === "cases") {
+    return { kind: "text", role: "bot", text: content };
+  }
+
+  if (artifactHasReviewSignal(sessionArtifact) && fallbackMode === "review") {
+    return { kind: "text", role: "bot", text: content };
+  }
+
+  return { kind: "text", role: "bot", text: content };
+}
+
+// CHANGE (M12 Step 7B):
+// Workspace-level effective mode should come from artifact truth first,
+// then message-content heuristics, then stored session mode.
+function deriveEffectiveHistorySessionMode(args: {
+  items: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+  sessionMode: Mode;
+  sessionArtifact?: SessionArtifact | null;
+}): Mode {
+  const { items, sessionMode } = args;
+  const sessionArtifact = args.sessionArtifact ?? null;
+
+  if (artifactHasReviewSignal(sessionArtifact)) {
+    return "review";
+  }
+
+  if (artifactHasTestSuiteSignal(sessionArtifact)) {
+    return "cases";
+  }
+
+  const assistantMsgs = items.filter((m) => m.role === "assistant").map((m) => m.content);
+
+  const anyReviewJson = assistantMsgs.some((t) => !!tryParseReview(t));
+  if (anyReviewJson) {
+    return "review";
+  }
+
+  const anyLegacyCasesJson = assistantMsgs.some((t) => !!tryParseCasesLegacy(t));
+  const anyCasesText = assistantMsgs.some((t) => !!looksLikeCasesPlainText(t));
+  if (anyLegacyCasesJson || anyCasesText) {
+    return "cases";
+  }
+
+  return sessionMode;
+}
+
 export function mapHistoryItems(args: {
   items: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   sessionMode: Mode;
+  sessionArtifact?: SessionArtifact | null;
 }): { mapped: ChatItem[]; effectiveSessionMode: Mode } {
-  const { items, sessionMode } = args;
+  const { items, sessionMode, sessionArtifact } = args;
 
-  let effectiveSessionMode: Mode = sessionMode;
-
-  if (sessionMode !== "cases") {
-    const assistantMsgs = items
-      .filter((m) => m.role === "assistant")
-      .map((m) => m.content);
-
-    const anyReviewJson = assistantMsgs.some((t) => !!tryParseReview(t));
-    const anyLegacyCasesJson = assistantMsgs.some((t) => !!tryParseCasesLegacy(t));
-    const anyCasesText = assistantMsgs.some((t) => !!looksLikeCasesPlainText(t));
-
-    if (!anyReviewJson && (anyLegacyCasesJson || anyCasesText)) {
-      effectiveSessionMode = "cases";
-    }
-  }
+  const effectiveSessionMode = deriveEffectiveHistorySessionMode({
+    items,
+    sessionMode,
+    sessionArtifact: sessionArtifact ?? null,
+  });
 
   const mapped: ChatItem[] = items
     .filter((m) => m.role !== "system")
@@ -335,18 +415,11 @@ export function mapHistoryItems(args: {
         return { kind: "text", role: "user", text: m.content };
       }
 
-      if (effectiveSessionMode === "cases") {
-        const maybeCasesLegacy = tryParseCasesLegacy(m.content);
-        if (maybeCasesLegacy) {
-          return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
-        }
-        return { kind: "casesText", role: "bot", text: m.content };
-      }
-
-      const maybeReview = tryParseReview(m.content);
-      if (maybeReview) return { kind: "review", role: "bot", review: maybeReview };
-
-      return { kind: "text", role: "bot", text: m.content };
+      return mapAssistantHistoryItem({
+        content: m.content,
+        sessionArtifact: sessionArtifact ?? null,
+        fallbackMode: effectiveSessionMode,
+      });
     });
 
   return { mapped, effectiveSessionMode };
