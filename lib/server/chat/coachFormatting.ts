@@ -130,9 +130,11 @@ export function coachToText(coach: CoachResult): string {
   return lines.join("\n");
 }
 
-/**
- * Refined coach reply rendered as a reusable technical requirement artifact.
- */
+// CHANGE (M12 Step 7C):
+// Split canonical requirement from strategy content.
+// This function now returns ONLY artifact-safe refined requirement text.
+// Strategy content must NOT be included here.
+
 export function coachToTechnicalRequirementText(
   coach: CoachResult,
   artifact: SessionArtifact | null
@@ -194,27 +196,6 @@ export function coachToTechnicalRequirementText(
     for (const r of coach.riskMatrix.slice(0, 6)) {
       lines.push(`- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact})`);
     }
-  }
-  lines.push("");
-
-  lines.push("Recommended Test Strategy:");
-  for (const g of coach.highSignalApproach.goals.slice(0, 6)) lines.push(`- ${g}`);
-  lines.push("");
-
-  lines.push("High-Signal Test Ideas:");
-  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${t}`);
-  lines.push("");
-
-  if (coach.highSignalApproach.minimalRepro?.length) {
-    lines.push("Minimal Repro / Diagnostic Path:");
-    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (coach.optionalClarifications?.length) {
-    lines.push("Optional Clarifications:");
-    for (const q of coach.optionalClarifications.slice(0, 3)) lines.push(`- ${q}`);
-    lines.push("");
   }
 
   return lines.join("\n").trim();
