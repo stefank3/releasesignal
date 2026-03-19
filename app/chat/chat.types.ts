@@ -8,6 +8,10 @@
 // - add optional persisted review artifact support
 // - add feature-centric workspace grouping type
 // - keep all existing M7/M9 contracts backward compatible
+//
+// CHANGE (M12 Step 6 / 7A):
+// - add workflow guidance contract to API + casesText UI items
+// - keep shared-session rendering type-safe across workflow modes
 
 /**
  * Chat modes:
@@ -107,6 +111,16 @@ export type WorkflowStatus = {
   nextAction: string;
 };
 
+export type WorkflowGuidance = {
+  recommendedAction:
+    | "generate_more_cases"
+    | "review_suite"
+    | "refine_requirement"
+    | "ready_for_execution";
+  message: string;
+  rationale: string;
+};
+
 // ==============================
 // M9 / M12: Persistent suite types
 // ==============================
@@ -199,7 +213,13 @@ export type ChatItem =
       suggestions?: CoachSuggestions;
     }
   | { kind: "review"; role: "bot"; review: ReviewResult; requestId?: string }
-  | { kind: "casesText"; role: "bot"; text: string; requestId?: string }
+  | {
+      kind: "casesText";
+      role: "bot";
+      text: string;
+      requestId?: string;
+      workflowGuidance?: WorkflowGuidance;
+    }
   | { kind: "casesLegacy"; role: "bot"; cases: CasesResult; requestId?: string }
   | { kind: "error"; role: "bot"; title: string; details: string; requestId?: string };
 
@@ -250,6 +270,10 @@ export type ChatApiResponse = {
     suggestions?: CoachSuggestions;
     [k: string]: unknown;
   };
+
+  // M12 Step 6:
+  // deterministic workflow guidance returned for cases flow when applicable
+  workflowGuidance?: WorkflowGuidance;
 
   // CHANGE (M7.7): session artifact returned on every /api/chat response (and replay)
   artifact?: SessionArtifact | null;

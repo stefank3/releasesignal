@@ -4,6 +4,11 @@
 // - allow editable suite UI to persist changes into SessionArtifact.testSuite
 // - keep send() flow unchanged
 // - keep hook as orchestration layer
+//
+// M12 Step 7A CHANGE:
+// - remove legacy mode-lock behavior in hook
+// - allow one workspace session to operate across coach / cases / review
+// - classify cases responses by artifact/content, not current tab alone
 
 "use client";
 
@@ -138,6 +143,22 @@ export type UseChatSessionReturn = {
 
   shouldAutoScrollRef: MutableRefObject<boolean>;
 };
+
+function looksLikePersistedTestSuiteText(text: string): boolean {
+  return /^Test Suite v\d+\s*\nTotal test cases:\s*\d+/i.test(
+    String(text ?? "").trim()
+  );
+}
+
+function looksLikeRefinedRequirementText(text: string): boolean {
+  const t = String(text ?? "").trim();
+  return (
+    t.startsWith("Refined Technical Requirement") ||
+    t.startsWith("Objective:") ||
+    t.includes("Context / Constraints:") ||
+    t.includes("Risk Focus:")
+  );
+}
 
 export function useChatSession(): UseChatSessionReturn {
   const [mode, setMode] = useState<Mode>("coach");
@@ -327,7 +348,6 @@ export function useChatSession(): UseChatSessionReturn {
         const serverMode = data.effectiveMode ?? data.sessionMode;
         if (serverMode && serverMode !== activeSessionMode) {
           setActiveSessionMode(serverMode);
-          setMode(serverMode);
           sessionMode = serverMode;
         }
       }
@@ -425,15 +445,9 @@ export function useChatSession(): UseChatSessionReturn {
   };
 
   const trySetMode = (next: Mode) => {
-    if (activeSessionId && next !== activeSessionMode) {
-      setModeLockMsg({
-        sessionMode: activeSessionMode,
-        requestedMode: next,
-      });
-      return;
-    }
-
+    setModeLockMsg(null);
     setMode(next);
+
     if (!activeSessionId) {
       setActiveSessionMode(next);
     }
@@ -591,14 +605,6 @@ export function useChatSession(): UseChatSessionReturn {
       ? lastPending?.sessionId ?? activeSessionId
       : activeSessionId;
 
-    if (sessionIdForRequest && effectiveMode !== activeSessionMode) {
-      setModeLockMsg({
-        sessionMode: activeSessionMode,
-        requestedMode: effectiveMode,
-      });
-      return;
-    }
-
     const sessionClientIdForRequest = sessionIdForRequest
       ? null
       : (replay ? lastPending?.sessionClientId : pendingSessionClientId) ??
@@ -662,6 +668,8 @@ export function useChatSession(): UseChatSessionReturn {
       }
 
       const artifactPayload = readArtifactFromResponse(data);
+      const nextArtifact = artifactPayload?.artifact ?? null;
+
       if (artifactPayload) {
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
@@ -753,14 +761,32 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (data?.mode === "cases") {
         const reply = typeof data?.reply === "string" ? data.reply : "";
+        const hasSuiteArtifact =
+          !!nextArtifact?.testSuite &&
+          Array.isArray(nextArtifact.testSuite.cases) &&
+          nextArtifact.testSuite.cases.length > 0;
+
+        const shouldRenderAsCasesText =
+          hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
+
         setItems((prev) => [
           ...prev,
-          {
-            kind: "casesText",
-            role: "bot",
-            text: reply || "No reply returned",
-            requestId: serverRequestId,
-          },
+          shouldRenderAsCasesText
+            ? ({
+                kind: "casesText",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+                ...(data?.workflowGuidance
+                  ? { workflowGuidance: data.workflowGuidance }
+                  : {}),
+              } as ChatItem)
+            : ({
+                kind: "text",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+              } as ChatItem),
         ]);
         void loadSessions(true);
         setLastPending(null);
@@ -840,9 +866,9 @@ export function useChatSession(): UseChatSessionReturn {
     return null;
   }, [items]);
 
-  const isStrategySession = mode === "coach" && activeSessionMode === "coach";
-  const isTestDesignSession = mode === "cases" && activeSessionMode === "cases";
-  const isTestReviewSession = mode === "review" && activeSessionMode === "review";
+  const isStrategySession = mode === "coach" && !!activeSessionId;
+  const isTestDesignSession = mode === "cases" && !!activeSessionId;
+  const isTestReviewSession = mode === "review" && !!activeSessionId;
 
   const hasPinnedRequirement = !!sessionArtifact?.refinedRequirement;
 
