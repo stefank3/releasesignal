@@ -9,6 +9,12 @@
 // - remove legacy mode-lock behavior in hook
 // - allow one workspace session to operate across coach / cases / review
 // - classify cases responses by artifact/content, not current tab alone
+//
+// M12 Step 7B CHANGE:
+// - history replay now passes artifact into mapHistoryItems(...)
+// - effective session mode for replay is derived from artifact/content
+// - avoid restoring stale mode assumptions from caller state
+// - keep hook orchestration-only
 
 "use client";
 
@@ -339,11 +345,21 @@ export function useChatSession(): UseChatSessionReturn {
         artifactUpdatedAt?: string | null;
       }>(url.toString());
 
+      // CHANGE (M12 Step 7B):
+      // Always use the freshest artifact returned by the history endpoint
+      // for replay classification on reset. This avoids stale local artifact
+      // affecting how assistant history is rendered.
+      const historyArtifact = data.artifact ?? null;
+
       if (reset) {
-        setSessionArtifact(data.artifact ?? null);
+        setSessionArtifact(historyArtifact);
         setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
       }
 
+      // CHANGE (M12 Step 7B):
+      // Server mode remains informational, but mapped history now derives
+      // its effective mode from artifact/content rather than trusting this
+      // value alone.
       if (reset) {
         const serverMode = data.effectiveMode ?? data.sessionMode;
         if (serverMode && serverMode !== activeSessionMode) {
@@ -352,10 +368,18 @@ export function useChatSession(): UseChatSessionReturn {
         }
       }
 
-      const { mapped } = mapHistoryItems({
+      const { mapped, effectiveSessionMode } = mapHistoryItems({
         items: data.items,
         sessionMode,
+        sessionArtifact: historyArtifact,
       });
+
+      // CHANGE (M12 Step 7B):
+      // Apply helper-derived replay mode so the workspace reflects actual
+      // artifact/history state rather than caller assumptions.
+      if (reset && effectiveSessionMode !== activeSessionMode) {
+        setActiveSessionMode(effectiveSessionMode);
+      }
 
       setItems((prev) => (reset ? mapped : [...mapped, ...prev]));
       setMessagesCursor(data.nextCursor);
@@ -691,7 +715,9 @@ export function useChatSession(): UseChatSessionReturn {
             kind: "error",
             role: "bot",
             title: "Session mode mismatch",
-            details: `This session is locked to "${data.sessionMode}". Start a new session to use "${data.requestedMode}".`,
+            details:
+              `The backend rejected this request because it expected "${data.sessionMode}" ` +
+              `but received "${data.requestedMode}". Refresh the workspace state or start a new session if needed.`,
             requestId: serverRequestId,
           },
         ]);
