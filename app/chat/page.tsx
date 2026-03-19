@@ -16,6 +16,11 @@
 // CHANGE (M10 Hydration Fix):
 // - prevents theme mismatch during SSR/client hydration
 // - keeps first render deterministic, then resolves system theme after mount
+//
+// CHANGE (M12 Step 7A):
+// - treat mode switching as a view change on the active workspace/session
+// - reload the same active session when mode changes
+// - stop sidebar selection from forcing legacy per-session mode behavior
 
 "use client";
 
@@ -27,7 +32,6 @@ import SessionSidebar from "./components/SessionSidebar";
 import ChatHeader from "./components/ChatHeader";
 import ChatToolbar from "./components/ChatToolbar";
 import ChatPanel from "./components/ChatPanel";
-
 
 type ThemeMode = "light" | "dark" | "system";
 
@@ -77,14 +81,34 @@ export default function ChatPage() {
     };
   }, []);
 
-  // M10 hydration fix:
-  // Keep SSR and first client render deterministic.
-  
-
   const resolvedTheme: "light" | "dark" =
     themeMode === "system" ? systemTheme : themeMode;
 
   const isDark = resolvedTheme === "dark";
+
+  const handleWorkspaceSelectAction = (id: string) => {
+    void (async () => {
+      // M12 Step 7A:
+      // Selecting an item from history should load the workspace/session
+      // into the CURRENT mode view instead of restoring a legacy session-mode pair.
+      await chat.selectSession(id, chat.mode);
+      bumpUiTickAction();
+    })();
+  };
+
+  const handleModeChangeAction = (mode: typeof chat.mode) => {
+    void (async () => {
+      // M12 Step 7A:
+      // Mode is now treated as a view over the current workspace/session.
+      chat.setMode(mode);
+
+      if (chat.activeSessionId) {
+        await chat.selectSession(chat.activeSessionId, mode);
+      }
+
+      bumpUiTickAction();
+    })();
+  };
 
   if (!mounted) {
     return (
@@ -130,11 +154,8 @@ export default function ChatPage() {
           chat.newChat();
           bumpUiTickAction();
         }}
-        onSelectSessionAction={(id, m) => {
-          void (async () => {
-            await chat.selectSession(id, m);
-            bumpUiTickAction();
-          })();
+        onSelectSessionAction={(id) => {
+          handleWorkspaceSelectAction(id);
         }}
         onLoadMoreSessionsAction={() => void chat.loadSessions(false)}
         onStartRenameAction={(id, title) => {
@@ -163,10 +184,7 @@ export default function ChatPage() {
           resolvedTheme={resolvedTheme}
           onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)}
           mode={chat.mode}
-          onModeChangeAction={(mode) => {
-            chat.setMode(mode);
-            bumpUiTickAction();
-          }}
+          onModeChangeAction={handleModeChangeAction}
         />
 
         <ChatToolbar
