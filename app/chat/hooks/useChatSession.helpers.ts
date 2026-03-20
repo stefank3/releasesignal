@@ -369,17 +369,10 @@ function deriveEffectiveHistorySessionMode(args: {
   sessionArtifact?: SessionArtifact | null;
 }): Mode {
   const { items, sessionMode } = args;
-  const sessionArtifact = args.sessionArtifact ?? null;
 
-  if (artifactHasReviewSignal(sessionArtifact)) {
-    return "review";
-  }
-
-  if (artifactHasTestSuiteSignal(sessionArtifact)) {
-    return "cases";
-  }
-
-  const assistantMsgs = items.filter((m) => m.role === "assistant").map((m) => m.content);
+  const assistantMsgs = items
+    .filter((m) => m.role === "assistant")
+    .map((m) => m.content);
 
   const anyReviewJson = assistantMsgs.some((t) => !!tryParseReview(t));
   if (anyReviewJson) {
@@ -392,6 +385,10 @@ function deriveEffectiveHistorySessionMode(args: {
     return "cases";
   }
 
+  // BUG FIX (M12 Strategy + History triage):
+  // Persisted artifacts indicate what stages are available in the workspace,
+  // not which visible tab should be restored on history click.
+  // Prefer the server/session mode when message content is not explicit.
   return sessionMode;
 }
 

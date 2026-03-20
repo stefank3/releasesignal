@@ -97,17 +97,14 @@ export default function ChatPage() {
   };
 
   const handleModeChangeAction = (mode: typeof chat.mode) => {
-    void (async () => {
-      // M12 Step 7A:
-      // Mode is now treated as a view over the current workspace/session.
-      chat.setMode(mode);
-
-      if (chat.activeSessionId) {
-        await chat.selectSession(chat.activeSessionId, mode);
-      }
-
-      bumpUiTickAction();
-    })();
+    // BUG FIX (M12 Strategy + History triage):
+    // Manual tab switching must change only the visible workspace view.
+    // Do NOT reload the active session here, because session restore logic
+    // intentionally derives its effective mode from persisted history/artifact state.
+    // Re-selecting the session would snap the UI back to the persisted mode
+    // and prevent normal Strategy/Test Design/Test Review navigation.
+    chat.setMode(mode);
+    bumpUiTickAction();
   };
 
   if (!mounted) {

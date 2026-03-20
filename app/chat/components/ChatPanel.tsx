@@ -199,13 +199,13 @@ export default function ChatPanel({
     }
   }, [chat.items, chat]);
 
-  const effectiveSessionMode =
-    chat.activeSessionId && chat.activeSessionMode
-      ? chat.activeSessionMode
-      : chat.mode;
-
-  const isCoachSession = effectiveSessionMode === "coach";
-  const isTestDesignSession = effectiveSessionMode === "cases";
+  // BUG FIX (M12 Strategy + History triage):
+  // Panel rendering must follow the currently selected visible tab/view,
+  // not the persisted effective session classification.
+  // activeSessionMode is useful for workflow/history reasoning, but using it
+  // here causes Strategy/Test Design/Test Review shells to bleed across views.
+  const isCoachSession = chat.mode === "coach";
+  const isTestDesignSession = chat.mode === "cases";
   const isDark = resolvedTheme === "dark";
 
   const gridTemplateColumns = useMemo(() => {
