@@ -17,13 +17,18 @@
 // - make review flow artifact-aware
 // - capture whether suite / requirement context existed during review
 // - prepare design ↔ review consistency without changing scoring behavior yet
+//
+// M12 Step 7D CHANGE:
+// - replace AI review parsing with deterministic artifact-driven review generation
+// - review now compares structured requirement + structured suite only
+// - keep response shaping stable for callers
 
 import type { ClientMode, RateMeta } from "@/lib/chat/chatTypes";
 import type { SessionArtifact } from "@/lib/chat/artifact";
 import { getTestSuite } from "@/lib/chat/artifact";
 import type { ReviewResult } from "@/lib/framework/reviewSchema";
+import { buildDeterministicReviewResult } from "@/lib/domain/deterministicReviewService";
 
-import { parseReviewResponse } from "@/lib/server/chat/modelResponseParser";
 import {
   buildReviewParseFailureResponse,
   buildReviewSuccessResponse,
@@ -78,17 +83,29 @@ export async function runReviewFlow(args: {
   // Structured review outcome classification.
   reviewTelemetry: ReviewFlowTelemetry;
 }> {
-  const parsedReview = await parseReviewResponse(args.rawReply);
+  const suite = getTestSuite(args.sessionArtifact);
+  const requirement = args.sessionArtifact?.refinedRequirement ?? null;
 
-  const suitePresent = !!getTestSuite(args.sessionArtifact);
-  const requirementPresent = !!args.sessionArtifact?.refinedRequirement;
+  const suitePresent = !!suite;
+  const requirementPresent = !!requirement;
+
+  // BUG FIX (M12 Step 7D): review must not depend on parsed AI review text.
+  // Build the review deterministically from structured artifacts only.
+  const reviewObj = buildDeterministicReviewResult({
+    requirement,
+    suite,
+  });
+
+  const reviewStoredJson = JSON.stringify(reviewObj);
 
   const reviewTelemetry: ReviewFlowTelemetry = {
-    eventType: parsedReview.reviewObj ? "review_performed" : "review_failed",
+    eventType: "review_performed",
     artifactType: "reviewResult",
     metadata: {
-      parseSucceeded: !!parsedReview.reviewObj,
-      repaired: parsedReview.repaired,
+      // M12 Step 7D:
+      // Keep telemetry shape stable for callers even though parsing is no longer used.
+      parseSucceeded: true,
+      repaired: false,
       suitePresent,
       requirementPresent,
       reviewContext: classifyReviewContext({
@@ -99,10 +116,10 @@ export async function runReviewFlow(args: {
   };
 
   return {
-    reviewObj: parsedReview.reviewObj,
-    reviewStoredJson: parsedReview.reviewStoredJson,
-    reviewRepaired: parsedReview.repaired,
-    assistantContentToStore: parsedReview.reviewStoredJson ?? args.rawReply,
+    reviewObj,
+    reviewStoredJson,
+    reviewRepaired: false,
+    assistantContentToStore: reviewStoredJson,
     reviewTelemetry,
   };
 }
