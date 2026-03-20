@@ -291,8 +291,12 @@ function buildLevelAndScopeScore(cases: TestCase[]): number {
   let score = 0;
 
   if (hasScenarioSignal(cases, /\b(valid|success|happy)\b/)) score += 5;
-  if (hasScenarioSignal(cases, /\b(invalid|error|fail|negative|unauthori[sz]ed)\b/)) score += 5;
-  if (hasScenarioSignal(cases, /\b(edge|boundary|limit|max|min|empty|null)\b/)) score += 5;
+  if (hasScenarioSignal(cases, /\b(invalid|error|fail|negative|unauthori[sz]ed)\b/)) {
+    score += 5;
+  }
+  if (hasScenarioSignal(cases, /\b(edge|boundary|limit|max|min|empty|null)\b/)) {
+    score += 5;
+  }
 
   return Math.min(15, score);
 }
@@ -317,43 +321,9 @@ function buildDiagnosticValueScore(args: {
   return Math.max(0, score);
 }
 
-function buildBreakdown(details: DeterministicReviewDetails): ReviewBreakdown {
-  const coveredObjectiveOrScopeUnits = details.coveredUnits.filter(
-    (item) => item.unit.source === "objective" || item.unit.source === "inScope"
-  ).length;
-
-  return {
-    businessRelevance: buildBusinessRelevanceScore({
-      totalUnits: details.requirementUnits.length,
-      coveredObjectiveOrScopeUnits,
-    }),
-    riskCoverage: buildRiskCoverageScore({
-      totalUnits: details.requirementUnits.length,
-      coveredUnits: details.coveredUnits.length,
-      orphanCount: details.orphanCaseIds.length,
-      totalCases: details.totalCases,
-    }),
-    designQuality: buildDesignQualityScore({
-      duplicateGroupCount: details.duplicateGroupCount,
-      totalCases: details.totalCases,
-      orphanCount: details.orphanCaseIds.length,
-    }),
-    levelAndScope: buildLevelAndScopeScore(
-      details.coveredUnits.length || details.uncoveredUnits.length
-        ? []
-        : []
-    ),
-    diagnosticValue: buildDiagnosticValueScore({
-      totalCases: details.totalCases,
-      orphanCount: details.orphanCaseIds.length,
-      duplicateGroupCount: details.duplicateGroupCount,
-    }),
-  };
-}
-
-// BUG FIX (M12 Step 7D): level/scope scoring must use actual suite cases.
-// The earlier placeholder would have made the score constant.
-function rebuildBreakdownWithCases(
+// BUG FIX (M12 Step 7D): level/scope scoring must use actual normalized suite cases.
+// Keep a single breakdown builder so scoring cannot diverge across helper paths.
+function buildBreakdown(
   details: DeterministicReviewDetails,
   cases: TestCase[]
 ): ReviewBreakdown {
@@ -419,7 +389,11 @@ function buildAntiPatterns(details: DeterministicReviewDetails): string[] {
     );
   }
 
-  if (!details.coveredUnits.length && details.totalCases > 0 && details.requirementUnits.length > 0) {
+  if (
+    !details.coveredUnits.length &&
+    details.totalCases > 0 &&
+    details.requirementUnits.length > 0
+  ) {
     antiPatterns.push("Existing tests do not map to any structured requirement units");
   }
 
@@ -497,7 +471,7 @@ export function buildDeterministicReviewResult(args: {
 }): ReviewResult {
   const { details, cases } = buildReviewDetails(args);
 
-  const breakdown = rebuildBreakdownWithCases(details, cases);
+  const breakdown = buildBreakdown(details, cases);
   const score =
     breakdown.businessRelevance +
     breakdown.riskCoverage +
