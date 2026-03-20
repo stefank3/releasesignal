@@ -88,10 +88,13 @@ export default function ChatPage() {
 
   const handleWorkspaceSelectAction = (id: string) => {
     void (async () => {
-      // M12 Step 7A:
-      // Selecting an item from history should load the workspace/session
-      // into the CURRENT mode view instead of restoring a legacy session-mode pair.
-      await chat.selectSession(id, chat.mode);
+      // BUG FIX (M12 Strategy + History triage):
+      // History selection must restore the selected card's own stored mode,
+      // not the currently visible workspace tab.
+      const selectedSession = chat.sessions.find((s) => s.id === id);
+      const selectedMode = selectedSession?.mode ?? "coach";
+
+      await chat.selectSession(id, selectedMode);
       bumpUiTickAction();
     })();
   };
