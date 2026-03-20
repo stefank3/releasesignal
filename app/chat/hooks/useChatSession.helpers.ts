@@ -370,25 +370,29 @@ function deriveEffectiveHistorySessionMode(args: {
 }): Mode {
   const { items, sessionMode } = args;
 
-  const assistantMsgs = items
-    .filter((m) => m.role === "assistant")
-    .map((m) => m.content);
+  // BUG FIX (M12 Strategy + History triage):
+  // Restore mode from the latest assistant signal only.
+  // A shared workspace may contain older review/cases messages, but those must
+  // not override the current stage for history restore.
+  const latestAssistant = [...items]
+    .reverse()
+    .find((m) => m.role === "assistant");
 
-  const anyReviewJson = assistantMsgs.some((t) => !!tryParseReview(t));
-  if (anyReviewJson) {
+  if (!latestAssistant) {
+    return sessionMode;
+  }
+
+  if (tryParseReview(latestAssistant.content)) {
     return "review";
   }
 
-  const anyLegacyCasesJson = assistantMsgs.some((t) => !!tryParseCasesLegacy(t));
-  const anyCasesText = assistantMsgs.some((t) => !!looksLikeCasesPlainText(t));
-  if (anyLegacyCasesJson || anyCasesText) {
+  if (
+    tryParseCasesLegacy(latestAssistant.content) ||
+    looksLikeCasesPlainText(latestAssistant.content)
+  ) {
     return "cases";
   }
 
-  // BUG FIX (M12 Strategy + History triage):
-  // Persisted artifacts indicate what stages are available in the workspace,
-  // not which visible tab should be restored on history click.
-  // Prefer the server/session mode when message content is not explicit.
   return sessionMode;
 }
 
