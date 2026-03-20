@@ -317,7 +317,7 @@ export function useChatSession(): UseChatSessionReturn {
   ---------------------------------------------------------
   */
 
-  const loadSessionMessages = async (
+    const loadSessionMessages = async (
     sessionId: string,
     reset: boolean,
     sessionMode: Mode
@@ -356,29 +356,33 @@ export function useChatSession(): UseChatSessionReturn {
         setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
       }
 
+      let nextSessionMode = sessionMode;
+
       // CHANGE (M12 Step 7B):
       // Server mode remains informational, but mapped history now derives
       // its effective mode from artifact/content rather than trusting this
       // value alone.
       if (reset) {
         const serverMode = data.effectiveMode ?? data.sessionMode;
-        if (serverMode && serverMode !== activeSessionMode) {
-          setActiveSessionMode(serverMode);
-          sessionMode = serverMode;
+        if (serverMode) {
+          nextSessionMode = serverMode;
         }
       }
 
       const { mapped, effectiveSessionMode } = mapHistoryItems({
         items: data.items,
-        sessionMode,
+        sessionMode: nextSessionMode,
         sessionArtifact: historyArtifact,
       });
 
-      // CHANGE (M12 Step 7B):
-      // Apply helper-derived replay mode so the workspace reflects actual
-      // artifact/history state rather than caller assumptions.
-      if (reset && effectiveSessionMode !== activeSessionMode) {
+      // BUG FIX (M12 Step 7D / Strategy+History triage):
+      // History selection must restore the effective session mode into BOTH:
+      // - activeSessionMode (workspace state)
+      // - mode (visible rendered panel state)
+      // Otherwise a Strategy session can be opened inside the Test Review shell.
+      if (reset) {
         setActiveSessionMode(effectiveSessionMode);
+        setMode(effectiveSessionMode);
       }
 
       setItems((prev) => (reset ? mapped : [...mapped, ...prev]));
@@ -394,8 +398,12 @@ export function useChatSession(): UseChatSessionReturn {
     setModeLockMsg(null);
 
     setActiveSessionId(sessionId);
+
+    // BUG FIX (M12 Step 7D / Strategy+History triage):
+    // Do not force the caller-provided mode into visible UI state here.
+    // The correct mode must be restored from persisted history/artifact state
+    // inside loadSessionMessages(...).
     setActiveSessionMode(sessionMode);
-    setMode(sessionMode);
 
     setPendingSessionClientId(null);
     setMessagesCursor(null);

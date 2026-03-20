@@ -65,15 +65,23 @@ const STOP_WORDS = new Set([
   "by",
   "for",
   "from",
+  "has",
+  "have",
   "in",
+  "into",
   "is",
   "it",
+  "its",
   "of",
   "on",
   "or",
   "that",
   "the",
+  "their",
+  "them",
+  "this",
   "to",
+  "via",
   "with",
   "user",
   "users",
@@ -81,6 +89,13 @@ const STOP_WORDS = new Set([
   "should",
   "must",
   "can",
+  "flow",
+  "using",
+  "used",
+  "use",
+  "when",
+  "where",
+  "then",
 ]);
 
 function normalizeText(value: string): string {
@@ -172,11 +187,15 @@ function buildCaseSearchText(testCase: TestCase): string {
   );
 }
 
-function countTokenMatches(tokens: string[], haystack: string): number {
+function buildTokenSet(value: string): Set<string> {
+  return new Set(tokenize(value));
+}
+
+function countExactTokenMatches(tokens: string[], haystackTokens: Set<string>): number {
   let matches = 0;
 
   for (const token of tokens) {
-    if (haystack.includes(token)) {
+    if (haystackTokens.has(token)) {
       matches += 1;
     }
   }
@@ -184,23 +203,66 @@ function countTokenMatches(tokens: string[], haystack: string): number {
   return matches;
 }
 
+function getRequiredTokenMatches(unit: RequirementUnit): number {
+  const tokenCount = unit.tokens.length;
+
+  // BUG FIX (M12 Step 7D):
+  // Previous matching allowed overly broad coverage from only 2 generic tokens.
+  // Require stricter evidence so requirement units do not appear covered by coincidence.
+  if (tokenCount === 1) return 1;
+  if (tokenCount === 2) return 2;
+  if (tokenCount === 3) return 3;
+  if (tokenCount === 4) return 3;
+
+  switch (unit.source) {
+    case "integrations":
+      return 2;
+    case "riskFocus":
+      return 2;
+    case "objective":
+      return 3;
+    case "acceptanceCriteria":
+      return 3;
+    case "inScope":
+      return 2;
+    default:
+      return Math.min(3, tokenCount);
+  }
+}
+
+function hasPhraseSignal(unit: RequirementUnit, haystack: string): boolean {
+  if (unit.normalizedText.length < 12) {
+    return haystack.includes(unit.normalizedText);
+  }
+
+  const compactPhrase = unit.normalizedText
+    .split(" ")
+    .filter((part) => part.length >= 4)
+    .slice(0, 4)
+    .join(" ");
+
+  if (!compactPhrase) return false;
+
+  return haystack.includes(compactPhrase);
+}
+
 function isUnitCoveredByCase(unit: RequirementUnit, testCase: TestCase): boolean {
   const haystack = buildCaseSearchText(testCase);
-  const tokenMatchCount = countTokenMatches(unit.tokens, haystack);
+  const haystackTokens = buildTokenSet(haystack);
+  const tokenMatchCount = countExactTokenMatches(unit.tokens, haystackTokens);
+  const requiredMatches = getRequiredTokenMatches(unit);
 
-  // Deterministic matching rule:
-  // - 1-token units must match exactly that token
-  // - 2-token units require both tokens
-  // - 3+ token units require at least 2 matched tokens
-  if (unit.tokens.length === 1) {
-    return tokenMatchCount >= 1;
+  if (tokenMatchCount < requiredMatches) {
+    return false;
   }
 
-  if (unit.tokens.length === 2) {
-    return tokenMatchCount >= 2;
+  // Tighten long-form requirement matching so broad shared vocabulary alone
+  // does not count as real coverage.
+  if (unit.tokens.length >= 4) {
+    return hasPhraseSignal(unit, haystack) || tokenMatchCount >= Math.min(4, unit.tokens.length);
   }
 
-  return tokenMatchCount >= 2;
+  return true;
 }
 
 function mapRequirementCoverage(
