@@ -345,6 +345,9 @@ export default function ChatPanel({
               items={chat.items}
               mode={chat.mode}
               resolvedTheme={resolvedTheme}
+              onUpdateTestSuiteAction={(cases) => {
+                void chat.updateTestSuite(cases);
+              }}
             />
           </div>
 
