@@ -64,6 +64,24 @@ function looksLikeCasesPlainText(text: string): boolean {
   return false;
 }
 
+function looksLikeReviewJson(text: string): boolean {
+  try {
+    const obj = JSON.parse(String(text ?? ""));
+
+    return !!(
+      obj &&
+      typeof obj.score === "number" &&
+      obj.breakdown &&
+      typeof obj.breakdown.businessRelevance === "number" &&
+      Array.isArray(obj.riskGaps) &&
+      Array.isArray(obj.antiPatterns) &&
+      Array.isArray(obj.improvements)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Compute the UI-effective mode for a session.
  *
@@ -76,13 +94,20 @@ function computeEffectiveMode(args: {
   persistedMode: Mode;
   lastMessage: null | { role: string; content: string };
 }): Mode {
-  // ✅ FIX: persisted "review" and persisted "cases" must remain stable.
-  // Otherwise, a short/non-structured last assistant message can flip the UI mode.
-  if (args.persistedMode === "review") return "review";
-  if (args.persistedMode === "cases") return "cases";
-
   const last = args.lastMessage;
-  if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) return "cases";
+
+  // BUG FIX (M12 Strategy + History triage):
+  // For shared workspace sessions, the detail history route must not force
+  // the UI back to persisted review/cases mode. Restore mode from the latest
+  // assistant content signal first, and fall back to coach when content is
+  // not explicitly review/cases.
+  if (last?.role === "assistant" && looksLikeReviewJson(last.content)) {
+    return "review";
+  }
+
+  if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) {
+    return "cases";
+  }
 
   return "coach";
 }
