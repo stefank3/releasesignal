@@ -322,6 +322,34 @@ export function deriveWorkflowStatus(args: {
   };
 }
 
+// BUG FIX (M12 Test Design triage):
+// Render persisted suite artifact back into the same plain-text suite shape used by
+// the CasesTextCard UI. This allows replay/history restore to use the artifact as
+// the source of truth instead of stale assistant message text.
+function renderPersistedSuiteText(artifact: SessionArtifact | null): string | null {
+  const suite = artifact?.testSuite;
+
+  if (!suite || !Array.isArray(suite.cases) || suite.cases.length === 0) {
+    return null;
+  }
+
+  const lines: string[] = [];
+  lines.push(`Test Suite v${suite.version}`);
+  lines.push(`Total test cases: ${suite.cases.length}`);
+  lines.push("");
+
+  for (let i = 0; i < suite.cases.length; i++) {
+    const testCase = suite.cases[i];
+    lines.push(String(testCase.body ?? "").trim());
+
+    if (i < suite.cases.length - 1) {
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
 // CHANGE (M12 Step 7B):
 // Assistant history must be classified per message.
 // Content wins first, artifact/workspace is only contextual fallback.
@@ -341,6 +369,15 @@ function mapAssistantHistoryItem(args: {
   const maybeCasesLegacy = tryParseCasesLegacy(content);
   if (maybeCasesLegacy) {
     return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
+  }
+
+  const persistedSuiteText = renderPersistedSuiteText(sessionArtifact);
+
+  // BUG FIX (M12 Test Design triage):
+  // When replaying a workspace in Test Design, the persisted suite artifact is
+  // the source of truth. If it exists, do not show stale historical cases text.
+  if (fallbackMode === "cases" && persistedSuiteText) {
+    return { kind: "casesText", role: "bot", text: persistedSuiteText };
   }
 
   if (looksLikeCasesPlainText(content)) {
@@ -374,9 +411,7 @@ function deriveEffectiveHistorySessionMode(args: {
   // Restore mode from the latest assistant signal only.
   // A shared workspace may contain older review/cases messages, but those must
   // not override the current stage for history restore.
-  const latestAssistant = [...items]
-    .reverse()
-    .find((m) => m.role === "assistant");
+  const latestAssistant = [...items].reverse().find((m) => m.role === "assistant");
 
   if (!latestAssistant) {
     return sessionMode;

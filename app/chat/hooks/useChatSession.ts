@@ -580,15 +580,17 @@ export function useChatSession(): UseChatSessionReturn {
       setSessionArtifact(nextArtifact);
       setArtifactUpdatedAt(nowIso);
 
-      // Persist full artifact through history artifact endpoint.
-      await fetchJSON(`/api/chat/history/${activeSessionId}/artifact`, {
+      // BUG FIX (M12 Test Design triage):
+      // Persist artifact updates to the existing session PATCH route.
+      // There is no /artifact sub-route; using it causes HTML 404/login responses.
+      await fetchJSON(`/api/chat/history/${activeSessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           artifact: nextArtifact,
         }),
       });
-
+      
       // Refresh sidebar/session metadata after suite mutation.
       void loadSessions(true);
     } catch (err) {
