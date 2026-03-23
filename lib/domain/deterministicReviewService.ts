@@ -332,21 +332,20 @@ function buildRiskCoverageScore(args: {
 
   const coverageRatio = args.coveredUnits / args.totalUnits;
 
-// CALIBRATION (M12 Step 7E):
-// Reduce penalty impact and reward strong coverage more
-const orphanPenalty =
-  args.totalCases > 0
-    ? Math.min(0.05, args.orphanCount / (args.totalCases * 2))
-    : 0;
+  // CALIBRATION (M12 Step 7E):
+  // Reduce penalty impact and reward strong coverage more
+  const orphanPenalty =
+    args.totalCases > 0
+      ? Math.min(0.05, args.orphanCount / (args.totalCases * 2))
+      : 0;
 
-const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
+  const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
 
-// Boost strong coverage slightly
-const boosted = adjustedRatio > 0.7
-  ? Math.min(1, adjustedRatio + 0.1)
-  : adjustedRatio;
+  // Boost strong coverage slightly
+  const boosted =
+    adjustedRatio > 0.7 ? Math.min(1, adjustedRatio + 0.1) : adjustedRatio;
 
-return Math.round(boosted * 25);
+  return Math.round(boosted * 25);
 }
 
 function buildBusinessRelevanceScore(args: {
@@ -361,16 +360,12 @@ function buildBusinessRelevanceScore(args: {
   const ratio =
     args.coveredObjectiveOrScopeUnits / args.totalObjectiveOrScopeUnits;
 
-// CALIBRATION:
-// Avoid harsh drop for near-complete coverage
-const adjusted =
-  ratio >= 0.8
-    ? Math.min(1, ratio + 0.1)
-    : ratio >= 0.5
-      ? ratio + 0.05
-      : ratio;
+  // CALIBRATION:
+  // Avoid harsh drop for near-complete coverage
+  const adjusted =
+    ratio >= 0.8 ? Math.min(1, ratio + 0.1) : ratio >= 0.5 ? ratio + 0.05 : ratio;
 
-return Math.round(Math.min(1, adjusted) * 25);
+  return Math.round(Math.min(1, adjusted) * 25);
 }
 
 function buildDesignQualityScore(args: {
@@ -386,11 +381,11 @@ function buildDesignQualityScore(args: {
     score -= Math.min(8, args.duplicateGroupCount * 3);
   }
 
-// CALIBRATION:
-// Reduce double punishment (already penalized in riskCoverage)
-if (args.orphanCount > 0) {
-  score -= Math.min(4, args.orphanCount);
-}
+  // CALIBRATION:
+  // Reduce double punishment (already penalized in riskCoverage)
+  if (args.orphanCount > 0) {
+    score -= Math.min(4, args.orphanCount);
+  }
 
   return Math.max(0, score);
 }
@@ -568,6 +563,15 @@ function buildReviewDetails(args: {
     normalizeTestCase(testCase)
   );
 
+  // BUG FIX (M12.8): duplicate detection must operate on the same normalized
+  // case set used by coverage, orphan detection, and scoring.
+  const normalizedSuite: TestSuiteArtifact | null = args.suite
+    ? {
+        ...args.suite,
+        cases,
+      }
+    : null;
+
   const requirementCoverage = mapRequirementCoverage(requirementUnits, cases);
   const coveredUnits = requirementCoverage.filter(
     (item) => item.matchedCaseIds.length > 0
@@ -577,7 +581,7 @@ function buildReviewDetails(args: {
     .map((item) => item.unit);
 
   const orphanCaseIds = findOrphanCaseIds(requirementCoverage, cases);
-  const validation = validateTestSuite(args.suite ?? null);
+  const validation = validateTestSuite(normalizedSuite);
 
   return {
     details: {
