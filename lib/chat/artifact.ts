@@ -25,6 +25,11 @@
 // - add deterministic suite normalization helpers
 // - add duplicate signature + validation helpers
 // - keep suite intelligence artifact-based and reusable outside UI
+//
+// BUG FIX (M12.8):
+// - add standalone structured requirement parsing for review-mode artifact ingestion
+// - keep guided coach parsing unchanged
+// - use explicit label-based extraction only (no AI inference)
 
 import { Prisma } from "@prisma/client";
 
@@ -158,7 +163,9 @@ export function buildTestCaseHeader(id: string, title: string): string {
   return `${id}: ${title || "Untitled test case"}`;
 }
 
-export function ensureTestCaseBodyConsistency(testCase: Pick<TestCase, "id" | "title" | "body">): string {
+export function ensureTestCaseBodyConsistency(
+  testCase: Pick<TestCase, "id" | "title" | "body">
+): string {
   const normalizedBody = normalizeMultilineText(testCase.body);
   const lines = normalizedBody ? normalizedBody.split("\n") : [];
   const header = buildTestCaseHeader(
@@ -193,7 +200,9 @@ export function normalizeTestCase(testCase: TestCase): TestCase {
   };
 }
 
-export function buildTestCaseSignature(testCase: Pick<TestCase, "title" | "body">): string {
+export function buildTestCaseSignature(
+  testCase: Pick<TestCase, "title" | "body">
+): string {
   const normalizedTitle = normalizeCaseTitle(testCase.title);
 
   const detailLines = normalizeMultilineText(testCase.body)
@@ -228,7 +237,9 @@ export function findDuplicateTestCases(cases: TestCase[]): DuplicateCaseGroup[] 
     }));
 }
 
-export function validateTestSuite(suite: TestSuiteArtifact | null | undefined): TestSuiteValidationResult {
+export function validateTestSuite(
+  suite: TestSuiteArtifact | null | undefined
+): TestSuiteValidationResult {
   const cases = suite?.cases ?? [];
   const duplicateGroups = findDuplicateTestCases(cases);
 
@@ -338,11 +349,155 @@ export function parseGuidedAnswerToRefinedRequirement(
   return Object.keys(partial).length ? partial : null;
 }
 
+// BUG FIX (M12.8):
+// Standalone review-mode requirement detection should rely only on explicit,
+// structured labels. No inference, no fuzzy parsing.
+export function isStructuredRequirementInput(message: string): boolean {
+  const t = String(message ?? "").toLowerCase();
+
+  return (
+    t.includes("objective:") ||
+    t.includes("context:") ||
+    t.includes("in scope:") ||
+    t.includes("out of scope:") ||
+    t.includes("integrations:") ||
+    t.includes("risk focus:") ||
+    t.includes("acceptance criteria:")
+  );
+}
+
+function splitStructuredRequirementList(value: string): string[] {
+  const raw = normalizeMultilineText(value);
+  if (!raw) return [];
+
+  const bulletParts = raw
+    .split("\n")
+    .map((line) => line.replace(/^[-*•\d.)\s]+/, "").trim())
+    .filter(Boolean);
+
+  const commaParts =
+    bulletParts.length === 1
+      ? bulletParts[0]
+          .split(/,|\s\/\s|\s\|\s/g)
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : bulletParts;
+
+  return Array.from(new Set(commaParts)).slice(0, 12);
+}
+
+export function parseStructuredRequirementInput(
+  message: string
+): Partial<RefinedRequirement> | null {
+  const raw = String(message ?? "").replace(/\r/g, "");
+  const lines = raw.split("\n");
+
+  const supportedSections = new Map<string, keyof RefinedRequirement>([
+    ["objective", "objective"],
+    ["context", "context"],
+    ["in scope", "inScope"],
+    ["out of scope", "outOfScope"],
+    ["integrations", "integrations"],
+    ["risk focus", "riskFocus"],
+    ["acceptance criteria", "acceptanceCriteria"],
+  ]);
+
+  const sectionValues = new Map<keyof RefinedRequirement, string[]>();
+  let currentSection: keyof RefinedRequirement | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const sectionMatch = line.match(
+      /^(objective|context|in scope|out of scope|integrations|risk focus|acceptance criteria)\s*:\s*(.*)$/i
+    );
+
+    if (sectionMatch) {
+      const sectionKey = sectionMatch[1].toLowerCase();
+      const mappedSection = supportedSections.get(sectionKey) ?? null;
+      const firstValue = sectionMatch[2]?.trim() ?? "";
+
+      currentSection = mappedSection;
+
+      if (mappedSection) {
+        const existing = sectionValues.get(mappedSection) ?? [];
+        if (firstValue) {
+          existing.push(firstValue);
+        }
+        sectionValues.set(mappedSection, existing);
+      }
+
+      continue;
+    }
+
+    if (currentSection) {
+      const existing = sectionValues.get(currentSection) ?? [];
+      existing.push(line);
+      sectionValues.set(currentSection, existing);
+    }
+  }
+
+  const partial: Partial<RefinedRequirement> = {};
+
+  const objective = normalizeWhitespace(
+    (sectionValues.get("objective") ?? []).join(" ")
+  );
+  if (objective) {
+    partial.objective = objective.slice(0, 240);
+  }
+
+  const context = normalizeMultilineText(
+    (sectionValues.get("context") ?? []).join("\n")
+  );
+  if (context) {
+    partial.context = context.slice(0, 600);
+  }
+
+  const inScope = splitStructuredRequirementList(
+    (sectionValues.get("inScope") ?? []).join("\n")
+  );
+  if (inScope.length) {
+    partial.inScope = inScope;
+  }
+
+  const outOfScope = splitStructuredRequirementList(
+    (sectionValues.get("outOfScope") ?? []).join("\n")
+  );
+  if (outOfScope.length) {
+    partial.outOfScope = outOfScope;
+  }
+
+  const integrations = splitStructuredRequirementList(
+    (sectionValues.get("integrations") ?? []).join("\n")
+  );
+  if (integrations.length) {
+    partial.integrations = integrations;
+  }
+
+  const riskFocus = splitStructuredRequirementList(
+    (sectionValues.get("riskFocus") ?? []).join("\n")
+  );
+  if (riskFocus.length) {
+    partial.riskFocus = riskFocus;
+  }
+
+  const acceptanceCriteria = splitStructuredRequirementList(
+    (sectionValues.get("acceptanceCriteria") ?? []).join("\n")
+  );
+  if (acceptanceCriteria.length) {
+    partial.acceptanceCriteria = acceptanceCriteria;
+  }
+
+  return Object.keys(partial).length ? partial : null;
+}
+
 export function mergeArtifact(
   existing: SessionArtifact | null,
   patch: Partial<RefinedRequirement>
 ): SessionArtifact {
-  const prev: SessionArtifact = existing && typeof existing === "object" ? existing : {};
+  const prev: SessionArtifact =
+    existing && typeof existing === "object" ? existing : {};
   const prevRR: RefinedRequirement =
     prev.refinedRequirement && typeof prev.refinedRequirement === "object"
       ? prev.refinedRequirement
@@ -451,7 +606,9 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     const validation = validateTestSuite(suite);
 
     lines.push("");
-    lines.push(`TEST SUITE (pinned): v${suite.version}, total cases: ${suite.cases.length}`);
+    lines.push(
+      `TEST SUITE (pinned): v${suite.version}, total cases: ${suite.cases.length}`
+    );
 
     if (validation.hasDuplicates) {
       lines.push(`- Duplicate groups detected: ${validation.duplicateGroups.length}`);
