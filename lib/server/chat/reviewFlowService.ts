@@ -22,6 +22,10 @@
 // - replace AI review parsing with deterministic artifact-driven review generation
 // - review now compares structured requirement + structured suite only
 // - keep response shaping stable for callers
+//
+// BUG FIX (M12.8): prevent null deterministic review results from being
+// serialized and stored as the literal string "null"; keep persistence and
+// telemetry aligned with actual review result presence.
 
 import type { ClientMode, RateMeta } from "@/lib/chat/chatTypes";
 import type { SessionArtifact } from "@/lib/chat/artifact";
@@ -96,15 +100,17 @@ export async function runReviewFlow(args: {
     suite,
   });
 
-  const reviewStoredJson = JSON.stringify(reviewObj);
+  // BUG FIX (M12.8): only serialize when a deterministic review object exists.
+  // This prevents storing the literal string "null" as structured review content.
+  const reviewStoredJson = reviewObj ? JSON.stringify(reviewObj) : null;
 
   const reviewTelemetry: ReviewFlowTelemetry = {
-    eventType: "review_performed",
+    eventType: reviewObj ? "review_performed" : "review_failed",
     artifactType: "reviewResult",
     metadata: {
       // M12 Step 7D:
       // Keep telemetry shape stable for callers even though parsing is no longer used.
-      parseSucceeded: true,
+      parseSucceeded: !!reviewObj,
       repaired: false,
       suitePresent,
       requirementPresent,
@@ -119,7 +125,10 @@ export async function runReviewFlow(args: {
     reviewObj,
     reviewStoredJson,
     reviewRepaired: false,
-    assistantContentToStore: reviewStoredJson,
+
+    // BUG FIX (M12.8): never persist "null" as assistant review content.
+    // Deterministic review storage must contain valid review JSON or be empty.
+    assistantContentToStore: reviewStoredJson ?? "",
     reviewTelemetry,
   };
 }
