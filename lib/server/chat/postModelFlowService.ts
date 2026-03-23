@@ -26,6 +26,11 @@
 //
 // M12 Step 7 CHANGE:
 // - pass artifact context into review flow for design ↔ review consistency tracking
+//
+// BUG FIX (M12.8):
+// - ingest standalone review artifacts before deterministic review runs
+// - review mode must convert explicit pasted requirement/suite input into
+//   persisted artifact state first, then review against artifacts only
 
 import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
@@ -41,6 +46,7 @@ import {
   runReviewFlow,
   type ReviewFlowTelemetry,
 } from "@/lib/server/chat/reviewFlowService";
+import { applyStandaloneReviewArtifactPatch } from "@/lib/server/chat/artifactUpdateService";
 
 export async function runPostModelFlow(args: {
   rawReply: string;
@@ -106,6 +112,17 @@ export async function runPostModelFlow(args: {
   let workflowGuidance: WorkflowGuidance | null = null;
 
   if (args.executionMode === "review") {
+    const standaloneReviewPatch = await applyStandaloneReviewArtifactPatch({
+      sessionId: args.sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      message: args.message,
+      reviewMode: true,
+    });
+
+    sessionArtifact = standaloneReviewPatch.sessionArtifact;
+    artifactUpdatedAtIso = standaloneReviewPatch.artifactUpdatedAtIso;
+
     const reviewFlow = await runReviewFlow({
       rawReply: args.rawReply,
       sessionArtifact,

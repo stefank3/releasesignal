@@ -260,9 +260,12 @@ export async function applyStandaloneReviewArtifactPatch(args: {
     };
   }
 
-  let nextArtifact = args.sessionArtifact;
-
-  if (requirementPatch) {
+  let nextArtifact: SessionArtifact =
+  args.sessionArtifact && typeof args.sessionArtifact === "object"
+    ? args.sessionArtifact
+    : {};
+    
+    if (requirementPatch) {
     nextArtifact = mergeArtifact(nextArtifact, requirementPatch);
     nextArtifact = withFeatureWorkspaceRequirementMirror(nextArtifact);
   }
