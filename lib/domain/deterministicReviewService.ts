@@ -191,7 +191,10 @@ function buildTokenSet(value: string): Set<string> {
   return new Set(tokenize(value));
 }
 
-function countExactTokenMatches(tokens: string[], haystackTokens: Set<string>): number {
+function countExactTokenMatches(
+  tokens: string[],
+  haystackTokens: Set<string>
+): number {
   let matches = 0;
 
   for (const token of tokens) {
@@ -207,20 +210,26 @@ function getRequiredTokenMatches(unit: RequirementUnit): number {
   const tokenCount = unit.tokens.length;
 
   // BUG FIX (M12 Step 7D):
-  // Previous matching allowed overly broad coverage from only 2 generic tokens.
-  // Require stricter evidence so requirement units do not appear covered by coincidence.
+  // The earlier thresholds were too strict and caused false uncovered units,
+  // especially for strong but naturally paraphrased suites.
   if (tokenCount === 1) return 1;
   if (tokenCount === 2) return 2;
-  if (tokenCount === 3) return 3;
-  if (tokenCount === 4) return 3;
+  if (tokenCount === 3) return 2;
+  if (tokenCount === 4) return 2;
 
   switch (unit.source) {
     case "integrations":
       return 2;
     case "riskFocus":
       return 2;
+
+    // BUG FIX (M12 Test Review triage):
+    // Objective matching was still too brittle and was driving
+    // business relevance to 0 even when the suite clearly covered
+    // the requirement intent.
     case "objective":
-      return 3;
+      return 2;
+
     case "acceptanceCriteria":
       return 3;
     case "inScope":
@@ -238,7 +247,7 @@ function hasPhraseSignal(unit: RequirementUnit, haystack: string): boolean {
   const compactPhrase = unit.normalizedText
     .split(" ")
     .filter((part) => part.length >= 4)
-    .slice(0, 4)
+    .slice(0, 5)
     .join(" ");
 
   if (!compactPhrase) return false;
@@ -256,10 +265,21 @@ function isUnitCoveredByCase(unit: RequirementUnit, testCase: TestCase): boolean
     return false;
   }
 
+  // BUG FIX (M12 Test Review triage):
+  // Objective coverage needs slightly more tolerance than long-form
+  // phrase matching alone, otherwise clearly relevant policy/enforcement
+  // tests still miss the objective requirement.
+  if (unit.source === "objective" && unit.tokens.length >= 3) {
+    return tokenMatchCount >= 2 || hasPhraseSignal(unit, haystack);
+  }
+
   // Tighten long-form requirement matching so broad shared vocabulary alone
   // does not count as real coverage.
   if (unit.tokens.length >= 4) {
-    return hasPhraseSignal(unit, haystack) || tokenMatchCount >= Math.min(4, unit.tokens.length);
+    return (
+      hasPhraseSignal(unit, haystack) ||
+      tokenMatchCount >= Math.min(3, unit.tokens.length)
+    );
   }
 
   return true;
@@ -293,7 +313,9 @@ function findOrphanCaseIds(
 function hasScenarioSignal(cases: TestCase[], pattern: RegExp): boolean {
   return cases.some((testCase) =>
     pattern.test(
-      [testCase.title, testCase.body, ...(testCase.tags ?? [])].join(" ").toLowerCase()
+      [testCase.title, testCase.body, ...(testCase.tags ?? [])]
+        .join(" ")
+        .toLowerCase()
     )
   );
 }
@@ -309,22 +331,46 @@ function buildRiskCoverageScore(args: {
   }
 
   const coverageRatio = args.coveredUnits / args.totalUnits;
-  const orphanPenalty =
-    args.totalCases > 0 ? Math.min(0.2, args.orphanCount / args.totalCases) : 0;
 
-  const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
+// CALIBRATION (M12 Step 7E):
+// Reduce penalty impact and reward strong coverage more
+const orphanPenalty =
+  args.totalCases > 0
+    ? Math.min(0.05, args.orphanCount / (args.totalCases * 2))
+    : 0;
 
-  return Math.round(adjustedRatio * 25);
+const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
+
+// Boost strong coverage slightly
+const boosted = adjustedRatio > 0.7
+  ? Math.min(1, adjustedRatio + 0.1)
+  : adjustedRatio;
+
+return Math.round(boosted * 25);
 }
 
 function buildBusinessRelevanceScore(args: {
-  totalUnits: number;
+  totalObjectiveOrScopeUnits: number;
   coveredObjectiveOrScopeUnits: number;
 }): number {
-  if (args.totalUnits === 0) return 0;
+  // BUG FIX (M12 Test Review triage):
+  // Business relevance must be scored only against the business-relevant
+  // unit set (objective + in-scope), not all requirement units.
+  if (args.totalObjectiveOrScopeUnits === 0) return 0;
 
-  const ratio = args.coveredObjectiveOrScopeUnits / args.totalUnits;
-  return Math.round(Math.min(1, ratio) * 25);
+  const ratio =
+    args.coveredObjectiveOrScopeUnits / args.totalObjectiveOrScopeUnits;
+
+// CALIBRATION:
+// Avoid harsh drop for near-complete coverage
+const adjusted =
+  ratio >= 0.8
+    ? Math.min(1, ratio + 0.1)
+    : ratio >= 0.5
+      ? ratio + 0.05
+      : ratio;
+
+return Math.round(Math.min(1, adjusted) * 25);
 }
 
 function buildDesignQualityScore(args: {
@@ -340,9 +386,11 @@ function buildDesignQualityScore(args: {
     score -= Math.min(8, args.duplicateGroupCount * 3);
   }
 
-  if (args.orphanCount > 0) {
-    score -= Math.min(6, args.orphanCount * 2);
-  }
+// CALIBRATION:
+// Reduce double punishment (already penalized in riskCoverage)
+if (args.orphanCount > 0) {
+  score -= Math.min(4, args.orphanCount);
+}
 
   return Math.max(0, score);
 }
@@ -353,10 +401,17 @@ function buildLevelAndScopeScore(cases: TestCase[]): number {
   let score = 0;
 
   if (hasScenarioSignal(cases, /\b(valid|success|happy)\b/)) score += 5;
-  if (hasScenarioSignal(cases, /\b(invalid|error|fail|negative|unauthori[sz]ed)\b/)) {
+  if (
+    hasScenarioSignal(
+      cases,
+      /\b(invalid|error|fail|negative|unauthori[sz]ed)\b/
+    )
+  ) {
     score += 5;
   }
-  if (hasScenarioSignal(cases, /\b(edge|boundary|limit|max|min|empty|null)\b/)) {
+  if (
+    hasScenarioSignal(cases, /\b(edge|boundary|limit|max|min|empty|null)\b/)
+  ) {
     score += 5;
   }
 
@@ -373,7 +428,7 @@ function buildDiagnosticValueScore(args: {
   let score = 15;
 
   if (args.orphanCount > 0) {
-    score -= Math.min(6, args.orphanCount * 2);
+    score -= Math.min(4, args.orphanCount);
   }
 
   if (args.duplicateGroupCount > 0) {
@@ -389,13 +444,17 @@ function buildBreakdown(
   details: DeterministicReviewDetails,
   cases: TestCase[]
 ): ReviewBreakdown {
+  const objectiveOrScopeUnits = details.requirementUnits.filter(
+    (unit) => unit.source === "objective" || unit.source === "inScope"
+  );
+
   const coveredObjectiveOrScopeUnits = details.coveredUnits.filter(
     (item) => item.unit.source === "objective" || item.unit.source === "inScope"
   ).length;
 
   return {
     businessRelevance: buildBusinessRelevanceScore({
-      totalUnits: details.requirementUnits.length,
+      totalObjectiveOrScopeUnits: objectiveOrScopeUnits.length,
       coveredObjectiveOrScopeUnits,
     }),
     riskCoverage: buildRiskCoverageScore({
@@ -477,7 +536,11 @@ function buildImprovements(details: DeterministicReviewDetails): string[] {
     improvements.push("Deduplicate overlapping cases to improve suite signal quality");
   }
 
-  if (!improvements.length && details.totalCases > 0 && details.coveredUnits.length > 0) {
+  if (
+    !improvements.length &&
+    details.totalCases > 0 &&
+    details.coveredUnits.length > 0
+  ) {
     improvements.push("Maintain requirement-to-test traceability as the suite evolves");
   }
 
@@ -501,7 +564,9 @@ function buildReviewDetails(args: {
   suite: TestSuiteArtifact | null | undefined;
 }): { details: DeterministicReviewDetails; cases: TestCase[] } {
   const requirementUnits = buildRequirementUnits(args.requirement);
-  const cases = (args.suite?.cases ?? []).map((testCase) => normalizeTestCase(testCase));
+  const cases = (args.suite?.cases ?? []).map((testCase) =>
+    normalizeTestCase(testCase)
+  );
 
   const requirementCoverage = mapRequirementCoverage(requirementUnits, cases);
   const coveredUnits = requirementCoverage.filter(
