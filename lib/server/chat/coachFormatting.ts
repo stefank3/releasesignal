@@ -270,6 +270,7 @@ export function hasMeaningfulRefinedRequirement(
     hasList(rr.riskFocus)
   );
 }
+
 /**
  * M12.8 lock:
  * Return technical requirement text only when a meaningful refined requirement
