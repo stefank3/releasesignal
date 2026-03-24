@@ -27,7 +27,7 @@
 // - keep suite intelligence artifact-based and reusable outside UI
 //
 // BUG FIX (M12.8):
-// - add standalone structured requirement parsing for review-mode artifact ingestion
+// - align standalone structured requirement parsing to the locked unified QA format
 // - keep guided coach parsing unchanged
 // - use explicit label-based extraction only (no AI inference)
 
@@ -51,24 +51,33 @@ export type PersistedReviewResult = {
 };
 
 export type RefinedRequirement = {
+  // Legacy / compatibility fields.
   objective?: string;
   context?: string;
   inScope?: string[];
   outOfScope?: string[];
   integrations?: string[];
   riskFocus?: string[];
+
+  // Locked unified QA requirement fields for M12.8.
+  functionalScope?: string[];
+  businessRules?: string[];
   acceptanceCriteria?: string[];
+  edgeCases?: string[];
+  nonFunctionalConstraints?: string[];
+  testStrategyHooks?: string[];
+  riskAreas?: string[];
+  coverageTargets?: string[];
+  minimalReproScenarios?: string[];
+  openQuestions?: string[];
 };
 
 // M9 CHANGE: persistent test case model for evolving suites.
 // M12 CHANGE: add optional structured/editable fields without breaking old usage.
 export type TestCase = {
-  id: string; // e.g. TC-001
-  title: string; // short title used for continuity + duplicate avoidance
-  body: string; // full rendered case text
-
-  // M12 foundation:
-  // optional structured fields for future editable suite behavior.
+  id: string;
+  title: string;
+  body: string;
   priority?: "P0" | "P1" | "P2";
   type?: "UI" | "API" | "Integration" | "E2E";
   preconditions?: string[];
@@ -84,11 +93,6 @@ export type DuplicateCaseGroup = {
   ids: string[];
 };
 
-// M9 CHANGE: suite artifact stored inside ChatSession.artifactJson.
-//
-// M11 NOTE:
-// version + cases.length are telemetry-friendly fields.
-// They let us measure suite evolution without parsing rendered output.
 export type TestSuiteArtifact = {
   version: number;
   cases: TestCase[];
@@ -96,9 +100,6 @@ export type TestSuiteArtifact = {
   lastUpdatedAt: string;
 };
 
-// M12:
-// Feature-centric grouping wrapper.
-// This is optional for now so current top-level artifact access remains valid.
 export type FeatureWorkspaceArtifact = {
   featureTitle?: string;
   refinedRequirement?: RefinedRequirement;
@@ -109,15 +110,8 @@ export type FeatureWorkspaceArtifact = {
 
 export type SessionArtifact = {
   refinedRequirement?: RefinedRequirement;
-
-  // M9 CHANGE: optional test suite state for incremental Cases mode.
-  // M11 NOTE: this is the structured source of truth for suite telemetry.
   testSuite?: TestSuiteArtifact;
-
-  // M12 CHANGE: persisted review result for design/review consistency.
   reviewResult?: PersistedReviewResult;
-
-  // M12 CHANGE: optional feature-centric grouping wrapper.
   featureWorkspace?: FeatureWorkspaceArtifact;
 };
 
@@ -323,9 +317,6 @@ export function parseGuidedAnswerToRefinedRequirement(
       outOfScope.push(...splitList(outPart));
     }
 
-    // Fallback behavior:
-    // if no explicit "in:" / "out:" markers were found, keep the raw scope
-    // as a compact in-scope statement rather than losing the content.
     if (inScope.length === 0 && outOfScope.length === 0) {
       inScope.push(scopeRaw.trim().slice(0, 240));
     }
@@ -349,20 +340,22 @@ export function parseGuidedAnswerToRefinedRequirement(
   return Object.keys(partial).length ? partial : null;
 }
 
-// BUG FIX (M12.8):
-// Standalone review-mode requirement detection should rely only on explicit,
-// structured labels. No inference, no fuzzy parsing.
+// BUG FIX (M12.8): standalone review-mode requirement detection must use
+// only explicit unified QA labels.
 export function isStructuredRequirementInput(message: string): boolean {
   const t = String(message ?? "").toLowerCase();
 
   return (
-    t.includes("objective:") ||
-    t.includes("context:") ||
-    t.includes("in scope:") ||
-    t.includes("out of scope:") ||
-    t.includes("integrations:") ||
-    t.includes("risk focus:") ||
-    t.includes("acceptance criteria:")
+    t.includes("functional scope:") ||
+    t.includes("business rules:") ||
+    t.includes("acceptance criteria:") ||
+    t.includes("edge cases") ||
+    t.includes("non-functional constraints:") ||
+    t.includes("test strategy hooks:") ||
+    t.includes("risk areas:") ||
+    t.includes("coverage targets:") ||
+    t.includes("minimal repro scenarios:") ||
+    t.includes("open questions")
   );
 }
 
@@ -383,23 +376,45 @@ function splitStructuredRequirementList(value: string): string[] {
           .filter(Boolean)
       : bulletParts;
 
-  return Array.from(new Set(commaParts)).slice(0, 12);
+  return Array.from(new Set(commaParts)).slice(0, 20);
+}
+
+function splitMessageBeforeFirstTestCase(message: string): string {
+  const raw = String(message ?? "").replace(/\r/g, "");
+  const match = raw.match(/^\s*TC-\d{3}\s*[:\-–—]/im);
+
+  if (!match || match.index == null) {
+    return raw;
+  }
+
+  return raw.slice(0, match.index).trim();
 }
 
 export function parseStructuredRequirementInput(
   message: string
 ): Partial<RefinedRequirement> | null {
-  const raw = String(message ?? "").replace(/\r/g, "");
+  const raw = splitMessageBeforeFirstTestCase(message);
   const lines = raw.split("\n");
 
   const supportedSections = new Map<string, keyof RefinedRequirement>([
+    ["functional scope", "functionalScope"],
+    ["business rules", "businessRules"],
+    ["acceptance criteria", "acceptanceCriteria"],
+    ["edge cases / negative paths", "edgeCases"],
+    ["edge cases", "edgeCases"],
+    ["non-functional constraints", "nonFunctionalConstraints"],
+    ["test strategy hooks", "testStrategyHooks"],
+    ["risk areas", "riskAreas"],
+    ["coverage targets", "coverageTargets"],
+    ["minimal repro scenarios", "minimalReproScenarios"],
+    ["open questions / clarifications", "openQuestions"],
+    ["open questions", "openQuestions"],
+
+    // Backward-compatible support only. These should not drive review logic later.
     ["objective", "objective"],
     ["context", "context"],
-    ["in scope", "inScope"],
-    ["out of scope", "outOfScope"],
-    ["integrations", "integrations"],
-    ["risk focus", "riskFocus"],
-    ["acceptance criteria", "acceptanceCriteria"],
+    ["context / assumptions", "context"],
+    ["primary risk focus", "riskAreas"],
   ]);
 
   const sectionValues = new Map<keyof RefinedRequirement, string[]>();
@@ -410,7 +425,7 @@ export function parseStructuredRequirementInput(
     if (!line) continue;
 
     const sectionMatch = line.match(
-      /^(objective|context|in scope|out of scope|integrations|risk focus|acceptance criteria)\s*:\s*(.*)$/i
+      /^(functional scope|business rules|acceptance criteria|edge cases \/ negative paths|edge cases|non-functional constraints|test strategy hooks|risk areas|coverage targets|minimal repro scenarios|open questions \/ clarifications|open questions|objective|context|context \/ assumptions|primary risk focus)\s*:\s*(.*)$/i
     );
 
     if (sectionMatch) {
@@ -443,51 +458,66 @@ export function parseStructuredRequirementInput(
   const objective = normalizeWhitespace(
     (sectionValues.get("objective") ?? []).join(" ")
   );
-  if (objective) {
-    partial.objective = objective.slice(0, 240);
-  }
+  if (objective) partial.objective = objective.slice(0, 240);
 
   const context = normalizeMultilineText(
     (sectionValues.get("context") ?? []).join("\n")
   );
-  if (context) {
-    partial.context = context.slice(0, 600);
-  }
+  if (context) partial.context = context.slice(0, 600);
 
-  const inScope = splitStructuredRequirementList(
-    (sectionValues.get("inScope") ?? []).join("\n")
+  const functionalScope = splitStructuredRequirementList(
+    (sectionValues.get("functionalScope") ?? []).join("\n")
   );
-  if (inScope.length) {
-    partial.inScope = inScope;
-  }
+  if (functionalScope.length) partial.functionalScope = functionalScope;
 
-  const outOfScope = splitStructuredRequirementList(
-    (sectionValues.get("outOfScope") ?? []).join("\n")
+  const businessRules = splitStructuredRequirementList(
+    (sectionValues.get("businessRules") ?? []).join("\n")
   );
-  if (outOfScope.length) {
-    partial.outOfScope = outOfScope;
-  }
-
-  const integrations = splitStructuredRequirementList(
-    (sectionValues.get("integrations") ?? []).join("\n")
-  );
-  if (integrations.length) {
-    partial.integrations = integrations;
-  }
-
-  const riskFocus = splitStructuredRequirementList(
-    (sectionValues.get("riskFocus") ?? []).join("\n")
-  );
-  if (riskFocus.length) {
-    partial.riskFocus = riskFocus;
-  }
+  if (businessRules.length) partial.businessRules = businessRules;
 
   const acceptanceCriteria = splitStructuredRequirementList(
     (sectionValues.get("acceptanceCriteria") ?? []).join("\n")
   );
-  if (acceptanceCriteria.length) {
-    partial.acceptanceCriteria = acceptanceCriteria;
+  if (acceptanceCriteria.length) partial.acceptanceCriteria = acceptanceCriteria;
+
+  const edgeCases = splitStructuredRequirementList(
+    (sectionValues.get("edgeCases") ?? []).join("\n")
+  );
+  if (edgeCases.length) partial.edgeCases = edgeCases;
+
+  const nonFunctionalConstraints = splitStructuredRequirementList(
+    (sectionValues.get("nonFunctionalConstraints") ?? []).join("\n")
+  );
+  if (nonFunctionalConstraints.length) {
+    partial.nonFunctionalConstraints = nonFunctionalConstraints;
   }
+
+  const testStrategyHooks = splitStructuredRequirementList(
+    (sectionValues.get("testStrategyHooks") ?? []).join("\n")
+  );
+  if (testStrategyHooks.length) partial.testStrategyHooks = testStrategyHooks;
+
+  const riskAreas = splitStructuredRequirementList(
+    (sectionValues.get("riskAreas") ?? []).join("\n")
+  );
+  if (riskAreas.length) partial.riskAreas = riskAreas;
+
+  const coverageTargets = splitStructuredRequirementList(
+    (sectionValues.get("coverageTargets") ?? []).join("\n")
+  );
+  if (coverageTargets.length) partial.coverageTargets = coverageTargets;
+
+  const minimalReproScenarios = splitStructuredRequirementList(
+    (sectionValues.get("minimalReproScenarios") ?? []).join("\n")
+  );
+  if (minimalReproScenarios.length) {
+    partial.minimalReproScenarios = minimalReproScenarios;
+  }
+
+  const openQuestions = splitStructuredRequirementList(
+    (sectionValues.get("openQuestions") ?? []).join("\n")
+  );
+  if (openQuestions.length) partial.openQuestions = openQuestions;
 
   return Object.keys(partial).length ? partial : null;
 }
@@ -522,6 +552,22 @@ export function mergeArtifact(
     ...(patch.riskFocus?.length
       ? { riskFocus: dedupe([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) }
       : {}),
+    ...(patch.functionalScope?.length
+      ? {
+          functionalScope: dedupe([
+            ...(prevRR.functionalScope ?? []),
+            ...patch.functionalScope,
+          ]),
+        }
+      : {}),
+    ...(patch.businessRules?.length
+      ? {
+          businessRules: dedupe([
+            ...(prevRR.businessRules ?? []),
+            ...patch.businessRules,
+          ]),
+        }
+      : {}),
     ...(patch.acceptanceCriteria?.length
       ? {
           acceptanceCriteria: dedupe([
@@ -530,27 +576,66 @@ export function mergeArtifact(
           ]),
         }
       : {}),
+    ...(patch.edgeCases?.length
+      ? {
+          edgeCases: dedupe([...(prevRR.edgeCases ?? []), ...patch.edgeCases]),
+        }
+      : {}),
+    ...(patch.nonFunctionalConstraints?.length
+      ? {
+          nonFunctionalConstraints: dedupe([
+            ...(prevRR.nonFunctionalConstraints ?? []),
+            ...patch.nonFunctionalConstraints,
+          ]),
+        }
+      : {}),
+    ...(patch.testStrategyHooks?.length
+      ? {
+          testStrategyHooks: dedupe([
+            ...(prevRR.testStrategyHooks ?? []),
+            ...patch.testStrategyHooks,
+          ]),
+        }
+      : {}),
+    ...(patch.riskAreas?.length
+      ? {
+          riskAreas: dedupe([...(prevRR.riskAreas ?? []), ...patch.riskAreas]),
+        }
+      : {}),
+    ...(patch.coverageTargets?.length
+      ? {
+          coverageTargets: dedupe([
+            ...(prevRR.coverageTargets ?? []),
+            ...patch.coverageTargets,
+          ]),
+        }
+      : {}),
+    ...(patch.minimalReproScenarios?.length
+      ? {
+          minimalReproScenarios: dedupe([
+            ...(prevRR.minimalReproScenarios ?? []),
+            ...patch.minimalReproScenarios,
+          ]),
+        }
+      : {}),
+    ...(patch.openQuestions?.length
+      ? {
+          openQuestions: dedupe([
+            ...(prevRR.openQuestions ?? []),
+            ...patch.openQuestions,
+          ]),
+        }
+      : {}),
   };
 
   return {
     refinedRequirement: nextRR,
-
-    // M9 CHANGE: preserve existing testSuite when refinedRequirement is updated.
-    // M11 NOTE: this prevents telemetry context from being lost when only the
-    // requirement artifact is being updated.
     ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
-
-    // M12 CHANGE: preserve persisted review + feature workspace when requirement updates.
     ...(prev.reviewResult ? { reviewResult: prev.reviewResult } : {}),
     ...(prev.featureWorkspace ? { featureWorkspace: prev.featureWorkspace } : {}),
   };
 }
 
-// M9 CHANGE: helper for future Cases-mode incremental behavior.
-// Safe no-op for old sessions that do not yet have a suite.
-//
-// M11 NOTE:
-// This helper should be used anywhere telemetry needs reliable suite access.
 export function getTestSuite(
   artifact: SessionArtifact | null | undefined
 ): TestSuiteArtifact | null {
@@ -570,37 +655,62 @@ export function artifactToContextText(artifact: SessionArtifact): string {
   const lines: string[] = ["REFINED REQUIREMENT (pinned):"];
 
   if (rr.objective) lines.push(`- Objective: ${rr.objective}`);
-  if (rr.context) lines.push(`- Context/Constraints: ${rr.context}`);
+  if (rr.context) lines.push(`- Context: ${rr.context}`);
 
-  if (rr.inScope?.length) {
-    lines.push("- In scope:");
-    for (const s of rr.inScope.slice(0, 12)) lines.push(`  - ${s}`);
+  if (rr.functionalScope?.length) {
+    lines.push("- Functional Scope:");
+    for (const s of rr.functionalScope.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
-  if (rr.outOfScope?.length) {
-    lines.push("- Out of scope:");
-    for (const s of rr.outOfScope.slice(0, 12)) lines.push(`  - ${s}`);
-  }
-
-  if (rr.integrations?.length) {
-    lines.push(`- Integrations: ${rr.integrations.slice(0, 12).join(", ")}`);
-  }
-
-  if (rr.riskFocus?.length) {
-    lines.push(`- Risk focus: ${rr.riskFocus.slice(0, 12).join(", ")}`);
+  if (rr.businessRules?.length) {
+    lines.push("- Business Rules:");
+    for (const s of rr.businessRules.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
   if (rr.acceptanceCriteria?.length) {
-    lines.push("- Acceptance criteria:");
-    for (const a of rr.acceptanceCriteria.slice(0, 12)) lines.push(`  - ${a}`);
+    lines.push("- Acceptance Criteria:");
+    for (const s of rr.acceptanceCriteria.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
-  // M9 CHANGE: include compact test suite context only when it exists.
-  // This is useful for future incremental generation prompts.
-  //
-  // M11 NOTE:
-  // This text is presentation/context support only.
-  // Telemetry must still use the structured suite object directly.
+  if (rr.edgeCases?.length) {
+    lines.push("- Edge Cases / Negative Paths:");
+    for (const s of rr.edgeCases.slice(0, 12)) lines.push(`  - ${s}`);
+  }
+
+  if (rr.nonFunctionalConstraints?.length) {
+    lines.push("- Non-Functional Constraints:");
+    for (const s of rr.nonFunctionalConstraints.slice(0, 12)) {
+      lines.push(`  - ${s}`);
+    }
+  }
+
+  if (rr.testStrategyHooks?.length) {
+    lines.push("- Test Strategy Hooks:");
+    for (const s of rr.testStrategyHooks.slice(0, 12)) lines.push(`  - ${s}`);
+  }
+
+  if (rr.riskAreas?.length) {
+    lines.push("- Risk Areas:");
+    for (const s of rr.riskAreas.slice(0, 12)) lines.push(`  - ${s}`);
+  }
+
+  if (rr.coverageTargets?.length) {
+    lines.push("- Coverage Targets:");
+    for (const s of rr.coverageTargets.slice(0, 12)) lines.push(`  - ${s}`);
+  }
+
+  if (rr.minimalReproScenarios?.length) {
+    lines.push("- Minimal Repro Scenarios:");
+    for (const s of rr.minimalReproScenarios.slice(0, 12)) {
+      lines.push(`  - ${s}`);
+    }
+  }
+
+  if (rr.openQuestions?.length) {
+    lines.push("- Open Questions / Clarifications:");
+    for (const s of rr.openQuestions.slice(0, 12)) lines.push(`  - ${s}`);
+  }
+
   const suite = getTestSuite(artifact);
   if (suite) {
     const validation = validateTestSuite(suite);
@@ -632,6 +742,5 @@ export function artifactToContextText(artifact: SessionArtifact): string {
 }
 
 export function prismaJsonValue(artifact: SessionArtifact): Prisma.InputJsonValue {
-  // Central helper for writing structured session artifacts into Prisma Json fields.
   return artifact as unknown as Prisma.InputJsonValue;
 }
