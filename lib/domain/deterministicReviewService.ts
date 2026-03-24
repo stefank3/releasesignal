@@ -564,13 +564,15 @@ export function buildDeterministicReviewResult(args: {
   const { details, cases } = buildReviewDetails(args);
 
   const breakdown = buildBreakdown(details, cases);
-  const score =
-    breakdown.businessRelevance +
-    breakdown.riskCoverage +
-    breakdown.designQuality +
-    breakdown.levelAndScope +
-    breakdown.diagnosticValue;
 
+const score =
+  details.requirementUnits.length === 0
+    ? 0
+    : breakdown.businessRelevance +
+      breakdown.riskCoverage +
+      breakdown.designQuality +
+      breakdown.levelAndScope +
+      breakdown.diagnosticValue;
   return {
     score,
     verdict: buildVerdict(score),
