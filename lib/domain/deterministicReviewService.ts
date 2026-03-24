@@ -18,6 +18,15 @@
 // - ReviewResult
 //
 // This file intentionally keeps scoring and matching logic explicit and stable.
+//
+// BUG FIX (M12.8):
+// - align requirement unit extraction to locked review contract
+// - derive review units ONLY from:
+//   * acceptanceCriteria
+//   * functionalScope
+//   * businessRules
+//   * edgeCases
+// - remove objective / integration / risk-focus driven coverage mapping
 
 import type {
   RefinedRequirement,
@@ -31,11 +40,10 @@ type RequirementUnit = {
   key: string;
   label: string;
   source:
-    | "objective"
-    | "inScope"
-    | "integrations"
-    | "riskFocus"
-    | "acceptanceCriteria";
+    | "acceptanceCriteria"
+    | "functionalScope"
+    | "businessRules"
+    | "edgeCases";
   normalizedText: string;
   tokens: string[];
 };
@@ -148,22 +156,20 @@ function buildRequirementUnits(
     });
   };
 
-  pushUnit("objective", "Objective", requirement.objective);
-
-  (requirement.inScope ?? []).forEach((item, index) => {
-    pushUnit("inScope", "In-scope item", item, index);
-  });
-
-  (requirement.integrations ?? []).forEach((item, index) => {
-    pushUnit("integrations", "Integration", item, index);
-  });
-
-  (requirement.riskFocus ?? []).forEach((item, index) => {
-    pushUnit("riskFocus", "Risk focus", item, index);
-  });
-
   (requirement.acceptanceCriteria ?? []).forEach((item, index) => {
     pushUnit("acceptanceCriteria", "Acceptance criterion", item, index);
+  });
+
+  (requirement.functionalScope ?? []).forEach((item, index) => {
+    pushUnit("functionalScope", "Functional scope item", item, index);
+  });
+
+  (requirement.businessRules ?? []).forEach((item, index) => {
+    pushUnit("businessRules", "Business rule", item, index);
+  });
+
+  (requirement.edgeCases ?? []).forEach((item, index) => {
+    pushUnit("edgeCases", "Edge case", item, index);
   });
 
   return units;
@@ -209,31 +215,20 @@ function countExactTokenMatches(
 function getRequiredTokenMatches(unit: RequirementUnit): number {
   const tokenCount = unit.tokens.length;
 
-  // BUG FIX (M12 Step 7D):
-  // The earlier thresholds were too strict and caused false uncovered units,
-  // especially for strong but naturally paraphrased suites.
   if (tokenCount === 1) return 1;
   if (tokenCount === 2) return 2;
   if (tokenCount === 3) return 2;
   if (tokenCount === 4) return 2;
 
   switch (unit.source) {
-    case "integrations":
+    case "functionalScope":
       return 2;
-    case "riskFocus":
+    case "businessRules":
       return 2;
-
-    // BUG FIX (M12 Test Review triage):
-    // Objective matching was still too brittle and was driving
-    // business relevance to 0 even when the suite clearly covered
-    // the requirement intent.
-    case "objective":
+    case "edgeCases":
       return 2;
-
     case "acceptanceCriteria":
       return 3;
-    case "inScope":
-      return 2;
     default:
       return Math.min(3, tokenCount);
   }
@@ -265,16 +260,6 @@ function isUnitCoveredByCase(unit: RequirementUnit, testCase: TestCase): boolean
     return false;
   }
 
-  // BUG FIX (M12 Test Review triage):
-  // Objective coverage needs slightly more tolerance than long-form
-  // phrase matching alone, otherwise clearly relevant policy/enforcement
-  // tests still miss the objective requirement.
-  if (unit.source === "objective" && unit.tokens.length >= 3) {
-    return tokenMatchCount >= 2 || hasPhraseSignal(unit, haystack);
-  }
-
-  // Tighten long-form requirement matching so broad shared vocabulary alone
-  // does not count as real coverage.
   if (unit.tokens.length >= 4) {
     return (
       hasPhraseSignal(unit, haystack) ||
@@ -331,17 +316,12 @@ function buildRiskCoverageScore(args: {
   }
 
   const coverageRatio = args.coveredUnits / args.totalUnits;
-
-  // CALIBRATION (M12 Step 7E):
-  // Reduce penalty impact and reward strong coverage more
   const orphanPenalty =
     args.totalCases > 0
       ? Math.min(0.05, args.orphanCount / (args.totalCases * 2))
       : 0;
 
   const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
-
-  // Boost strong coverage slightly
   const boosted =
     adjustedRatio > 0.7 ? Math.min(1, adjustedRatio + 0.1) : adjustedRatio;
 
@@ -349,19 +329,14 @@ function buildRiskCoverageScore(args: {
 }
 
 function buildBusinessRelevanceScore(args: {
-  totalObjectiveOrScopeUnits: number;
-  coveredObjectiveOrScopeUnits: number;
+  totalPrimaryAndSecondaryUnits: number;
+  coveredPrimaryAndSecondaryUnits: number;
 }): number {
-  // BUG FIX (M12 Test Review triage):
-  // Business relevance must be scored only against the business-relevant
-  // unit set (objective + in-scope), not all requirement units.
-  if (args.totalObjectiveOrScopeUnits === 0) return 0;
+  if (args.totalPrimaryAndSecondaryUnits === 0) return 0;
 
   const ratio =
-    args.coveredObjectiveOrScopeUnits / args.totalObjectiveOrScopeUnits;
+    args.coveredPrimaryAndSecondaryUnits / args.totalPrimaryAndSecondaryUnits;
 
-  // CALIBRATION:
-  // Avoid harsh drop for near-complete coverage
   const adjusted =
     ratio >= 0.8 ? Math.min(1, ratio + 0.1) : ratio >= 0.5 ? ratio + 0.05 : ratio;
 
@@ -381,8 +356,6 @@ function buildDesignQualityScore(args: {
     score -= Math.min(8, args.duplicateGroupCount * 3);
   }
 
-  // CALIBRATION:
-  // Reduce double punishment (already penalized in riskCoverage)
   if (args.orphanCount > 0) {
     score -= Math.min(4, args.orphanCount);
   }
@@ -433,24 +406,14 @@ function buildDiagnosticValueScore(args: {
   return Math.max(0, score);
 }
 
-// BUG FIX (M12 Step 7D): level/scope scoring must use actual normalized suite cases.
-// Keep a single breakdown builder so scoring cannot diverge across helper paths.
 function buildBreakdown(
   details: DeterministicReviewDetails,
   cases: TestCase[]
 ): ReviewBreakdown {
-  const objectiveOrScopeUnits = details.requirementUnits.filter(
-    (unit) => unit.source === "objective" || unit.source === "inScope"
-  );
-
-  const coveredObjectiveOrScopeUnits = details.coveredUnits.filter(
-    (item) => item.unit.source === "objective" || item.unit.source === "inScope"
-  ).length;
-
   return {
     businessRelevance: buildBusinessRelevanceScore({
-      totalObjectiveOrScopeUnits: objectiveOrScopeUnits.length,
-      coveredObjectiveOrScopeUnits,
+      totalPrimaryAndSecondaryUnits: details.requirementUnits.length,
+      coveredPrimaryAndSecondaryUnits: details.coveredUnits.length,
     }),
     riskCoverage: buildRiskCoverageScore({
       totalUnits: details.requirementUnits.length,
@@ -563,8 +526,6 @@ function buildReviewDetails(args: {
     normalizeTestCase(testCase)
   );
 
-  // BUG FIX (M12.8): duplicate detection must operate on the same normalized
-  // case set used by coverage, orphan detection, and scoring.
   const normalizedSuite: TestSuiteArtifact | null = args.suite
     ? {
         ...args.suite,
