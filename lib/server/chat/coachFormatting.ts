@@ -246,40 +246,29 @@ export function coachToTechnicalRequirementText(
 /**
  * Artifact is meaningful only if at least one refinedRequirement field has content.
  */
-export function coachToTechnicalRequirementText(
-  _coach: CoachResult,
+export function hasMeaningfulRefinedRequirement(
   artifact: SessionArtifact | null
-): string {
-  const lines: string[] = [];
+): boolean {
   const rr = artifact?.refinedRequirement;
+  if (!rr) return false;
 
-  lines.push("Refined Technical Requirement");
-  lines.push("");
+  const hasText = (v?: string) => typeof v === "string" && v.trim().length > 0;
+  const hasList = (v?: string[]) =>
+    Array.isArray(v) && v.some((x) => String(x ?? "").trim().length > 0);
 
-  if (rr?.objective?.trim()) {
-    lines.push("Objective:");
-    lines.push(rr.objective.trim());
-    lines.push("");
-  }
-
-  if (rr?.context?.trim()) {
-    lines.push("Context / Constraints:");
-    lines.push(rr.context.trim());
-    lines.push("");
-  }
-
-  const functionalScope =
-    rr?.functionalScope?.length ? rr.functionalScope : rr?.inScope;
-  const riskAreas =
-    rr?.riskAreas?.length ? rr.riskAreas : rr?.riskFocus;
-
-  pushListSection(lines, "Functional Scope:", functionalScope);
-  pushListSection(lines, "Business Rules:", rr?.businessRules);
-  pushListSection(lines, "Acceptance Criteria:", rr?.acceptanceCriteria);
-  pushListSection(lines, "Edge Cases / Negative Paths:", rr?.edgeCases);
-  pushListSection(lines, "Risk Areas:", riskAreas);
-
-  return lines.join("\n").trim();
+  return (
+    hasText(rr.objective) ||
+    hasText(rr.context) ||
+    hasList(rr.functionalScope) ||
+    hasList(rr.businessRules) ||
+    hasList(rr.acceptanceCriteria) ||
+    hasList(rr.edgeCases) ||
+    hasList(rr.riskAreas) ||
+    hasList(rr.inScope) ||
+    hasList(rr.outOfScope) ||
+    hasList(rr.integrations) ||
+    hasList(rr.riskFocus)
+  );
 }
 /**
  * M12.8 lock:
