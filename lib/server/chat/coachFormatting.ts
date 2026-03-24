@@ -3,9 +3,9 @@
 // Coach-mode formatting and continuity helpers moved out of route.ts
 // so the API route stays focused on orchestration.
 
+import { parseGuidedAnswerToRefinedRequirement } from "@/lib/chat/artifact";
 import type { SessionArtifact } from "@/lib/chat/artifact";
 import type { CoachResult } from "@/lib/framework/reviewSchema";
-import { parseGuidedAnswerToRefinedRequirement } from "@/lib/chat/artifact";
 
 function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): string[] {
   const out: string[] = [];
@@ -25,6 +25,23 @@ function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): str
   }
 
   return out;
+}
+
+function pushListSection(lines: string[], title: string, values?: string[], max = 12): void {
+  if (!Array.isArray(values) || values.length === 0) return;
+
+  const cleaned = values
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .slice(0, max);
+
+  if (cleaned.length === 0) return;
+
+  lines.push(title);
+  for (const value of cleaned) {
+    lines.push(`- ${value}`);
+  }
+  lines.push("");
 }
 
 /**
@@ -130,13 +147,22 @@ export function coachToText(coach: CoachResult): string {
   return lines.join("\n");
 }
 
-// CHANGE (M12 Step 7C):
-// Split canonical requirement from strategy content.
-// This function now returns ONLY artifact-safe refined requirement text.
-// Strategy content must NOT be included here.
-
+/**
+ * M12.8 review validation lock:
+ * Render the refined requirement ONLY from persisted artifact fields.
+ *
+ * Why:
+ * - deterministic review must operate on the artifact contract, not coach prose
+ * - legacy coach fallbacks were allowing non-canonical strategy content to appear
+ *   as a "Refined Technical Requirement"
+ * - visible requirement output must match the same source of truth used by review
+ *
+ * NOTE:
+ * We intentionally keep the coach argument in the signature for compatibility with
+ * existing call sites, but it is no longer used here.
+ */
 export function coachToTechnicalRequirementText(
-  coach: CoachResult,
+  _coach: CoachResult,
   artifact: SessionArtifact | null
 ): string {
   const lines: string[] = [];
@@ -149,54 +175,19 @@ export function coachToTechnicalRequirementText(
     lines.push("Objective:");
     lines.push(rr.objective.trim());
     lines.push("");
-  } else if (coach.highSignalApproach.goals[0]) {
-    lines.push("Objective:");
-    lines.push(coach.highSignalApproach.goals[0]);
-    lines.push("");
   }
 
   if (rr?.context?.trim()) {
     lines.push("Context / Constraints:");
     lines.push(rr.context.trim());
     lines.push("");
-  } else if (coach.assumptions.length) {
-    lines.push("Context / Assumptions:");
-    for (const a of coach.assumptions.slice(0, 6)) lines.push(`- ${a}`);
-    lines.push("");
   }
 
-  if (rr?.inScope?.length) {
-    lines.push("In Scope:");
-    for (const s of rr.inScope.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.outOfScope?.length) {
-    lines.push("Out of Scope:");
-    for (const s of rr.outOfScope.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.integrations?.length) {
-    lines.push("Integrations:");
-    for (const s of rr.integrations.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.acceptanceCriteria?.length) {
-    lines.push("Acceptance Criteria:");
-    for (const s of rr.acceptanceCriteria.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  lines.push("Primary Risk Focus:");
-  if (rr?.riskFocus?.length) {
-    for (const s of rr.riskFocus.slice(0, 12)) lines.push(`- ${s}`);
-  } else {
-    for (const r of coach.riskMatrix.slice(0, 6)) {
-      lines.push(`- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact})`);
-    }
-  }
+  pushListSection(lines, "In Scope:", rr?.inScope);
+  pushListSection(lines, "Out of Scope:", rr?.outOfScope);
+  pushListSection(lines, "Integrations:", rr?.integrations);
+  pushListSection(lines, "Acceptance Criteria:", rr?.acceptanceCriteria);
+  pushListSection(lines, "Primary Risk Focus:", rr?.riskFocus);
 
   return lines.join("\n").trim();
 }
@@ -225,9 +216,17 @@ export function hasMeaningfulRefinedRequirement(
   );
 }
 
+/**
+ * M12.8 lock:
+ * Return technical requirement text only when a meaningful refined requirement
+ * artifact actually exists.
+ *
+ * guidedAnswer by itself is not enough, because that can still occur before the
+ * artifact is in a stable canonical shape.
+ */
 export function shouldReturnTechnicalRequirement(args: {
   guidedAnswer: boolean;
   artifact: SessionArtifact | null;
 }): boolean {
-  return args.guidedAnswer || hasMeaningfulRefinedRequirement(args.artifact);
+  return hasMeaningfulRefinedRequirement(args.artifact);
 }

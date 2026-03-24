@@ -9,6 +9,11 @@
 // - normalize cases before persist/render
 // - keep merge logic artifact-based and predictable
 // - add suite diff summary groundwork for change awareness
+//
+// BUG FIX (M12.8):
+// - harden pasted suite parsing for review-mode standalone ingestion
+// - normalize collapsed headers before parsing
+// - split deterministically on TC headers instead of relying only on matchAll slices
 
 import type {
   SessionArtifact,
@@ -44,7 +49,22 @@ export function normalizeCaseTitle(title: string): string {
 }
 
 /**
- * Parse generated plain-text test cases from the model reply.
+ * Normalize pasted suite text so collapsed headers still become parseable.
+ */
+function normalizePastedSuiteText(text: string): string {
+  return String(text ?? "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(
+      /([^\n])(\s+)(TC-\d{1,4}\s*[-–:])/gi,
+      (_, before: string, _ws: string, header: string) => `${before}\n${header}`
+    )
+    .trim();
+}
+
+/**
+ * Parse generated plain-text test cases from the model reply or pasted suite.
  * Expected header:
  *   TC-001 - Title
  * or
@@ -53,22 +73,25 @@ export function normalizeCaseTitle(title: string): string {
 export function parseGeneratedTestCases(
   text: string
 ): Array<{ title: string; body: string }> {
-  const raw = String(text ?? "").replace(/\r/g, "").trim();
+  const raw = normalizePastedSuiteText(text);
   if (!raw) return [];
 
-  const matches = [...raw.matchAll(/^\s*TC-(\d{1,4})\s*[-–:]\s*(.+)$/gim)];
-  if (!matches.length) return [];
+  const headerRegex = /^\s*TC-\d{1,4}\s*[-–:]\s*.+$/gim;
+  const headerMatches = [...raw.matchAll(headerRegex)];
+  if (!headerMatches.length) return [];
+
+  const blocks = raw
+    .split(/(?=^\s*TC-\d{1,4}\s*[-–:]\s*.+$)/gim)
+    .map((block) => block.trim())
+    .filter((block) => /^\s*TC-\d{1,4}\s*[-–:]\s*.+$/im.test(block));
 
   const out: Array<{ title: string; body: string }> = [];
 
-  for (let i = 0; i < matches.length; i++) {
-    const match = matches[i];
-    const start = match.index ?? 0;
-    const end =
-      i + 1 < matches.length ? matches[i + 1].index ?? raw.length : raw.length;
-
-    const block = raw.slice(start, end).trim();
-    const title = String(match[2] ?? "").trim();
+  for (const block of blocks) {
+    const lines = block.split("\n");
+    const headerLine = String(lines[0] ?? "").trim();
+    const titleMatch = headerLine.match(/^\s*TC-\d{1,4}\s*[-–:]\s*(.+)$/i);
+    const title = String(titleMatch?.[1] ?? "").trim();
 
     if (!title || !block) continue;
     out.push({ title, body: block });

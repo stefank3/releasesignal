@@ -28,6 +28,8 @@
 //
 // BUG FIX (M12.8):
 // - align standalone structured requirement parsing to the locked unified QA format
+// - support legacy pasted requirement labels used in live review input
+// - normalize collapsed section headers before parsing
 // - keep guided coach parsing unchanged
 // - use explicit label-based extraction only (no AI inference)
 
@@ -72,8 +74,6 @@ export type RefinedRequirement = {
   openQuestions?: string[];
 };
 
-// M9 CHANGE: persistent test case model for evolving suites.
-// M12 CHANGE: add optional structured/editable fields without breaking old usage.
 export type TestCase = {
   id: string;
   title: string;
@@ -340,8 +340,6 @@ export function parseGuidedAnswerToRefinedRequirement(
   return Object.keys(partial).length ? partial : null;
 }
 
-// BUG FIX (M12.8): standalone review-mode requirement detection must use
-// only explicit unified QA labels.
 export function isStructuredRequirementInput(message: string): boolean {
   const t = String(message ?? "").toLowerCase();
 
@@ -355,7 +353,15 @@ export function isStructuredRequirementInput(message: string): boolean {
     t.includes("risk areas:") ||
     t.includes("coverage targets:") ||
     t.includes("minimal repro scenarios:") ||
-    t.includes("open questions")
+    t.includes("open questions") ||
+    t.includes("objective:") ||
+    t.includes("primary risk:") ||
+    t.includes("context / assumptions:") ||
+    t.includes("context:") ||
+    t.includes("constraints:") ||
+    t.includes("scope:") ||
+    t.includes("success criteria:") ||
+    t.includes("primary risk focus:")
   );
 }
 
@@ -390,10 +396,49 @@ function splitMessageBeforeFirstTestCase(message: string): string {
   return raw.slice(0, match.index).trim();
 }
 
+function normalizeRequirementSectionHeaders(message: string): string {
+  const raw = String(message ?? "").replace(/\r/g, "");
+
+  const labels = [
+    "Functional Scope:",
+    "Business Rules:",
+    "Acceptance Criteria:",
+    "Edge Cases / Negative Paths:",
+    "Edge Cases:",
+    "Non-Functional Constraints:",
+    "Test Strategy Hooks:",
+    "Risk Areas:",
+    "Coverage Targets:",
+    "Minimal Repro Scenarios:",
+    "Open Questions / Clarifications:",
+    "Open Questions:",
+    "Objective:",
+    "Primary Risk:",
+    "Context / Assumptions:",
+    "Context:",
+    "Constraints:",
+    "Scope:",
+    "Success Criteria:",
+    "Primary Risk Focus:",
+  ];
+
+  let normalized = raw;
+
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`([^\\n])\\s+(${escaped})`, "gi");
+    normalized = normalized.replace(regex, "$1\n$2");
+  }
+
+  return normalized;
+}
+
 export function parseStructuredRequirementInput(
   message: string
 ): Partial<RefinedRequirement> | null {
-  const raw = splitMessageBeforeFirstTestCase(message);
+  const raw = normalizeRequirementSectionHeaders(
+    splitMessageBeforeFirstTestCase(message)
+  );
   const lines = raw.split("\n");
 
   const supportedSections = new Map<string, keyof RefinedRequirement>([
@@ -410,11 +455,15 @@ export function parseStructuredRequirementInput(
     ["open questions / clarifications", "openQuestions"],
     ["open questions", "openQuestions"],
 
-    // Backward-compatible support only. These should not drive review logic later.
+    // Legacy labels mapped deterministically into current artifact shape.
     ["objective", "objective"],
-    ["context", "context"],
-    ["context / assumptions", "context"],
+    ["primary risk", "riskAreas"],
     ["primary risk focus", "riskAreas"],
+    ["context", "context"],
+    ["context / assumptions", "nonFunctionalConstraints"],
+    ["constraints", "nonFunctionalConstraints"],
+    ["scope", "functionalScope"],
+    ["success criteria", "acceptanceCriteria"],
   ]);
 
   const sectionValues = new Map<keyof RefinedRequirement, string[]>();
@@ -425,7 +474,7 @@ export function parseStructuredRequirementInput(
     if (!line) continue;
 
     const sectionMatch = line.match(
-      /^(functional scope|business rules|acceptance criteria|edge cases \/ negative paths|edge cases|non-functional constraints|test strategy hooks|risk areas|coverage targets|minimal repro scenarios|open questions \/ clarifications|open questions|objective|context|context \/ assumptions|primary risk focus)\s*:\s*(.*)$/i
+      /^(functional scope|business rules|acceptance criteria|edge cases \/ negative paths|edge cases|non-functional constraints|test strategy hooks|risk areas|coverage targets|minimal repro scenarios|open questions \/ clarifications|open questions|objective|primary risk|primary risk focus|context|context \/ assumptions|constraints|scope|success criteria)\s*:\s*(.*)$/i
     );
 
     if (sectionMatch) {
