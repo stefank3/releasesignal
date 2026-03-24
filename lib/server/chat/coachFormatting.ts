@@ -81,19 +81,62 @@ export function buildCoachContinuityArtifactPatch(args: {
     args.coach.highSignalApproach.goals[0] ||
     "";
 
-  const riskFocus = uniqueNonEmpty(
-    [...(existing?.riskFocus ?? []), ...args.coach.riskMatrix.map((r) => r.risk)],
+  const acceptanceCriteria = uniqueNonEmpty(
+    [
+      ...(existing?.acceptanceCriteria ?? []),
+      ...args.coach.highSignalApproach.testIdeas
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((idea) => idea.trim()),
+    ],
+    12
+  );
+
+  const functionalScope = uniqueNonEmpty(
+    [
+      ...(existing?.functionalScope ?? []),
+      ...(existing?.inScope ?? []),
+      ...args.coach.highSignalApproach.goals
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((goal) => goal.trim()),
+    ],
+    12
+  );
+
+  const riskAreas = uniqueNonEmpty(
+    [
+      ...(existing?.riskAreas ?? []),
+      ...(existing?.riskFocus ?? []),
+      ...args.coach.riskMatrix.map((r) => r.risk),
+    ],
+    12
+  );
+
+  const edgeCases = uniqueNonEmpty(
+    [
+      ...(existing?.edgeCases ?? []),
+      ...(args.coach.highSignalApproach.minimalRepro ?? []),
+    ],
     12
   );
 
   const patch = {
     objective: objective || undefined,
     context: nextContext || existing?.context || undefined,
+
+    // legacy compatibility
     inScope: existing?.inScope ?? [],
     outOfScope: existing?.outOfScope ?? [],
     integrations: existing?.integrations ?? [],
-    riskFocus,
-    acceptanceCriteria: existing?.acceptanceCriteria ?? [],
+    riskFocus: uniqueNonEmpty([...(existing?.riskFocus ?? []), ...riskAreas], 12),
+
+    // locked M12.8 fields
+    functionalScope,
+    businessRules: existing?.businessRules ?? [],
+    acceptanceCriteria,
+    edgeCases,
+    riskAreas,
   };
 
   const hasMeaningfulPatch =
@@ -103,7 +146,11 @@ export function buildCoachContinuityArtifactPatch(args: {
     patch.outOfScope.length > 0 ||
     patch.integrations.length > 0 ||
     patch.riskFocus.length > 0 ||
-    patch.acceptanceCriteria.length > 0;
+    patch.functionalScope.length > 0 ||
+    patch.businessRules.length > 0 ||
+    patch.acceptanceCriteria.length > 0 ||
+    patch.edgeCases.length > 0 ||
+    patch.riskAreas.length > 0;
 
   return hasMeaningfulPatch ? patch : null;
 }
@@ -183,39 +230,57 @@ export function coachToTechnicalRequirementText(
     lines.push("");
   }
 
-  pushListSection(lines, "In Scope:", rr?.inScope);
-  pushListSection(lines, "Out of Scope:", rr?.outOfScope);
-  pushListSection(lines, "Integrations:", rr?.integrations);
+  const functionalScope =
+    rr?.functionalScope?.length ? rr.functionalScope : rr?.inScope;
+  const riskAreas =
+    rr?.riskAreas?.length ? rr.riskAreas : rr?.riskFocus;
+
+  pushListSection(lines, "Functional Scope:", functionalScope);
+  pushListSection(lines, "Business Rules:", rr?.businessRules);
   pushListSection(lines, "Acceptance Criteria:", rr?.acceptanceCriteria);
-  pushListSection(lines, "Primary Risk Focus:", rr?.riskFocus);
+  pushListSection(lines, "Edge Cases / Negative Paths:", rr?.edgeCases);
+  pushListSection(lines, "Risk Areas:", riskAreas);
 
   return lines.join("\n").trim();
 }
-
 /**
  * Artifact is meaningful only if at least one refinedRequirement field has content.
  */
-export function hasMeaningfulRefinedRequirement(
+export function coachToTechnicalRequirementText(
+  _coach: CoachResult,
   artifact: SessionArtifact | null
-): boolean {
+): string {
+  const lines: string[] = [];
   const rr = artifact?.refinedRequirement;
-  if (!rr) return false;
 
-  const hasText = (v?: string) => typeof v === "string" && v.trim().length > 0;
-  const hasList = (v?: string[]) =>
-    Array.isArray(v) && v.some((x) => String(x ?? "").trim().length > 0);
+  lines.push("Refined Technical Requirement");
+  lines.push("");
 
-  return (
-    hasText(rr.objective) ||
-    hasText(rr.context) ||
-    hasList(rr.inScope) ||
-    hasList(rr.outOfScope) ||
-    hasList(rr.integrations) ||
-    hasList(rr.riskFocus) ||
-    hasList(rr.acceptanceCriteria)
-  );
+  if (rr?.objective?.trim()) {
+    lines.push("Objective:");
+    lines.push(rr.objective.trim());
+    lines.push("");
+  }
+
+  if (rr?.context?.trim()) {
+    lines.push("Context / Constraints:");
+    lines.push(rr.context.trim());
+    lines.push("");
+  }
+
+  const functionalScope =
+    rr?.functionalScope?.length ? rr.functionalScope : rr?.inScope;
+  const riskAreas =
+    rr?.riskAreas?.length ? rr.riskAreas : rr?.riskFocus;
+
+  pushListSection(lines, "Functional Scope:", functionalScope);
+  pushListSection(lines, "Business Rules:", rr?.businessRules);
+  pushListSection(lines, "Acceptance Criteria:", rr?.acceptanceCriteria);
+  pushListSection(lines, "Edge Cases / Negative Paths:", rr?.edgeCases);
+  pushListSection(lines, "Risk Areas:", riskAreas);
+
+  return lines.join("\n").trim();
 }
-
 /**
  * M12.8 lock:
  * Return technical requirement text only when a meaningful refined requirement
