@@ -32,6 +32,11 @@
 // - normalize collapsed section headers before parsing
 // - keep guided coach parsing unchanged
 // - use explicit label-based extraction only (no AI inference)
+//
+// BUG FIX (M12.8 contract bridge):
+// - bridge legacy coach fields into locked requirement fields during merge
+// - keep legacy fields for compatibility, but do not allow unified fields to remain empty
+// - keep artifact context useful during transition even when older artifacts only contain legacy sections
 
 import { Prisma } from "@prisma/client";
 
@@ -585,10 +590,30 @@ export function mergeArtifact(
   const dedupe = (arr: string[]) =>
     Array.from(new Set(arr.map((x) => x.trim()).filter(Boolean)));
 
+  // M12.8 bridge:
+  // legacy coach patches still populate inScope / riskFocus / integrations.
+  // During transition, normalize them into the locked reviewable shape too.
+  const normalizedFunctionalScope = dedupe([
+    ...(patch.functionalScope ?? []),
+    ...(patch.inScope ?? []),
+  ]);
+
+  const normalizedRiskAreas = dedupe([
+    ...(patch.riskAreas ?? []),
+    ...(patch.riskFocus ?? []),
+  ]);
+
+  const normalizedNonFunctionalConstraints = dedupe([
+    ...(patch.nonFunctionalConstraints ?? []),
+    ...(patch.integrations ?? []).map((x) => `Integration dependency: ${x}`),
+  ]);
+
   const nextRR: RefinedRequirement = {
     ...prevRR,
     ...(patch.objective ? { objective: patch.objective } : {}),
     ...(patch.context ? { context: patch.context } : {}),
+
+    // Keep legacy fields for compatibility during migration.
     ...(patch.inScope?.length
       ? { inScope: dedupe([...(prevRR.inScope ?? []), ...patch.inScope]) }
       : {}),
@@ -596,16 +621,23 @@ export function mergeArtifact(
       ? { outOfScope: dedupe([...(prevRR.outOfScope ?? []), ...patch.outOfScope]) }
       : {}),
     ...(patch.integrations?.length
-      ? { integrations: dedupe([...(prevRR.integrations ?? []), ...patch.integrations]) }
+      ? {
+          integrations: dedupe([
+            ...(prevRR.integrations ?? []),
+            ...patch.integrations,
+          ]),
+        }
       : {}),
     ...(patch.riskFocus?.length
       ? { riskFocus: dedupe([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) }
       : {}),
-    ...(patch.functionalScope?.length
+
+    // Locked unified fields used by deterministic review and artifact context.
+    ...(normalizedFunctionalScope.length
       ? {
           functionalScope: dedupe([
             ...(prevRR.functionalScope ?? []),
-            ...patch.functionalScope,
+            ...normalizedFunctionalScope,
           ]),
         }
       : {}),
@@ -630,11 +662,11 @@ export function mergeArtifact(
           edgeCases: dedupe([...(prevRR.edgeCases ?? []), ...patch.edgeCases]),
         }
       : {}),
-    ...(patch.nonFunctionalConstraints?.length
+    ...(normalizedNonFunctionalConstraints.length
       ? {
           nonFunctionalConstraints: dedupe([
             ...(prevRR.nonFunctionalConstraints ?? []),
-            ...patch.nonFunctionalConstraints,
+            ...normalizedNonFunctionalConstraints,
           ]),
         }
       : {}),
@@ -646,9 +678,9 @@ export function mergeArtifact(
           ]),
         }
       : {}),
-    ...(patch.riskAreas?.length
+    ...(normalizedRiskAreas.length
       ? {
-          riskAreas: dedupe([...(prevRR.riskAreas ?? []), ...patch.riskAreas]),
+          riskAreas: dedupe([...(prevRR.riskAreas ?? []), ...normalizedRiskAreas]),
         }
       : {}),
     ...(patch.coverageTargets?.length
@@ -706,9 +738,15 @@ export function artifactToContextText(artifact: SessionArtifact): string {
   if (rr.objective) lines.push(`- Objective: ${rr.objective}`);
   if (rr.context) lines.push(`- Context: ${rr.context}`);
 
-  if (rr.functionalScope?.length) {
+  // Transitional fallback:
+  // if unified scope is still empty on an older artifact, surface legacy inScope
+  // so downstream prompt context does not silently lose scope information.
+  const functionalScope =
+    rr.functionalScope?.length ? rr.functionalScope : rr.inScope ?? [];
+
+  if (functionalScope.length) {
     lines.push("- Functional Scope:");
-    for (const s of rr.functionalScope.slice(0, 12)) lines.push(`  - ${s}`);
+    for (const s of functionalScope.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
   if (rr.businessRules?.length) {
@@ -738,9 +776,13 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     for (const s of rr.testStrategyHooks.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
-  if (rr.riskAreas?.length) {
+  // Transitional fallback:
+  // surface legacy riskFocus if unified riskAreas is not yet populated.
+  const riskAreas = rr.riskAreas?.length ? rr.riskAreas : rr.riskFocus ?? [];
+
+  if (riskAreas.length) {
     lines.push("- Risk Areas:");
-    for (const s of rr.riskAreas.slice(0, 12)) lines.push(`  - ${s}`);
+    for (const s of riskAreas.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
   if (rr.coverageTargets?.length) {
