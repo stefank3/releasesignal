@@ -18,9 +18,10 @@
 //
 // M12.9 CHANGE:
 // - add artifact-driven workflow action contract for Generate Tests
+// - add artifact-driven workflow action contract for Review Test Suite
 // - expose deterministic action eligibility from artifact state
 // - keep UI trigger-only; execution stays in hook
-// - return explicit action failure state when no suite is produced
+// - return explicit action failure state when no suite/review is produced
 
 "use client";
 
@@ -66,7 +67,9 @@ import {
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
 
-type WorkflowAction = "generate_tests_from_requirement";
+type WorkflowAction =
+  | "generate_tests_from_requirement"
+  | "review_test_suite";
 
 export type LastPending = {
   requestId: string;
@@ -93,6 +96,7 @@ export type UseChatSessionReturn = {
   isRunningWorkflowAction: boolean;
   workflowActionError: string | null;
   canGenerateTests: boolean;
+  canReviewTestSuite: boolean;
 
   rateLimitMsg: string | null;
   rate: RateMeta | null;
@@ -160,8 +164,9 @@ export type UseChatSessionReturn = {
   updateTestSuite: (cases: TestCase[]) => Promise<void>;
 
   // M12.9 CHANGE:
-  // artifact-driven workspace action path
+  // artifact-driven workspace action paths
   generateTestsFromRequirement: () => Promise<void>;
+  reviewTestSuite: () => Promise<void>;
 
   send: (opts?: { replay?: boolean }) => Promise<void>;
 
@@ -370,10 +375,6 @@ export function useChatSession(): UseChatSessionReturn {
         artifactUpdatedAt?: string | null;
       }>(url.toString());
 
-      // CHANGE (M12 Step 7B):
-      // Always use the freshest artifact returned by the history endpoint
-      // for replay classification on reset. This avoids stale local artifact
-      // affecting how assistant history is rendered.
       const historyArtifact = data.artifact ?? null;
 
       if (reset) {
@@ -384,10 +385,6 @@ export function useChatSession(): UseChatSessionReturn {
 
       let nextSessionMode = sessionMode;
 
-      // CHANGE (M12 Step 7B):
-      // Server mode remains informational, but mapped history now derives
-      // its effective mode from artifact/content rather than trusting this
-      // value alone.
       if (reset) {
         const serverMode = data.effectiveMode ?? data.sessionMode;
         if (serverMode) {
@@ -401,11 +398,6 @@ export function useChatSession(): UseChatSessionReturn {
         sessionArtifact: historyArtifact,
       });
 
-      // BUG FIX (M12 Step 7D / Strategy+History triage):
-      // History selection must restore the effective session mode into BOTH:
-      // - activeSessionMode (workspace state)
-      // - mode (visible rendered panel state)
-      // Otherwise a Strategy session can be opened inside the Test Review shell.
       if (reset) {
         setActiveSessionMode(effectiveSessionMode);
         setMode(effectiveSessionMode);
@@ -425,11 +417,6 @@ export function useChatSession(): UseChatSessionReturn {
     setWorkflowActionError(null);
 
     setActiveSessionId(sessionId);
-
-    // BUG FIX (M12 Step 7D / Strategy+History triage):
-    // Do not force the caller-provided mode into visible UI state here.
-    // The correct mode must be restored from persisted history/artifact state
-    // inside loadSessionMessages(...).
     setActiveSessionMode(sessionMode);
 
     setPendingSessionClientId(null);
@@ -583,9 +570,6 @@ export function useChatSession(): UseChatSessionReturn {
   ---------------------------------------------------------
   M12 STEP 4B: EDITABLE TEST SUITE PERSISTENCE
   ---------------------------------------------------------
-  This provides a controlled mutation path for suite edits.
-  UI components should call this method instead of mutating artifact state
-  directly. The hook remains the orchestration layer.
   */
 
   const updateTestSuite = async (cases: TestCase[]) => {
@@ -606,13 +590,9 @@ export function useChatSession(): UseChatSessionReturn {
         },
       };
 
-      // Optimistic local update so the workspace feels immediate.
       setSessionArtifact(nextArtifact);
       setArtifactUpdatedAt(nowIso);
 
-      // BUG FIX (M12 Test Design triage):
-      // Persist artifact updates to the existing session PATCH route.
-      // There is no /artifact sub-route; using it causes HTML 404/login responses.
       await fetchJSON(`/api/chat/history/${activeSessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -621,7 +601,6 @@ export function useChatSession(): UseChatSessionReturn {
         }),
       });
 
-      // Refresh sidebar/session metadata after suite mutation.
       void loadSessions(true);
     } catch (err) {
       console.error("Failed to update test suite", err);
@@ -632,8 +611,6 @@ export function useChatSession(): UseChatSessionReturn {
   ---------------------------------------------------------
   M12.9: WORKFLOW ACTIONS
   ---------------------------------------------------------
-  Artifact-driven action entry points live here so the UI remains trigger-only.
-  No freeform prompt reconstruction is allowed in this path.
   */
 
   const appendWorkflowActionError = (
@@ -679,7 +656,10 @@ export function useChatSession(): UseChatSessionReturn {
       return;
     }
 
-    if (action === "generate_tests_from_requirement" && !sessionArtifact?.refinedRequirement) {
+    if (
+      action === "generate_tests_from_requirement" &&
+      !sessionArtifact?.refinedRequirement
+    ) {
       appendWorkflowActionError(
         "Generate Tests unavailable",
         "No refined requirement artifact is available for this session.",
@@ -688,9 +668,28 @@ export function useChatSession(): UseChatSessionReturn {
       return;
     }
 
+    if (
+      action === "review_test_suite" &&
+      !(
+        sessionArtifact?.testSuite &&
+        Array.isArray(sessionArtifact.testSuite.cases) &&
+        sessionArtifact.testSuite.cases.length > 0
+      )
+    ) {
+      appendWorkflowActionError(
+        "Review Test Suite unavailable",
+        "No persisted test suite artifact is available for this session.",
+        requestId
+      );
+      return;
+    }
+
     setIsRunningWorkflowAction(true);
 
     try {
+      const requestedMode: Mode =
+        action === "review_test_suite" ? "review" : "cases";
+
       const { status, headers, data } = await fetchJSONWithMeta<ChatApiResponse>(
         "/api/chat",
         {
@@ -700,10 +699,8 @@ export function useChatSession(): UseChatSessionReturn {
             "x-request-id": requestId,
           },
           body: JSON.stringify({
-            // M12.9 CHANGE:
-            // explicit artifact-driven action contract
             action,
-            mode: "cases",
+            mode: requestedMode,
             sessionId: activeSessionId,
           }),
         }
@@ -775,61 +772,100 @@ export function useChatSession(): UseChatSessionReturn {
         setPendingSessionClientId(null);
       }
 
-      // M12.9 CHANGE:
-      // Generate Tests must either produce a valid suite artifact,
-      // or return an explicit system-level failure state.
       const reply = typeof data?.reply === "string" ? data.reply : "";
-      const hasSuiteArtifact =
-        !!nextArtifact?.testSuite &&
-        Array.isArray(nextArtifact.testSuite.cases) &&
-        nextArtifact.testSuite.cases.length > 0;
 
-      const shouldRenderAsCasesText =
-        hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
+      if (action === "generate_tests_from_requirement") {
+        const hasSuiteArtifact =
+          !!nextArtifact?.testSuite &&
+          Array.isArray(nextArtifact.testSuite.cases) &&
+          nextArtifact.testSuite.cases.length > 0;
 
-      if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
-        appendWorkflowActionError(
-          "Generate Tests failed",
-          "The action completed without producing a persisted test suite artifact or a valid suite response.",
-          serverRequestId
-        );
+        const shouldRenderAsCasesText =
+          hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
+
+        if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
+          appendWorkflowActionError(
+            "Generate Tests failed",
+            "The action completed without producing a persisted test suite artifact or a valid suite response.",
+            serverRequestId
+          );
+          return;
+        }
+
+        setMode("cases");
+        setActiveSessionMode("cases");
+        setRateLimitMsg(null);
+
+        setItems((prev) => [
+          ...prev,
+          shouldRenderAsCasesText
+            ? ({
+                kind: "casesText",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+                ...(data?.workflowGuidance
+                  ? { workflowGuidance: data.workflowGuidance }
+                  : {}),
+              } as ChatItem)
+            : ({
+                kind: "text",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+              } as ChatItem),
+        ]);
+
+        await loadSessions(true);
         return;
       }
 
-      setMode("cases");
-      setActiveSessionMode("cases");
-      setRateLimitMsg(null);
+      if (action === "review_test_suite") {
+        const hasReviewPayload = !!data?.review;
+        const hasReviewArtifact = artifactHasReviewSignal(nextArtifact);
 
-      setItems((prev) => [
-        ...prev,
-        shouldRenderAsCasesText
-          ? ({
-              kind: "casesText",
+        if (!hasReviewPayload && !hasReviewArtifact) {
+          appendWorkflowActionError(
+            "Review Test Suite failed",
+            "The action completed without producing a review result artifact or review payload.",
+            serverRequestId
+          );
+          return;
+        }
+
+        setMode("review");
+        setActiveSessionMode("review");
+        setRateLimitMsg(null);
+
+        if (hasReviewPayload) {
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: "review",
               role: "bot",
-              text: reply || "No reply returned",
+              review: data.review as ReviewResult,
               requestId: serverRequestId,
-              ...(data?.workflowGuidance
-                ? { workflowGuidance: data.workflowGuidance }
-                : {}),
-            } as ChatItem)
-          : ({
+            },
+          ]);
+        } else {
+          setItems((prev) => [
+            ...prev,
+            {
               kind: "text",
               role: "bot",
-              text: reply || "No reply returned",
+              text: reply || "Review completed.",
               requestId: serverRequestId,
-            } as ChatItem),
-      ]);
+            } as ChatItem,
+          ]);
+        }
 
-      await loadSessions(true);
+        await loadSessions(true);
+      }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
 
       setLastRequestId(requestId);
-      appendWorkflowActionError(
-        "Workflow action failed",
-        message,
-        requestId
-      );
+      appendWorkflowActionError("Workflow action failed", message, requestId);
     } finally {
       setIsRunningWorkflowAction(false);
     }
@@ -837,6 +873,10 @@ export function useChatSession(): UseChatSessionReturn {
 
   const generateTestsFromRequirement = async () => {
     await runWorkflowAction("generate_tests_from_requirement");
+  };
+
+  const reviewTestSuite = async () => {
+    await runWorkflowAction("review_test_suite");
   };
 
   /*
@@ -1159,11 +1199,15 @@ export function useChatSession(): UseChatSessionReturn {
     artifactHasReviewSignal(sessionArtifact) ||
     items.some((it) => it.kind === "review" && it.role === "bot");
 
-  // M12.9 CHANGE:
-  // eligibility comes only from persisted artifact state + active session state
   const canGenerateTests =
     !!activeSessionId &&
     hasPinnedRequirement &&
+    !isSending &&
+    !isRunningWorkflowAction;
+
+  const canReviewTestSuite =
+    !!activeSessionId &&
+    hasPersistentTestSuite &&
     !isSending &&
     !isRunningWorkflowAction;
 
@@ -1200,6 +1244,7 @@ export function useChatSession(): UseChatSessionReturn {
     isRunningWorkflowAction,
     workflowActionError,
     canGenerateTests,
+    canReviewTestSuite,
 
     rateLimitMsg,
     rate,
@@ -1260,6 +1305,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     updateTestSuite,
     generateTestsFromRequirement,
+    reviewTestSuite,
 
     send,
 
