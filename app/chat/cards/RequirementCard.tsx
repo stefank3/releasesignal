@@ -2,7 +2,22 @@
 
 import React, { useEffect, useState } from "react";
 
-export default function RequirementCard({ text }: { text: string }) {
+// M12.9 CHANGE:
+// Keep RequirementCard presentational-only.
+// It may expose contextual actions, but execution logic must stay in the hook/container.
+type RequirementCardProps = {
+  text: string;
+  onGenerateTestsAction?: () => void;
+  canGenerateTests?: boolean;
+  isGeneratingTests?: boolean;
+};
+
+export default function RequirementCard({
+  text,
+  onGenerateTestsAction,
+  canGenerateTests = false,
+  isGeneratingTests = false,
+}: RequirementCardProps) {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,6 +35,8 @@ export default function RequirementCard({ text }: { text: string }) {
     }
   }
 
+  const showGenerateTestsAction = typeof onGenerateTestsAction === "function";
+
   return (
     <div
       style={{
@@ -32,24 +49,58 @@ export default function RequirementCard({ text }: { text: string }) {
         gap: 12,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
         <div style={{ fontWeight: 950 }}>Technical Requirement</div>
 
-        <button
-          onClick={copy}
-          style={{
-            padding: "6px 10px",
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.20)",
-            background: "rgba(255,255,255,0.06)",
-            color: "#fff",
-            fontSize: 12,
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          Copy
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {showGenerateTestsAction ? (
+            <button
+              onClick={onGenerateTestsAction}
+              disabled={!canGenerateTests || isGeneratingTests}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.20)",
+                background:
+                  !canGenerateTests || isGeneratingTests
+                    ? "rgba(255,255,255,0.03)"
+                    : "rgba(255,255,255,0.10)",
+                color: "#fff",
+                fontSize: 12,
+                fontWeight: 900,
+                cursor:
+                  !canGenerateTests || isGeneratingTests ? "not-allowed" : "pointer",
+                opacity: !canGenerateTests || isGeneratingTests ? 0.55 : 1,
+              }}
+            >
+              {isGeneratingTests ? "Generating…" : "Generate Tests"}
+            </button>
+          ) : null}
+
+          <button
+            onClick={copy}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.20)",
+              background: "rgba(255,255,255,0.06)",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Copy
+          </button>
+        </div>
       </div>
 
       {toast ? (
