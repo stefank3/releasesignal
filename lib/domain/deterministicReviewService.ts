@@ -321,12 +321,9 @@ function buildRiskCoverageScore(args: {
       ? Math.min(0.05, args.orphanCount / (args.totalCases * 2))
       : 0;
 
-  const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
-  const boosted =
-    adjustedRatio > 0.7 ? Math.min(1, adjustedRatio + 0.1) : adjustedRatio;
-
-  return Math.round(boosted * 25);
-}
+    const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
+    return Math.round(adjustedRatio * 25);
+    }
 
 function buildBusinessRelevanceScore(args: {
   totalPrimaryAndSecondaryUnits: number;
@@ -337,10 +334,7 @@ function buildBusinessRelevanceScore(args: {
   const ratio =
     args.coveredPrimaryAndSecondaryUnits / args.totalPrimaryAndSecondaryUnits;
 
-  const adjusted =
-    ratio >= 0.8 ? Math.min(1, ratio + 0.1) : ratio >= 0.5 ? ratio + 0.05 : ratio;
-
-  return Math.round(Math.min(1, adjusted) * 25);
+  return Math.round(Math.min(1, ratio) * 25);
 }
 
 function buildDesignQualityScore(args: {
@@ -368,20 +362,26 @@ function buildLevelAndScopeScore(cases: TestCase[]): number {
 
   let score = 0;
 
-  if (hasScenarioSignal(cases, /\b(valid|success|happy)\b/)) score += 5;
-  if (
-    hasScenarioSignal(
-      cases,
-      /\b(invalid|error|fail|negative|unauthori[sz]ed)\b/
-    )
-  ) {
-    score += 5;
-  }
-  if (
-    hasScenarioSignal(cases, /\b(edge|boundary|limit|max|min|empty|null)\b/)
-  ) {
-    score += 5;
-  }
+  const hasPositive = hasScenarioSignal(cases, /\b(valid|success|happy)\b/);
+  const hasNegative = hasScenarioSignal(
+    cases,
+    /\b(invalid|error|fail|negative|unauthori[sz]ed|forbidden|denied)\b/
+  );
+  const hasEdge = hasScenarioSignal(
+    cases,
+    /\b(edge|boundary|limit|max|min|empty|null|blank|expired|duplicate)\b/
+  );
+  const hasSecurity = hasScenarioSignal(
+    cases,
+    /\b(security|auth|authentication|authorization|unauthori[sz]ed|permission|role)\b/
+  );
+
+  if (hasPositive) score += 3;
+  if (hasNegative) score += 4;
+  if (hasEdge) score += 4;
+  if (hasSecurity) score += 2;
+
+  if (cases.length >= 15) score += 2;
 
   return Math.min(15, score);
 }
