@@ -362,6 +362,11 @@ export default function ChatPanel({
               }}
               canGenerateTests={chat.canGenerateTests}
               isGeneratingTests={chat.isRunningWorkflowAction}
+              onReviewTestSuiteAction={() => {
+                void chat.reviewTestSuite();
+              }}
+              canReviewTestSuite={chat.canReviewTestSuite}
+              isReviewingTestSuite={chat.isRunningWorkflowAction}
             />
           </div>
 
