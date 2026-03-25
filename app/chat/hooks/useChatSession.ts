@@ -15,6 +15,12 @@
 // - effective session mode for replay is derived from artifact/content
 // - avoid restoring stale mode assumptions from caller state
 // - keep hook orchestration-only
+//
+// M12.9 CHANGE:
+// - add artifact-driven workflow action contract for Generate Tests
+// - expose deterministic action eligibility from artifact state
+// - keep UI trigger-only; execution stays in hook
+// - return explicit action failure state when no suite is produced
 
 "use client";
 
@@ -60,6 +66,8 @@ import {
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
 
+type WorkflowAction = "generate_tests_from_requirement";
+
 export type LastPending = {
   requestId: string;
   text: string;
@@ -79,6 +87,12 @@ export type UseChatSessionReturn = {
   setItems: Dispatch<SetStateAction<ChatItem[]>>;
 
   isSending: boolean;
+
+  // M12.9 CHANGE:
+  // explicit action execution state for artifact-driven workspace actions
+  isRunningWorkflowAction: boolean;
+  workflowActionError: string | null;
+  canGenerateTests: boolean;
 
   rateLimitMsg: string | null;
   rate: RateMeta | null;
@@ -145,6 +159,10 @@ export type UseChatSessionReturn = {
   // explicit editable-suite persistence path
   updateTestSuite: (cases: TestCase[]) => Promise<void>;
 
+  // M12.9 CHANGE:
+  // artifact-driven workspace action path
+  generateTestsFromRequirement: () => Promise<void>;
+
   send: (opts?: { replay?: boolean }) => Promise<void>;
 
   shouldAutoScrollRef: MutableRefObject<boolean>;
@@ -171,6 +189,13 @@ export function useChatSession(): UseChatSessionReturn {
   const [input, setInput] = useState("");
   const [items, setItems] = useState<ChatItem[]>([]);
   const [isSending, setIsSending] = useState(false);
+
+  // M12.9 CHANGE:
+  // separate workspace action execution state from freeform send() state
+  const [isRunningWorkflowAction, setIsRunningWorkflowAction] = useState(false);
+  const [workflowActionError, setWorkflowActionError] = useState<string | null>(
+    null
+  );
 
   const [rateLimitMsg, setRateLimitMsg] = useState<string | null>(null);
   const [rate, setRate] = useState<RateMeta | null>(null);
@@ -317,7 +342,7 @@ export function useChatSession(): UseChatSessionReturn {
   ---------------------------------------------------------
   */
 
-    const loadSessionMessages = async (
+  const loadSessionMessages = async (
     sessionId: string,
     reset: boolean,
     sessionMode: Mode
@@ -354,6 +379,7 @@ export function useChatSession(): UseChatSessionReturn {
       if (reset) {
         setSessionArtifact(historyArtifact);
         setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
+        setWorkflowActionError(null);
       }
 
       let nextSessionMode = sessionMode;
@@ -396,6 +422,7 @@ export function useChatSession(): UseChatSessionReturn {
 
   const selectSession = async (sessionId: string, sessionMode: Mode) => {
     setModeLockMsg(null);
+    setWorkflowActionError(null);
 
     setActiveSessionId(sessionId);
 
@@ -430,6 +457,7 @@ export function useChatSession(): UseChatSessionReturn {
 
   const newChat = () => {
     setModeLockMsg(null);
+    setWorkflowActionError(null);
 
     setActiveSessionId(null);
     setActiveSessionMode(mode);
@@ -455,6 +483,7 @@ export function useChatSession(): UseChatSessionReturn {
 
   const startNewSessionInMode = (m: Mode) => {
     setModeLockMsg(null);
+    setWorkflowActionError(null);
 
     setMode(m);
     setActiveSessionMode(m);
@@ -536,6 +565,7 @@ export function useChatSession(): UseChatSessionReturn {
         setLastPending(null);
         setSessionArtifact(null);
         setArtifactUpdatedAt(null);
+        setWorkflowActionError(null);
       }
 
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
@@ -590,12 +620,223 @@ export function useChatSession(): UseChatSessionReturn {
           artifact: nextArtifact,
         }),
       });
-      
+
       // Refresh sidebar/session metadata after suite mutation.
       void loadSessions(true);
     } catch (err) {
       console.error("Failed to update test suite", err);
     }
+  };
+
+  /*
+  ---------------------------------------------------------
+  M12.9: WORKFLOW ACTIONS
+  ---------------------------------------------------------
+  Artifact-driven action entry points live here so the UI remains trigger-only.
+  No freeform prompt reconstruction is allowed in this path.
+  */
+
+  const appendWorkflowActionError = (
+    title: string,
+    details: string,
+    requestId: string
+  ) => {
+    setWorkflowActionError(details);
+    setItems((prev) => [
+      ...prev,
+      {
+        kind: "error",
+        role: "bot",
+        title,
+        details,
+        requestId,
+      },
+    ]);
+  };
+
+  const runWorkflowAction = async (action: WorkflowAction) => {
+    const requestId = createRequestId();
+    if (!requestId) return;
+
+    setModeLockMsg(null);
+    setWorkflowActionError(null);
+
+    if (isSending || isRunningWorkflowAction) {
+      appendWorkflowActionError(
+        "Workflow action blocked",
+        "Another request is already in progress.",
+        requestId
+      );
+      return;
+    }
+
+    if (!activeSessionId) {
+      appendWorkflowActionError(
+        "Workflow action unavailable",
+        "This action requires an existing session with persisted artifacts.",
+        requestId
+      );
+      return;
+    }
+
+    if (action === "generate_tests_from_requirement" && !sessionArtifact?.refinedRequirement) {
+      appendWorkflowActionError(
+        "Generate Tests unavailable",
+        "No refined requirement artifact is available for this session.",
+        requestId
+      );
+      return;
+    }
+
+    setIsRunningWorkflowAction(true);
+
+    try {
+      const { status, headers, data } = await fetchJSONWithMeta<ChatApiResponse>(
+        "/api/chat",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-request-id": requestId,
+          },
+          body: JSON.stringify({
+            // M12.9 CHANGE:
+            // explicit artifact-driven action contract
+            action,
+            mode: "cases",
+            sessionId: activeSessionId,
+          }),
+        }
+      );
+
+      const serverRequestId = headers.get("x-request-id") || requestId;
+      setLastRequestId(serverRequestId);
+
+      if (data?.rate) {
+        setRate(data.rate);
+      }
+
+      const artifactPayload = readArtifactFromResponse(data);
+      const nextArtifact = artifactPayload?.artifact ?? null;
+
+      if (artifactPayload) {
+        setSessionArtifact(artifactPayload.artifact);
+        setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
+      }
+
+      if (
+        status === 409 &&
+        data?.error === "SESSION_MODE_MISMATCH" &&
+        data.sessionMode &&
+        data.requestedMode
+      ) {
+        setModeLockMsg({
+          sessionMode: data.sessionMode,
+          requestedMode: data.requestedMode,
+        });
+        appendWorkflowActionError(
+          "Session mode mismatch",
+          `The backend rejected this request because it expected "${data.sessionMode}" but received "${data.requestedMode}".`,
+          serverRequestId
+        );
+        return;
+      }
+
+      if (status === 429) {
+        const details = `${
+          data?.details ?? "Rate limit reached. Please try again shortly."
+        } (requestId: ${serverRequestId})`;
+        setRateLimitMsg(details);
+        setWorkflowActionError(details);
+        return;
+      }
+
+      if (status === 401) {
+        appendWorkflowActionError(
+          "Session expired",
+          data?.details ??
+            "Your sign-in session expired. Please sign in again and retry.",
+          serverRequestId
+        );
+        return;
+      }
+
+      if (!(status >= 200 && status < 300) || data?.ok === false) {
+        appendWorkflowActionError(
+          `API Error ${status}`,
+          JSON.stringify(data, null, 2),
+          serverRequestId
+        );
+        return;
+      }
+
+      if (data?.sessionId && typeof data.sessionId === "string") {
+        setActiveSessionId(data.sessionId);
+        setPendingSessionClientId(null);
+      }
+
+      // M12.9 CHANGE:
+      // Generate Tests must either produce a valid suite artifact,
+      // or return an explicit system-level failure state.
+      const reply = typeof data?.reply === "string" ? data.reply : "";
+      const hasSuiteArtifact =
+        !!nextArtifact?.testSuite &&
+        Array.isArray(nextArtifact.testSuite.cases) &&
+        nextArtifact.testSuite.cases.length > 0;
+
+      const shouldRenderAsCasesText =
+        hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
+
+      if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
+        appendWorkflowActionError(
+          "Generate Tests failed",
+          "The action completed without producing a persisted test suite artifact or a valid suite response.",
+          serverRequestId
+        );
+        return;
+      }
+
+      setMode("cases");
+      setActiveSessionMode("cases");
+      setRateLimitMsg(null);
+
+      setItems((prev) => [
+        ...prev,
+        shouldRenderAsCasesText
+          ? ({
+              kind: "casesText",
+              role: "bot",
+              text: reply || "No reply returned",
+              requestId: serverRequestId,
+              ...(data?.workflowGuidance
+                ? { workflowGuidance: data.workflowGuidance }
+                : {}),
+            } as ChatItem)
+          : ({
+              kind: "text",
+              role: "bot",
+              text: reply || "No reply returned",
+              requestId: serverRequestId,
+            } as ChatItem),
+      ]);
+
+      await loadSessions(true);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+
+      setLastRequestId(requestId);
+      appendWorkflowActionError(
+        "Workflow action failed",
+        message,
+        requestId
+      );
+    } finally {
+      setIsRunningWorkflowAction(false);
+    }
+  };
+
+  const generateTestsFromRequirement = async () => {
+    await runWorkflowAction("generate_tests_from_requirement");
   };
 
   /*
@@ -736,7 +977,9 @@ export function useChatSession(): UseChatSessionReturn {
 
       if (status === 429) {
         setRateLimitMsg(
-          `${data?.details ?? "Rate limit reached. Please try again shortly."} (requestId: ${serverRequestId})`
+          `${
+            data?.details ?? "Rate limit reached. Please try again shortly."
+          } (requestId: ${serverRequestId})`
         );
         return;
       }
@@ -916,6 +1159,14 @@ export function useChatSession(): UseChatSessionReturn {
     artifactHasReviewSignal(sessionArtifact) ||
     items.some((it) => it.kind === "review" && it.role === "bot");
 
+  // M12.9 CHANGE:
+  // eligibility comes only from persisted artifact state + active session state
+  const canGenerateTests =
+    !!activeSessionId &&
+    hasPinnedRequirement &&
+    !isSending &&
+    !isRunningWorkflowAction;
+
   const workflowStatus = useMemo(
     () =>
       deriveWorkflowStatus({
@@ -945,6 +1196,10 @@ export function useChatSession(): UseChatSessionReturn {
     setItems,
 
     isSending,
+
+    isRunningWorkflowAction,
+    workflowActionError,
+    canGenerateTests,
 
     rateLimitMsg,
     rate,
@@ -1004,6 +1259,7 @@ export function useChatSession(): UseChatSessionReturn {
     deleteSession,
 
     updateTestSuite,
+    generateTestsFromRequirement,
 
     send,
 
