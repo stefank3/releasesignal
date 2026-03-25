@@ -2,6 +2,12 @@
 // M10 extraction:
 // Centralize request/auth/preflight guard logic so route.ts
 // focuses on orchestration instead of validation plumbing.
+//
+// M12.9 CHANGE:
+// - allow artifact-driven workflow action requests without freeform message
+// - preserve existing validation for normal prompt-driven requests
+// - derive mode/execution from action when action is present
+// - keep guards deterministic and request-focused
 
 import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
@@ -39,6 +45,10 @@ type MetricRecorder = (args: {
   latencyMs: number;
   rateLimited?: boolean;
 }) => Promise<void>;
+
+type WorkflowAction =
+  | "generate_tests_from_requirement"
+  | "review_test_suite";
 
 type AuthResult =
   | {
@@ -98,6 +108,19 @@ type RateLimitResult =
       ok: true;
       rateMeta: RateMeta;
     };
+
+function getWorkflowAction(body: ChatBody): WorkflowAction | null {
+  const candidate = (body as { action?: unknown })?.action;
+
+  if (
+    candidate === "generate_tests_from_requirement" ||
+    candidate === "review_test_suite"
+  ) {
+    return candidate;
+  }
+
+  return null;
+}
 
 export async function requireAuthenticatedUser(args: {
   requestId: string;
@@ -186,6 +209,33 @@ export async function parseAndValidateChatRequest(args: {
     return {
       ok: false,
       response: buildInvalidJsonBodyResponse(args.requestId),
+    };
+  }
+
+  const workflowAction = getWorkflowAction(body);
+
+  // M12.9 CHANGE:
+  // Artifact-driven actions do not require a freeform user message.
+  if (workflowAction) {
+    const clientMode: ClientMode =
+      workflowAction === "review_test_suite"
+        ? "review"
+        : normalizeClientMode(body?.mode);
+
+    const wantCases = workflowAction === "generate_tests_from_requirement";
+    const wantReview = workflowAction === "review_test_suite";
+    const executionMode: ExecutionMode = wantReview ? "review" : "coach";
+
+    return {
+      ok: true,
+      body,
+      message: "",
+      clientMode,
+      wantCases,
+      wantReview,
+      executionMode,
+      weakInput: false,
+      explicitRegenerationRequest: false,
     };
   }
 
