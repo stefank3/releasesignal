@@ -10,6 +10,11 @@
 // - add resolvedTheme support
 // - remove dark-only styling assumptions
 // - keep editable suite readable in light and dark mode
+//
+// M12.9 CHANGE:
+// - add contextual Review Test Suite action surface
+// - keep component presentational/local-state only
+// - do not move workflow execution into the card
 
 "use client";
 
@@ -38,6 +43,12 @@ type Props = {
   text: string;
   resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
+
+  // M12.9 CHANGE:
+  // action is injected from parent/hook layer
+  onReviewTestSuiteAction?: () => void;
+  canReviewTestSuite?: boolean;
+  isReviewingTestSuite?: boolean;
 };
 
 function SmallButton(args: {
@@ -195,12 +206,21 @@ function CasesTextCardContent({
   hasStructuredCases,
   resolvedTheme = "dark",
   onUpdateTestSuiteAction,
+  onReviewTestSuiteAction,
+  canReviewTestSuite = false,
+  isReviewingTestSuite = false,
 }: {
   parsedCases: ParsedCase[];
   text: string;
   hasStructuredCases: boolean;
   resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
+
+  // M12.9 CHANGE:
+  // action remains external; card only renders the trigger
+  onReviewTestSuiteAction?: () => void;
+  canReviewTestSuite?: boolean;
+  isReviewingTestSuite?: boolean;
 }) {
   const isDark = resolvedTheme === "dark";
 
@@ -251,6 +271,9 @@ function CasesTextCardContent({
     if (!hasStructuredCases) return false;
     return renderedText.trim() !== text.trim();
   }, [hasStructuredCases, renderedText, text]);
+
+  const showReviewAction =
+    typeof onReviewTestSuiteAction === "function" && hasStructuredCases;
 
   const copyText = async () => {
     try {
@@ -364,6 +387,18 @@ function CasesTextCardContent({
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {showReviewAction ? (
+            <SmallButton
+              onClick={() => {
+                onReviewTestSuiteAction?.();
+              }}
+              disabled={!canReviewTestSuite || isReviewingTestSuite}
+              resolvedTheme={resolvedTheme}
+            >
+              {isReviewingTestSuite ? "Reviewing..." : "Review Test Suite"}
+            </SmallButton>
+          ) : null}
+
           <SmallButton onClick={copyText} resolvedTheme={resolvedTheme}>
             Copy
           </SmallButton>
@@ -674,6 +709,9 @@ export default function CasesTextCard({
   text,
   resolvedTheme = "dark",
   onUpdateTestSuiteAction,
+  onReviewTestSuiteAction,
+  canReviewTestSuite = false,
+  isReviewingTestSuite = false,
 }: Props) {
   const parsedCases = useMemo(() => parseCases(text), [text]);
   const hasStructuredCases = parsedCases.length > 0;
@@ -690,6 +728,9 @@ export default function CasesTextCard({
       hasStructuredCases={hasStructuredCases}
       resolvedTheme={resolvedTheme}
       onUpdateTestSuiteAction={onUpdateTestSuiteAction}
+      onReviewTestSuiteAction={onReviewTestSuiteAction}
+      canReviewTestSuite={canReviewTestSuite}
+      isReviewingTestSuite={isReviewingTestSuite}
     />
   );
 }
