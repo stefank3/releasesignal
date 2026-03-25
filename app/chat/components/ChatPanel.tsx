@@ -42,6 +42,11 @@
 // - consume workflow progression state from useChatSession
 // - extract workflow banner into a dedicated child component
 // - keep ChatPanel focused on workspace layout orchestration
+//
+// M12.9 CHANGE:
+// - pass contextual workflow action props into the message renderer
+// - treat workflow actions as a busy state for shared panel UX
+// - keep orchestration in hook; keep panel as layout + prop passing only
 
 "use client";
 
@@ -208,6 +213,8 @@ export default function ChatPanel({
   const isTestDesignSession = chat.mode === "cases";
   const isDark = resolvedTheme === "dark";
 
+  const isBusy = chat.isSending || chat.isRunningWorkflowAction;
+
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
     if (isNarrow) return "1fr";
@@ -299,7 +306,7 @@ export default function ChatPanel({
     whiteSpace: "nowrap",
   };
 
-  const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
+  const showOnboardingHint = chat.items.length === 0 && !isBusy;
 
   const canUseRefinedRequirement =
     isTestDesignSession &&
@@ -335,9 +342,11 @@ export default function ChatPanel({
 
         <div style={leftPanelStyle}>
           <div ref={chatBoxRef} style={chatBoxStyle}>
-            {chat.isSending ? (
+            {isBusy ? (
               <div style={processingBannerStyle}>
-                {getProcessingLabel(chat.mode)}
+                {chat.isRunningWorkflowAction
+                  ? "Running workspace action…"
+                  : getProcessingLabel(chat.mode)}
               </div>
             ) : null}
 
@@ -348,6 +357,11 @@ export default function ChatPanel({
               onUpdateTestSuiteAction={(cases) => {
                 void chat.updateTestSuite(cases);
               }}
+              onGenerateTestsAction={() => {
+                void chat.generateTestsFromRequirement();
+              }}
+              canGenerateTests={chat.canGenerateTests}
+              isGeneratingTests={chat.isRunningWorkflowAction}
             />
           </div>
 
@@ -377,6 +391,7 @@ export default function ChatPanel({
                     });
                   }}
                   style={helperButtonStyle}
+                  disabled={isBusy}
                 >
                   Use Refined Requirement
                 </button>
@@ -387,7 +402,7 @@ export default function ChatPanel({
               ref={inputRef}
               mode={chat.mode}
               value={chat.input}
-              disabled={chat.isSending}
+              disabled={isBusy}
               resolvedTheme={resolvedTheme}
               onChangeAction={(next: string) => chat.setInput(next)}
               onSendAction={() => {
