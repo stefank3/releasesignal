@@ -25,6 +25,11 @@
 // CHANGE (M12 Step 6 / UI hardening):
 // - surface deterministic workflow guidance for cases responses
 // - tolerate multiple message payload shapes while UI mapping is stabilized
+//
+// M12.9 CHANGE:
+// - wire contextual workflow action props into RequirementCard / CasesTextCard
+// - keep this component as a rendering + prop-passing layer only
+// - no workflow logic or API calls here
 
 "use client";
 
@@ -249,6 +254,16 @@ type Props = {
   // callback passed down from session orchestration so editable cases
   // can persist through the artifact layer.
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
+
+  // M12.9 CHANGE:
+  // contextual workflow actions are injected from hook/container layer
+  onGenerateTestsAction?: () => void;
+  canGenerateTests?: boolean;
+  isGeneratingTests?: boolean;
+
+  onReviewTestSuiteAction?: () => void;
+  canReviewTestSuite?: boolean;
+  isReviewingTestSuite?: boolean;
 };
 
 export default function ChatMessageList({
@@ -256,6 +271,14 @@ export default function ChatMessageList({
   mode,
   resolvedTheme = "dark",
   onUpdateTestSuiteAction,
+
+  onGenerateTestsAction,
+  canGenerateTests = false,
+  isGeneratingTests = false,
+
+  onReviewTestSuiteAction,
+  canReviewTestSuite = false,
+  isReviewingTestSuite = false,
 }: Props) {
   const isDark = resolvedTheme === "dark";
 
@@ -339,7 +362,12 @@ export default function ChatMessageList({
               >
                 {isRequirement ? (
                   <div style={{ width: "100%", maxWidth: "100%" }}>
-                    <RequirementCard text={textToShow} />
+                    <RequirementCard
+                      text={textToShow}
+                      onGenerateTestsAction={onGenerateTestsAction}
+                      canGenerateTests={canGenerateTests}
+                      isGeneratingTests={isGeneratingTests}
+                    />
                   </div>
                 ) : (
                   <div style={bubbleStyle}>
@@ -413,11 +441,14 @@ export default function ChatMessageList({
                 />
               ) : null}
 
-            <CasesTextCard
-              text={it.text}
-              resolvedTheme={resolvedTheme}
-              onUpdateTestSuiteAction={onUpdateTestSuiteAction}
-            />
+              <CasesTextCard
+                text={it.text}
+                resolvedTheme={resolvedTheme}
+                onUpdateTestSuiteAction={onUpdateTestSuiteAction}
+                onReviewTestSuiteAction={onReviewTestSuiteAction}
+                canReviewTestSuite={canReviewTestSuite}
+                isReviewingTestSuite={isReviewingTestSuite}
+              />
             </div>
           );
         }
