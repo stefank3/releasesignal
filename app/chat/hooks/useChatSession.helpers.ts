@@ -319,30 +319,6 @@ export function deriveWorkflowStatus(args: {
   };
 }
 
-function renderPersistedSuiteText(artifact: SessionArtifact | null): string | null {
-  const suite = artifact?.testSuite;
-
-  if (!suite || !Array.isArray(suite.cases) || suite.cases.length === 0) {
-    return null;
-  }
-
-  const lines: string[] = [];
-  lines.push(`Test Suite v${suite.version}`);
-  lines.push(`Total test cases: ${suite.cases.length}`);
-  lines.push("");
-
-  for (let i = 0; i < suite.cases.length; i++) {
-    const testCase = suite.cases[i];
-    lines.push(String(testCase.body ?? "").trim());
-
-    if (i < suite.cases.length - 1) {
-      lines.push("");
-    }
-  }
-
-  return lines.join("\n").trim();
-}
-
 function mapAssistantHistoryItem(args: {
   content: string;
   sessionArtifact?: SessionArtifact | null;
@@ -433,27 +409,6 @@ export function mapHistoryItems(args: {
         fallbackMode: effectiveSessionMode,
       });
     });
-
-  // FIX (M12.9 history dedup):
-  // If the workspace is in Test Design and the artifact has a persisted suite,
-  // ensure the suite appears once even when the stored assistant history does not
-  // contain a casesText-shaped message.
-  const persistedSuiteText = renderPersistedSuiteText(sessionArtifact ?? null);
-  const alreadyHasCasesText = mapped.some(
-    (item) => item.kind === "casesText" && item.role === "bot"
-  );
-
-  if (
-    effectiveSessionMode === "cases" &&
-    persistedSuiteText &&
-    !alreadyHasCasesText
-  ) {
-    mapped.push({
-      kind: "casesText",
-      role: "bot",
-      text: persistedSuiteText,
-    });
-  }
 
   return { mapped, effectiveSessionMode };
 }

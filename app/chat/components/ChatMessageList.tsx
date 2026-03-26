@@ -328,7 +328,6 @@ export default function ChatMessageList({
 
           const isRequirement =
             !isUser &&
-            mode === "coach" &&
             typeof textToShow === "string" &&
             textToShow.startsWith("Refined Technical Requirement");
 
