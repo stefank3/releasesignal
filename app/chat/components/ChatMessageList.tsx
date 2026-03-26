@@ -30,6 +30,11 @@
 // - wire contextual workflow action props into RequirementCard / CasesTextCard
 // - keep this component as a rendering + prop-passing layer only
 // - no workflow logic or API calls here
+//
+// M12.9 Phase 2 CHANGE:
+// - wire Generate Next Batch props into CasesTextCard
+// - keep visibility/enablement parent-driven
+// - no workflow execution in this component
 
 "use client";
 
@@ -264,6 +269,11 @@ type Props = {
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
+
+  // M12.9 Phase 2 CHANGE:
+  onGenerateNextBatchAction?: () => void;
+  canGenerateNextBatch?: boolean;
+  isGeneratingNextBatch?: boolean;
 };
 
 export default function ChatMessageList({
@@ -279,6 +289,10 @@ export default function ChatMessageList({
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
   isReviewingTestSuite = false,
+
+  onGenerateNextBatchAction,
+  canGenerateNextBatch = false,
+  isGeneratingNextBatch = false,
 }: Props) {
   const isDark = resolvedTheme === "dark";
 
@@ -447,6 +461,9 @@ export default function ChatMessageList({
                 onReviewTestSuiteAction={onReviewTestSuiteAction}
                 canReviewTestSuite={canReviewTestSuite}
                 isReviewingTestSuite={isReviewingTestSuite}
+                onGenerateNextBatchAction={onGenerateNextBatchAction}
+                canGenerateNextBatch={canGenerateNextBatch}
+                isGeneratingNextBatch={isGeneratingNextBatch}
               />
             </div>
           );

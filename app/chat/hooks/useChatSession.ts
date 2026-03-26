@@ -22,6 +22,11 @@
 // - expose deterministic action eligibility from artifact state
 // - keep UI trigger-only; execution stays in hook
 // - return explicit action failure state when no suite/review is produced
+//
+// M12.9 Phase 2 CHANGE:
+// - add artifact-driven workflow action contract for Generate Next Batch
+// - require refined requirement + persisted suite for next-batch execution
+// - keep action execution separate from freeform send() flow
 
 "use client";
 
@@ -69,6 +74,7 @@ const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
 
 type WorkflowAction =
   | "generate_tests_from_requirement"
+  | "generate_next_batch_of_tests"
   | "review_test_suite";
 
 export type LastPending = {
@@ -97,6 +103,8 @@ export type UseChatSessionReturn = {
   workflowActionError: string | null;
   canGenerateTests: boolean;
   canReviewTestSuite: boolean;
+  canGenerateNextBatch: boolean;
+  generateNextBatchOfTests: () => Promise<void>;
 
   rateLimitMsg: string | null;
   rate: RateMeta | null;
@@ -669,6 +677,23 @@ export function useChatSession(): UseChatSessionReturn {
     }
 
     if (
+      action === "generate_next_batch_of_tests" &&
+      !(
+        sessionArtifact?.refinedRequirement &&
+        sessionArtifact?.testSuite &&
+        Array.isArray(sessionArtifact.testSuite.cases) &&
+        sessionArtifact.testSuite.cases.length > 0
+      )
+    ) {
+      appendWorkflowActionError(
+        "Generate Next Batch unavailable",
+        "This action requires both a refined requirement artifact and a persisted test suite artifact.",
+        requestId
+      );
+      return;
+    }
+
+    if (
       action === "review_test_suite" &&
       !(
         sessionArtifact?.testSuite &&
@@ -820,6 +845,52 @@ export function useChatSession(): UseChatSessionReturn {
         return;
       }
 
+      if (action === "generate_next_batch_of_tests") {
+        const hasSuiteArtifact =
+          !!nextArtifact?.testSuite &&
+          Array.isArray(nextArtifact.testSuite.cases) &&
+          nextArtifact.testSuite.cases.length > 0;
+
+        const shouldRenderAsCasesText =
+          hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
+
+        if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
+          appendWorkflowActionError(
+            "Generate Next Batch failed",
+            "The action completed without producing a persisted test suite artifact or a valid suite response.",
+            serverRequestId
+          );
+          return;
+        }
+
+        setMode("cases");
+        setActiveSessionMode("cases");
+        setRateLimitMsg(null);
+
+        setItems((prev) => [
+          ...prev,
+          shouldRenderAsCasesText
+            ? ({
+                kind: "casesText",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+                ...(data?.workflowGuidance
+                  ? { workflowGuidance: data.workflowGuidance }
+                  : {}),
+              } as ChatItem)
+            : ({
+                kind: "text",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+              } as ChatItem),
+        ]);
+
+        await loadSessions(true);
+        return;
+      }
+
       if (action === "review_test_suite") {
         const hasReviewPayload = !!data?.review;
         const hasReviewArtifact = artifactHasReviewSignal(nextArtifact);
@@ -873,6 +944,10 @@ export function useChatSession(): UseChatSessionReturn {
 
   const generateTestsFromRequirement = async () => {
     await runWorkflowAction("generate_tests_from_requirement");
+  };
+
+  const generateNextBatchOfTests = async () => {
+    await runWorkflowAction("generate_next_batch_of_tests");
   };
 
   const reviewTestSuite = async () => {
@@ -1205,6 +1280,13 @@ export function useChatSession(): UseChatSessionReturn {
     !isSending &&
     !isRunningWorkflowAction;
 
+  const canGenerateNextBatch =
+    !!activeSessionId &&
+    hasPinnedRequirement &&
+    hasPersistentTestSuite &&
+    !isSending &&
+    !isRunningWorkflowAction;
+
   const canReviewTestSuite =
     !!activeSessionId &&
     hasPersistentTestSuite &&
@@ -1245,6 +1327,7 @@ export function useChatSession(): UseChatSessionReturn {
     workflowActionError,
     canGenerateTests,
     canReviewTestSuite,
+    canGenerateNextBatch,
 
     rateLimitMsg,
     rate,
@@ -1305,6 +1388,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     updateTestSuite,
     generateTestsFromRequirement,
+    generateNextBatchOfTests,
     reviewTestSuite,
 
     send,

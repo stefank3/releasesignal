@@ -362,6 +362,11 @@ export default function ChatPanel({
               }}
               canGenerateTests={chat.canGenerateTests}
               isGeneratingTests={chat.isRunningWorkflowAction}
+              onGenerateNextBatchAction={() => {
+                void chat.generateNextBatchOfTests();
+              }}
+              canGenerateNextBatch={chat.hasPinnedRequirement && chat.hasPersistentTestSuite}
+              isGeneratingNextBatch={chat.isRunningWorkflowAction}
               onReviewTestSuiteAction={() => {
                 void chat.reviewTestSuite();
               }}
