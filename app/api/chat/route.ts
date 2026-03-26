@@ -63,6 +63,11 @@ import {
   type ReviewFlowTelemetry,
 } from "@/lib/server/chat/reviewFlowService";
 
+import {
+  buildNextBatchBaseline,
+  validateNextBatchPrerequisites,
+} from "@/lib/server/chat/testSuiteService";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -84,6 +89,7 @@ Artifact-driven workspace actions are explicit request contracts.
 */
 type WorkflowAction =
   | "generate_tests_from_requirement"
+  | "generate_next_batch_of_tests"
   | "review_test_suite";
 
 function getWorkflowAction(body: unknown): WorkflowAction | null {
@@ -93,6 +99,7 @@ function getWorkflowAction(body: unknown): WorkflowAction | null {
 
   if (
     candidate === "generate_tests_from_requirement" ||
+    candidate === "generate_next_batch_of_tests" ||
     candidate === "review_test_suite"
   ) {
     return candidate;
@@ -109,6 +116,124 @@ function hasPersistedTestSuiteArtifact(
     Array.isArray(artifact.testSuite.cases) &&
     artifact.testSuite.cases.length > 0
   );
+}
+
+function getRefinedRequirementText(
+  artifact: SessionArtifact | null
+): string | null {
+  const refined = artifact?.refinedRequirement;
+  if (!refined) return null;
+
+  const lines: string[] = [];
+
+  const pushSection = (title: string, value: unknown) => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      const items = value
+        .map((item) => String(item ?? "").trim())
+        .filter(Boolean);
+
+      if (!items.length) return;
+
+      lines.push(`${title}:`);
+      for (const item of items) {
+        lines.push(`- ${item}`);
+      }
+      lines.push("");
+      return;
+    }
+
+    const text = String(value).trim();
+    if (!text) return;
+
+    lines.push(`${title}:`);
+    lines.push(text);
+    lines.push("");
+  };
+
+  // Use only fields that are known to exist in your locked requirement format.
+  pushSection("Objective", refined.objective);
+  pushSection("Functional Scope", refined.functionalScope);
+  pushSection("Business Rules", refined.businessRules);
+  pushSection("Acceptance Criteria", refined.acceptanceCriteria);
+  pushSection("Non-Functional Constraints", refined.nonFunctionalConstraints);
+  pushSection("Test Strategy Hooks", refined.testStrategyHooks);
+  pushSection("Minimal Repro Scenarios", refined.minimalReproScenarios);
+
+  // Controlled fallback for any remaining fields in the typed object
+  // without hardcoding names that may not exist in this repo version.
+  const knownKeys = new Set([
+    "objective",
+    "functionalScope",
+    "businessRules",
+    "acceptanceCriteria",
+    "nonFunctionalConstraints",
+    "testStrategyHooks",
+    "minimalReproScenarios",
+  ]);
+
+  const entries = Object.entries(refined as Record<string, unknown>).filter(
+    ([key, value]) => !knownKeys.has(key) && value != null
+  );
+
+  for (const [key, value] of entries) {
+    const label = key
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .replace(/^\w/, (c) => c.toUpperCase());
+
+    pushSection(label, value);
+  }
+
+  const text = lines.join("\n").trim();
+  return text || null;
+}
+function buildWorkflowActionMessage(args: {
+  workflowAction: WorkflowAction;
+  sessionArtifact: SessionArtifact | null;
+}): string {
+  if (args.workflowAction === "review_test_suite") {
+    return "Review the persisted test suite artifact for this session.";
+  }
+
+  if (args.workflowAction === "generate_tests_from_requirement") {
+    return "Generate a test suite from the persisted refined requirement artifact for this session.";
+  }
+
+  const prerequisite = validateNextBatchPrerequisites({
+  requirementText: getRefinedRequirementText(args.sessionArtifact),
+  existingSuite: args.sessionArtifact?.testSuite ?? null,
+  });
+
+  if (!prerequisite.ok) {
+    return "Generate additional tests from the persisted artifacts for this session.";
+  }
+
+  const baseline = buildNextBatchBaseline({
+    requirementText: prerequisite.requirementText,
+    existingSuite: prerequisite.existingSuite,
+  });
+
+  const existingSuiteSummary =
+    baseline.suiteSummary.trim() || "No existing test case headers available.";
+
+  return [
+    "Generate the next batch of tests from the persisted artifacts for this session.",
+    "",
+    "Use ONLY the persisted refined requirement artifact and the persisted existing test suite artifact.",
+    "Generate only NEW tests that expand coverage for uncovered requirement areas, missing edge cases, or missing negative paths.",
+    "Do NOT regenerate the full suite.",
+    "Do NOT duplicate or restate existing tests.",
+    "Return STRICT plain-text test cases in the locked TC format only.",
+    "",
+    "PERSISTED REFINED REQUIREMENT:",
+    baseline.requirementText,
+    "",
+    `EXISTING SUITE COUNT: ${baseline.existingCount}`,
+    "EXISTING TEST CASE HEADERS:",
+    existingSuiteSummary,
+  ].join("\n");
 }
 
 export async function POST(req: Request) {
@@ -386,6 +511,30 @@ export async function POST(req: Request) {
         });
       }
 
+      if (workflowAction === "generate_next_batch_of_tests") {
+      const nextBatchPrerequisite = validateNextBatchPrerequisites({
+        requirementText: getRefinedRequirementText(sessionArtifact),
+        existingSuite: sessionArtifact?.testSuite ?? null,
+      });
+
+        if (!nextBatchPrerequisite.ok) {
+          await recordChatMetric({
+            nowMs: Date.now(),
+            mode: modeForMetric,
+            status: 400,
+            latencyMs: Date.now() - startTime,
+          });
+
+          return buildServerErrorResponse({
+            requestId,
+            errorMessage: nextBatchPrerequisite.message,
+            rateMeta,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
+          });
+        }
+      }
+
       if (
         workflowAction === "review_test_suite" &&
         !hasPersistedTestSuiteArtifact(sessionArtifact)
@@ -411,12 +560,13 @@ export async function POST(req: Request) {
         workflowAction === "review_test_suite" ? "review" : "coach";
 
       const actionWantCases =
-        workflowAction === "generate_tests_from_requirement";
+        workflowAction === "generate_tests_from_requirement" ||
+        workflowAction === "generate_next_batch_of_tests";
 
-      const actionMessage =
-        workflowAction === "review_test_suite"
-          ? "Review the persisted test suite artifact for this session."
-          : "Generate a test suite from the persisted refined requirement artifact for this session.";
+      const actionMessage = buildWorkflowActionMessage({
+        workflowAction,
+        sessionArtifact,
+      });
 
       const { messagesForModel } = buildPromptPayload({
         message: actionMessage,
@@ -464,6 +614,7 @@ export async function POST(req: Request) {
         guidedAnswer: false,
         weakInput: false,
         explicitRegenerationRequest: false,
+        workflowAction,
       });
 
       const coachParsed: CoachResult | null = postModel.coachParsed;
@@ -790,6 +941,7 @@ export async function POST(req: Request) {
       guidedAnswer,
       weakInput,
       explicitRegenerationRequest,
+      workflowAction,
     });
 
     const coachParsed: CoachResult | null = postModel.coachParsed;

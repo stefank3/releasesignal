@@ -17,6 +17,12 @@
 // M12 Step 6 CHANGE:
 // - add deterministic suite analysis
 // - add workflow guidance derived from artifact state
+//
+// M12.9 Phase 2 CHANGE:
+// - add workflow-action-aware cases branching
+// - split generate-next-batch from generic generate-tests flow
+// - enforce append-only next-batch merge behavior
+// - preserve explicit no-op message when no new coverage survives dedupe
 
 import type {
   SessionArtifact,
@@ -28,10 +34,17 @@ import type { TelemetryEventType } from "@/lib/server/telemetry/telemetryTypes";
 
 import {
   mergeGeneratedCasesIntoSuite,
+  mergeNextBatchIntoSuite,
   renderTestSuiteForUser,
 } from "@/lib/server/chat/testSuiteService";
 import { analyzeTestSuite } from "@/lib/server/chat/suiteAnalysisService";
 import { buildWorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
+
+export type CasesWorkflowAction =
+  | "generate_tests_from_requirement"
+  | "generate_next_batch_of_tests"
+  | "review_test_suite"
+  | null;
 
 export type CasesFlowTelemetry = {
   eventType: Extract<
@@ -49,6 +62,8 @@ export type CasesFlowTelemetry = {
     previousVersion?: number | null;
     nextVersion?: number | null;
     unchanged?: boolean;
+    workflowAction?: CasesWorkflowAction;
+    noOpReason?: "no_new_coverage" | "duplicates_only" | "no_valid_cases";
   };
 };
 
@@ -57,7 +72,21 @@ function buildNoChangeReply(args: {
   explicitRegenerationRequest: boolean;
   hasDuplicates: boolean;
   duplicateSkippedCount: number;
+  workflowAction: CasesWorkflowAction;
+  noOpReason?: "no_new_coverage" | "duplicates_only" | "no_valid_cases";
 }): string {
+  if (args.workflowAction === "generate_next_batch_of_tests") {
+    if (args.existingSuite) {
+      return [
+        "No additional coverage gaps identified",
+        "",
+        renderTestSuiteForUser(args.existingSuite),
+      ].join("\n");
+    }
+
+    return "No additional coverage gaps identified";
+  }
+
   if (args.existingSuite) {
     const base = renderTestSuiteForUser(args.existingSuite);
 
@@ -100,13 +129,16 @@ function buildNoChangeReply(args: {
     return "Generated output matched existing suite coverage, so no suite changes were applied.";
   }
 
-  return "No valid test cases were produced.";
+  return args.noOpReason === "no_new_coverage"
+    ? "No additional coverage gaps identified"
+    : "No valid test cases were produced.";
 }
 
 export async function runCasesFlow(args: {
   rawReply: string;
   sessionArtifact: SessionArtifact | null;
   explicitRegenerationRequest: boolean;
+  workflowAction?: CasesWorkflowAction;
 }): Promise<{
   replyTextForUser: string;
   nextTestSuiteArtifact: TestSuiteArtifact | null;
@@ -115,6 +147,8 @@ export async function runCasesFlow(args: {
   analysis: ReturnType<typeof analyzeTestSuite>;
   guidance: ReturnType<typeof buildWorkflowGuidance>;
 }> {
+  const workflowAction = args.workflowAction ?? null;
+
   // If regeneration was explicitly requested, the previous suite is ignored
   // so the next generated suite becomes a fresh baseline.
   const existingSuite = getTestSuite(args.sessionArtifact);
@@ -122,16 +156,64 @@ export async function runCasesFlow(args: {
     ? null
     : existingSuite;
 
-  // Merge raw generated content into the structured suite artifact.
-  const merged = mergeGeneratedCasesIntoSuite({
-    existingSuite: existingSuiteForMerge,
-    generatedText: args.rawReply.trim(),
-    explicitReset: args.explicitRegenerationRequest,
-  });
+  let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
+  let testSuiteAddedCount = 0;
+  let diffSummary = {
+    previousVersion: existingSuiteForMerge?.version ?? null,
+    nextVersion: existingSuiteForMerge?.version ?? null,
+    addedCaseIds: [] as string[],
+    addedCount: 0,
+    duplicateSkippedCount: 0,
+    unchanged: true,
+  };
+  let noOpReason: "no_new_coverage" | "duplicates_only" | "no_valid_cases" | undefined;
 
-  const nextTestSuiteArtifact = merged.nextSuite;
-  const testSuiteAddedCount = merged.addedCount;
-  const diffSummary = merged.diffSummary;
+  if (workflowAction === "generate_next_batch_of_tests") {
+    const merged = mergeNextBatchIntoSuite({
+      requirementText: args.sessionArtifact?.refinedRequirement
+        ? JSON.stringify(args.sessionArtifact.refinedRequirement)
+        : null,
+      existingSuite,
+      generatedText: args.rawReply.trim(),
+    });
+
+    if (!merged.ok) {
+      nextTestSuiteArtifact = existingSuite;
+      testSuiteAddedCount = 0;
+      noOpReason = "no_valid_cases";
+    } else {
+      nextTestSuiteArtifact = merged.nextSuite;
+      testSuiteAddedCount = merged.addedCount;
+      diffSummary = merged.diffSummary;
+
+      if (merged.kind === "no_changes") {
+        noOpReason =
+          merged.diffSummary.duplicateSkippedCount > 0
+            ? "duplicates_only"
+            : "no_new_coverage";
+      }
+    }
+  } else {
+    const merged = mergeGeneratedCasesIntoSuite({
+      existingSuite: existingSuiteForMerge,
+      generatedText: args.rawReply.trim(),
+      explicitReset: args.explicitRegenerationRequest,
+    });
+
+    nextTestSuiteArtifact = merged.nextSuite;
+    testSuiteAddedCount = merged.addedCount;
+    diffSummary = merged.diffSummary;
+
+    if (!merged.nextSuite) {
+      noOpReason = "no_valid_cases";
+    } else if (merged.diffSummary.unchanged) {
+      noOpReason =
+        merged.diffSummary.duplicateSkippedCount > 0
+          ? "duplicates_only"
+          : "no_valid_cases";
+    }
+  }
+
   const validation = validateTestSuite(nextTestSuiteArtifact);
 
   // M12 Step 6:
@@ -150,6 +232,8 @@ export async function runCasesFlow(args: {
           explicitRegenerationRequest: args.explicitRegenerationRequest,
           hasDuplicates: validation.hasDuplicates,
           duplicateSkippedCount: diffSummary.duplicateSkippedCount,
+          workflowAction,
+          noOpReason,
         });
 
   // M11:
@@ -159,11 +243,13 @@ export async function runCasesFlow(args: {
 
   if (nextTestSuiteArtifact) {
     const eventType: CasesFlowTelemetry["eventType"] =
-      args.explicitRegenerationRequest
-        ? "test_suite_regenerated"
-        : existingSuiteForMerge
-          ? "test_suite_extended"
-          : "test_suite_generated";
+      workflowAction === "generate_next_batch_of_tests"
+        ? "test_suite_extended"
+        : args.explicitRegenerationRequest
+          ? "test_suite_regenerated"
+          : existingSuiteForMerge
+            ? "test_suite_extended"
+            : "test_suite_generated";
 
     telemetry = {
       eventType,
@@ -178,6 +264,8 @@ export async function runCasesFlow(args: {
         previousVersion: diffSummary.previousVersion,
         nextVersion: diffSummary.nextVersion,
         unchanged: diffSummary.unchanged,
+        workflowAction,
+        noOpReason,
       },
     };
   }

@@ -31,6 +31,11 @@
 // - ingest standalone review artifacts before deterministic review runs
 // - review mode must convert explicit pasted requirement/suite input into
 //   persisted artifact state first, then review against artifacts only
+//
+// M12.9 Phase 2 CHANGE:
+// - thread workflow action context into cases flow
+// - allow next-batch execution to diverge from generic generate-tests flow
+// - keep branching explicit and artifact-driven
 
 import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
@@ -48,6 +53,12 @@ import {
 } from "@/lib/server/chat/reviewFlowService";
 import { applyStandaloneReviewArtifactPatch } from "@/lib/server/chat/artifactUpdateService";
 
+export type PostModelWorkflowAction =
+  | "generate_tests_from_requirement"
+  | "generate_next_batch_of_tests"
+  | "review_test_suite"
+  | null;
+
 export async function runPostModelFlow(args: {
   rawReply: string;
   executionMode: "coach" | "review";
@@ -59,6 +70,7 @@ export async function runPostModelFlow(args: {
   guidedAnswer: boolean;
   weakInput: boolean;
   explicitRegenerationRequest: boolean;
+  workflowAction?: PostModelWorkflowAction;
 }): Promise<{
   coachParsed: CoachResult | null;
   replyTextForUser: string | null;
@@ -160,6 +172,7 @@ export async function runPostModelFlow(args: {
       rawReply: args.rawReply,
       sessionArtifact,
       explicitRegenerationRequest: args.explicitRegenerationRequest,
+      workflowAction: args.workflowAction ?? null,
     });
 
     replyTextForUser = casesFlow.replyTextForUser;
