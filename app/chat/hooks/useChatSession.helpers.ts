@@ -238,9 +238,6 @@ export function artifactHasReviewSignal(artifact: SessionArtifact | null): boole
   return "reviewResult" in artifact || "reviewArtifact" in artifact || "testReview" in artifact;
 }
 
-// CHANGE (M12 Step 7B):
-// Detect test-suite presence from artifact so history replay can use
-// artifact truth before any UI mode assumption.
 export function artifactHasTestSuiteSignal(artifact: SessionArtifact | null): boolean {
   if (!isRecord(artifact)) return false;
   return (
@@ -322,10 +319,6 @@ export function deriveWorkflowStatus(args: {
   };
 }
 
-// BUG FIX (M12 Test Design triage):
-// Render persisted suite artifact back into the same plain-text suite shape used by
-// the CasesTextCard UI. This allows replay/history restore to use the artifact as
-// the source of truth instead of stale assistant message text.
 function renderPersistedSuiteText(artifact: SessionArtifact | null): string | null {
   const suite = artifact?.testSuite;
 
@@ -350,9 +343,6 @@ function renderPersistedSuiteText(artifact: SessionArtifact | null): string | nu
   return lines.join("\n").trim();
 }
 
-// CHANGE (M12 Step 7B):
-// Assistant history must be classified per message.
-// Content wins first, artifact/workspace is only contextual fallback.
 function mapAssistantHistoryItem(args: {
   content: string;
   sessionArtifact?: SessionArtifact | null;
@@ -371,21 +361,14 @@ function mapAssistantHistoryItem(args: {
     return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
   }
 
-  const persistedSuiteText = renderPersistedSuiteText(sessionArtifact);
-
-  // BUG FIX (M12 Test Design triage):
-  // When replaying a workspace in Test Design, the persisted suite artifact is
-  // the source of truth. If it exists, do not show stale historical cases text.
-  if (fallbackMode === "cases" && persistedSuiteText) {
-    return { kind: "casesText", role: "bot", text: persistedSuiteText };
-  }
-
+  // FIX (M12.9 history dedup):
+  // Do NOT replace every assistant message with the persisted suite just because
+  // the workspace currently has a suite artifact. Only classify actual cases
+  // message content as casesText.
   if (looksLikeCasesPlainText(content)) {
     return { kind: "casesText", role: "bot", text: content };
   }
 
-  // CHANGE (M12 Step 7B):
-  // Artifact/session are weak fallbacks only.
   if (artifactHasTestSuiteSignal(sessionArtifact) && fallbackMode === "cases") {
     return { kind: "text", role: "bot", text: content };
   }
@@ -397,9 +380,6 @@ function mapAssistantHistoryItem(args: {
   return { kind: "text", role: "bot", text: content };
 }
 
-// CHANGE (M12 Step 7B):
-// Workspace-level effective mode should come from artifact truth first,
-// then message-content heuristics, then stored session mode.
 function deriveEffectiveHistorySessionMode(args: {
   items: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   sessionMode: Mode;
@@ -407,10 +387,6 @@ function deriveEffectiveHistorySessionMode(args: {
 }): Mode {
   const { items, sessionMode } = args;
 
-  // BUG FIX (M12 Strategy + History triage):
-  // Restore mode from the latest assistant signal only.
-  // A shared workspace may contain older review/cases messages, but those must
-  // not override the current stage for history restore.
   const latestAssistant = [...items].reverse().find((m) => m.role === "assistant");
 
   if (!latestAssistant) {
@@ -457,6 +433,27 @@ export function mapHistoryItems(args: {
         fallbackMode: effectiveSessionMode,
       });
     });
+
+  // FIX (M12.9 history dedup):
+  // If the workspace is in Test Design and the artifact has a persisted suite,
+  // ensure the suite appears once even when the stored assistant history does not
+  // contain a casesText-shaped message.
+  const persistedSuiteText = renderPersistedSuiteText(sessionArtifact ?? null);
+  const alreadyHasCasesText = mapped.some(
+    (item) => item.kind === "casesText" && item.role === "bot"
+  );
+
+  if (
+    effectiveSessionMode === "cases" &&
+    persistedSuiteText &&
+    !alreadyHasCasesText
+  ) {
+    mapped.push({
+      kind: "casesText",
+      role: "bot",
+      text: persistedSuiteText,
+    });
+  }
 
   return { mapped, effectiveSessionMode };
 }
