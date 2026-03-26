@@ -14,6 +14,13 @@
 // - harden pasted suite parsing for review-mode standalone ingestion
 // - normalize collapsed headers before parsing
 // - split deterministically on TC headers instead of relying only on matchAll slices
+//
+// M12.9 Phase 2 CHANGE:
+// - add deterministic Next Batch service helpers
+// - validate requirement + existing suite prerequisites explicitly
+// - keep next-batch flow append-only
+// - return explicit no-op message when no new cases survive dedupe
+// - avoid route/UI-owned next-batch baseline logic
 
 import type {
   SessionArtifact,
@@ -33,6 +40,48 @@ export type TestSuiteDiffSummary = {
   duplicateSkippedCount: number;
   unchanged: boolean;
 };
+
+export type NextBatchPrerequisiteResult =
+  | {
+      ok: true;
+      requirementText: string;
+      existingSuite: TestSuiteArtifact;
+    }
+  | {
+      ok: false;
+      reason: "missing_requirement" | "missing_suite";
+      message: string;
+    };
+
+export type NextBatchBaseline = {
+  requirementText: string;
+  suiteSummary: string;
+  existingCount: number;
+  maxCaseNumber: number;
+};
+
+export type NextBatchMergeResult =
+  | {
+      ok: true;
+      kind: "appended";
+      nextSuite: TestSuiteArtifact;
+      addedCount: number;
+      diffSummary: TestSuiteDiffSummary;
+      message: string;
+    }
+  | {
+      ok: true;
+      kind: "no_changes";
+      nextSuite: TestSuiteArtifact;
+      addedCount: 0;
+      diffSummary: TestSuiteDiffSummary;
+      message: "No additional coverage gaps identified";
+    }
+  | {
+      ok: false;
+      kind: "invalid_prerequisites" | "generation_failed";
+      message: string;
+    };
 
 /**
  * Normalize titles for lightweight duplicate filtering.
@@ -161,6 +210,10 @@ function buildEmptyDiffSummary(): TestSuiteDiffSummary {
   };
 }
 
+function normalizeRequirementText(text: string | null | undefined): string {
+  return String(text ?? "").replace(/\r/g, "").trim();
+}
+
 /**
  * Build baseline summary directly from persisted artifact suite.
  */
@@ -186,6 +239,61 @@ export function buildExistingSuiteBaselineFromArtifact(
     suiteSummary: headers.join("\n"),
     maxCaseNumber: getMaxCaseNumber(normalizedCases),
     existingCount: normalizedCases.length,
+  };
+}
+
+/**
+ * Validate artifact prerequisites for Next Batch generation.
+ * Requirement + suite must both exist.
+ */
+export function validateNextBatchPrerequisites(args: {
+  requirementText: string | null | undefined;
+  existingSuite: TestSuiteArtifact | null;
+}): NextBatchPrerequisiteResult {
+  const requirementText = normalizeRequirementText(args.requirementText);
+
+  if (!requirementText) {
+    return {
+      ok: false,
+      reason: "missing_requirement",
+      message: "Generate Next Batch requires a refined requirement artifact.",
+    };
+  }
+
+  if (!args.existingSuite?.cases?.length) {
+    return {
+      ok: false,
+      reason: "missing_suite",
+      message: "Generate Next Batch requires an existing test suite artifact.",
+    };
+  }
+
+  return {
+    ok: true,
+    requirementText,
+    existingSuite: {
+      ...args.existingSuite,
+      cases: args.existingSuite.cases.map((c) => normalizeTestCase(c)),
+    },
+  };
+}
+
+/**
+ * Build deterministic baseline payload for Next Batch prompting.
+ * This keeps route logic thin and artifact-driven.
+ */
+export function buildNextBatchBaseline(args: {
+  requirementText: string;
+  existingSuite: TestSuiteArtifact;
+}): NextBatchBaseline {
+  const normalizedRequirementText = normalizeRequirementText(args.requirementText);
+  const suiteBaseline = buildExistingSuiteBaselineFromArtifact(args.existingSuite);
+
+  return {
+    requirementText: normalizedRequirementText,
+    suiteSummary: suiteBaseline.suiteSummary ?? "",
+    existingCount: suiteBaseline.existingCount,
+    maxCaseNumber: suiteBaseline.maxCaseNumber,
   };
 }
 
@@ -309,6 +417,85 @@ export function mergeGeneratedCasesIntoSuite(args: {
       duplicateSkippedCount,
       unchanged: false,
     },
+  };
+}
+
+/**
+ * Append-only merge path for Generate Next Batch.
+ * Unlike generic merge, this action never resets and always returns an
+ * explicit no-op message when nothing new survives parsing/dedupe.
+ */
+export function mergeNextBatchIntoSuite(args: {
+  requirementText: string | null | undefined;
+  existingSuite: TestSuiteArtifact | null;
+  generatedText: string;
+}): NextBatchMergeResult {
+  const prerequisite = validateNextBatchPrerequisites({
+    requirementText: args.requirementText,
+    existingSuite: args.existingSuite,
+  });
+
+  if (!prerequisite.ok) {
+    return {
+      ok: false,
+      kind: "invalid_prerequisites",
+      message: prerequisite.message,
+    };
+  }
+
+  const parsed = parseGeneratedTestCases(args.generatedText);
+  if (!parsed.length) {
+    return {
+      ok: true,
+      kind: "no_changes",
+      nextSuite: prerequisite.existingSuite,
+      addedCount: 0,
+      diffSummary: {
+        previousVersion: prerequisite.existingSuite.version,
+        nextVersion: prerequisite.existingSuite.version,
+        addedCaseIds: [],
+        addedCount: 0,
+        duplicateSkippedCount: 0,
+        unchanged: true,
+      },
+      message: "No additional coverage gaps identified",
+    };
+  }
+
+  const merged = mergeGeneratedCasesIntoSuite({
+    existingSuite: prerequisite.existingSuite,
+    generatedText: args.generatedText,
+    explicitReset: false,
+  });
+
+  if (!merged.nextSuite) {
+    return {
+      ok: false,
+      kind: "generation_failed",
+      message: "Next batch generation failed to produce a valid test suite.",
+    };
+  }
+
+  if (merged.addedCount === 0) {
+    return {
+      ok: true,
+      kind: "no_changes",
+      nextSuite: merged.nextSuite,
+      addedCount: 0,
+      diffSummary: merged.diffSummary,
+      message: "No additional coverage gaps identified",
+    };
+  }
+
+  return {
+    ok: true,
+    kind: "appended",
+    nextSuite: merged.nextSuite,
+    addedCount: merged.addedCount,
+    diffSummary: merged.diffSummary,
+    message: `Added ${merged.addedCount} new test case${
+      merged.addedCount === 1 ? "" : "s"
+    } to the existing suite.`,
   };
 }
 
