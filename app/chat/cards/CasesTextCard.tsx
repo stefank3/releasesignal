@@ -15,6 +15,11 @@
 // - add contextual Review Test Suite action surface
 // - keep component presentational/local-state only
 // - do not move workflow execution into the card
+//
+// M12.9 Phase 2 CHANGE:
+// - add Generate Next Batch action surface
+// - keep visibility/enablement parent-driven
+// - keep card presentational only
 
 "use client";
 
@@ -45,10 +50,15 @@ type Props = {
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
   // M12.9 CHANGE:
-  // action is injected from parent/hook layer
+  // actions are injected from parent/hook layer
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
+
+  // M12.9 Phase 2 CHANGE:
+  onGenerateNextBatchAction?: () => void;
+  canGenerateNextBatch?: boolean;
+  isGeneratingNextBatch?: boolean;
 };
 
 function SmallButton(args: {
@@ -209,6 +219,9 @@ function CasesTextCardContent({
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
   isReviewingTestSuite = false,
+  onGenerateNextBatchAction,
+  canGenerateNextBatch = false,
+  isGeneratingNextBatch = false,
 }: {
   parsedCases: ParsedCase[];
   text: string;
@@ -217,10 +230,15 @@ function CasesTextCardContent({
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
   // M12.9 CHANGE:
-  // action remains external; card only renders the trigger
+  // actions remain external; card only renders triggers
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
+
+  // M12.9 Phase 2 CHANGE:
+  onGenerateNextBatchAction?: () => void;
+  canGenerateNextBatch?: boolean;
+  isGeneratingNextBatch?: boolean;
 }) {
   const isDark = resolvedTheme === "dark";
 
@@ -274,6 +292,9 @@ function CasesTextCardContent({
 
   const showReviewAction =
     typeof onReviewTestSuiteAction === "function" && hasStructuredCases;
+
+  const showGenerateNextBatchAction =
+    typeof onGenerateNextBatchAction === "function" && hasStructuredCases;
 
   const copyText = async () => {
     try {
@@ -387,6 +408,18 @@ function CasesTextCardContent({
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {showGenerateNextBatchAction ? (
+            <SmallButton
+              onClick={() => {
+                onGenerateNextBatchAction?.();
+              }}
+              disabled={!canGenerateNextBatch || isGeneratingNextBatch}
+              resolvedTheme={resolvedTheme}
+            >
+              {isGeneratingNextBatch ? "Generating..." : "Generate Next Batch"}
+            </SmallButton>
+          ) : null}
+
           {showReviewAction ? (
             <SmallButton
               onClick={() => {
@@ -712,6 +745,9 @@ export default function CasesTextCard({
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
   isReviewingTestSuite = false,
+  onGenerateNextBatchAction,
+  canGenerateNextBatch = false,
+  isGeneratingNextBatch = false,
 }: Props) {
   const parsedCases = useMemo(() => parseCases(text), [text]);
   const hasStructuredCases = parsedCases.length > 0;
@@ -731,6 +767,9 @@ export default function CasesTextCard({
       onReviewTestSuiteAction={onReviewTestSuiteAction}
       canReviewTestSuite={canReviewTestSuite}
       isReviewingTestSuite={isReviewingTestSuite}
+      onGenerateNextBatchAction={onGenerateNextBatchAction}
+      canGenerateNextBatch={canGenerateNextBatch}
+      isGeneratingNextBatch={isGeneratingNextBatch}
     />
   );
 }
