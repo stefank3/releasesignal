@@ -26,6 +26,11 @@ function mdSafe(s: string) {
   return String(s ?? "").replace(/\r/g, "").trim();
 }
 
+function looksLikeRefinedRequirementText(text: string): boolean {
+  const t = String(text ?? "").trim();
+  return t.startsWith("Refined Technical Requirement");
+}
+
 export function buildOversizedInputMessage(args: {
   mode: Mode;
   actualLength: number;
@@ -131,7 +136,12 @@ export function tryFormatCoachJson(text: string): string | null {
       assumptions?: string[];
       riskMatrix?: { risk?: string; likelihood?: string; impact?: string }[];
       highSignalApproach?: { testIdeas?: string[] };
-      testCases?: { id?: string; title?: string; priority?: string; level?: string }[];
+      testCases?: {
+        id?: string;
+        title?: string;
+        priority?: string;
+        level?: string;
+      }[];
       optionalClarifications?: string[];
     };
 
@@ -160,7 +170,9 @@ export function tryFormatCoachJson(text: string): string | null {
         const id = mdSafe(tc.id ?? "");
         const title = mdSafe(tc.title ?? "");
         const meta = [tc.priority, tc.level].filter(Boolean).join(" · ");
-        lines.push(`- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim());
+        lines.push(
+          `- ${id ? `${id} ` : ""}${title}${meta ? ` (${meta})` : ""}`.trim()
+        );
       }
       lines.push("");
     } else if (
@@ -174,7 +186,10 @@ export function tryFormatCoachJson(text: string): string | null {
       lines.push("");
     }
 
-    if (Array.isArray(obj.optionalClarifications) && obj.optionalClarifications.length) {
+    if (
+      Array.isArray(obj.optionalClarifications) &&
+      obj.optionalClarifications.length
+    ) {
       lines.push("Optional clarifications:");
       for (const q of obj.optionalClarifications.slice(0, 3)) {
         lines.push(`- ${mdSafe(q)}`);
@@ -396,8 +411,33 @@ export function mapHistoryItems(args: {
     sessionArtifact: sessionArtifact ?? null,
   });
 
+  const latestRequirementAssistantIndex = sessionArtifact?.refinedRequirement
+    ? items.reduce((latestIndex, item, index) => {
+        if (
+          item.role === "assistant" &&
+          looksLikeRefinedRequirementText(item.content)
+        ) {
+          return index;
+        }
+        return latestIndex;
+      }, -1)
+    : -1;
+
   const mapped: ChatItem[] = items
-    .filter((m) => m.role !== "system")
+    .filter((m, index) => {
+      if (m.role === "system") return false;
+
+      if (
+        latestRequirementAssistantIndex >= 0 &&
+        m.role === "assistant" &&
+        looksLikeRefinedRequirementText(m.content) &&
+        index !== latestRequirementAssistantIndex
+      ) {
+        return false;
+      }
+
+      return true;
+    })
     .map((m) => {
       if (m.role === "user") {
         return { kind: "text", role: "user", text: m.content };
