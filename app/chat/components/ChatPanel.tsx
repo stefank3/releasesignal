@@ -52,6 +52,11 @@
 // - thread Refine Requirement action through panel-level message wiring
 // - keep action visibility and execution hook-driven
 // - do not introduce prompt-dependent fallback behavior
+//
+// M12.9 Phase 2 CHANGE:
+// - thread Improve / Regenerate Suite action through panel-level message wiring
+// - keep it distinct from Generate Next Batch
+// - keep action visibility and execution hook-driven
 
 "use client";
 
@@ -370,7 +375,7 @@ export default function ChatPanel({
               onRefineRequirementAction={() => {
                 void chat.refineRequirement();
               }}
-              canRefineRequirement={chat.hasPinnedRequirement}
+              canRefineRequirement={chat.canRefineRequirement}
               isRefiningRequirement={chat.isRunningWorkflowAction}
               onGenerateNextBatchAction={() => {
                 void chat.generateNextBatchOfTests();
@@ -379,6 +384,11 @@ export default function ChatPanel({
                 chat.hasPinnedRequirement && chat.hasPersistentTestSuite
               }
               isGeneratingNextBatch={chat.isRunningWorkflowAction}
+              onRegenerateSuiteAction={() => {
+                void chat.regenerateSuite();
+              }}
+              canRegenerateSuite={chat.canRegenerateSuite}
+              isRegeneratingSuite={chat.isRunningWorkflowAction}
               onReviewTestSuiteAction={() => {
                 void chat.reviewTestSuite();
               }}
