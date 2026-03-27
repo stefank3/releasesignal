@@ -36,6 +36,11 @@
 // - wire Refine Requirement props into RequirementCard
 // - keep visibility/enablement parent-driven
 // - no workflow execution in this component
+//
+// M12.9 Phase 2 CHANGE:
+// - wire Improve / Regenerate Suite props into CasesTextCard
+// - keep it distinct from Generate Next Batch
+// - keep parent-driven visibility/enablement
 
 "use client";
 
@@ -256,13 +261,8 @@ type Props = {
   mode: Mode;
   resolvedTheme?: "light" | "dark";
 
-  // M12 Step 4B:
-  // callback passed down from session orchestration so editable cases
-  // can persist through the artifact layer.
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
-  // M12.9 CHANGE:
-  // contextual workflow actions are injected from hook/container layer
   onGenerateTestsAction?: () => void;
   canGenerateTests?: boolean;
   isGeneratingTests?: boolean;
@@ -275,10 +275,13 @@ type Props = {
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
 
-  // M12.9 Phase 2 CHANGE:
   onGenerateNextBatchAction?: () => void;
   canGenerateNextBatch?: boolean;
   isGeneratingNextBatch?: boolean;
+
+  onRegenerateSuiteAction?: () => void;
+  canRegenerateSuite?: boolean;
+  isRegeneratingSuite?: boolean;
 };
 
 export default function ChatMessageList({
@@ -302,6 +305,10 @@ export default function ChatMessageList({
   onGenerateNextBatchAction,
   canGenerateNextBatch = false,
   isGeneratingNextBatch = false,
+
+  onRegenerateSuiteAction,
+  canRegenerateSuite = false,
+  isRegeneratingSuite = false,
 }: Props) {
   const isDark = resolvedTheme === "dark";
 
@@ -340,7 +347,6 @@ export default function ChatMessageList({
         const reqPart = it.requestId ?? "no-rid";
         const key = `${it.kind}-${rolePart}-${reqPart}-${idx}`;
 
-        // ---------------- TEXT ----------------
         if (it.kind === "text") {
           const isUser = it.role === "user";
 
@@ -428,7 +434,6 @@ export default function ChatMessageList({
           );
         }
 
-        // ---------------- REVIEW ----------------
         if (it.kind === "review") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
@@ -440,7 +445,6 @@ export default function ChatMessageList({
           );
         }
 
-        // ---------------- CASES TEXT ----------------
         if (it.kind === "casesText") {
           const isPersistedSuite = looksLikePersistedTestSuiteText(it.text);
           const workflowGuidance = getWorkflowGuidance(it);
@@ -476,12 +480,14 @@ export default function ChatMessageList({
                 onGenerateNextBatchAction={onGenerateNextBatchAction}
                 canGenerateNextBatch={canGenerateNextBatch}
                 isGeneratingNextBatch={isGeneratingNextBatch}
+                onRegenerateSuiteAction={onRegenerateSuiteAction}
+                canRegenerateSuite={canRegenerateSuite}
+                isRegeneratingSuite={isRegeneratingSuite}
               />
             </div>
           );
         }
 
-        // ---------------- LEGACY CASES ----------------
         if (it.kind === "casesLegacy") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
@@ -490,7 +496,6 @@ export default function ChatMessageList({
           );
         }
 
-        // ---------------- ERROR ----------------
         if (it.kind === "error") {
           return (
             <div
