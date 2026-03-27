@@ -20,6 +20,12 @@
 // - add Generate Next Batch action surface
 // - keep visibility/enablement parent-driven
 // - keep card presentational only
+//
+// M12.9 Phase 2 CHANGE:
+// - add Improve / Regenerate Suite action surface
+// - keep it distinct from Next Batch
+// - keep parent-driven visibility/enablement
+// - do not introduce workflow logic into the card
 
 "use client";
 
@@ -59,6 +65,11 @@ type Props = {
   onGenerateNextBatchAction?: () => void;
   canGenerateNextBatch?: boolean;
   isGeneratingNextBatch?: boolean;
+
+  // M12.9 Phase 2 CHANGE:
+  onRegenerateSuiteAction?: () => void;
+  canRegenerateSuite?: boolean;
+  isRegeneratingSuite?: boolean;
 };
 
 function SmallButton(args: {
@@ -222,6 +233,9 @@ function CasesTextCardContent({
   onGenerateNextBatchAction,
   canGenerateNextBatch = false,
   isGeneratingNextBatch = false,
+  onRegenerateSuiteAction,
+  canRegenerateSuite = false,
+  isRegeneratingSuite = false,
 }: {
   parsedCases: ParsedCase[];
   text: string;
@@ -239,6 +253,11 @@ function CasesTextCardContent({
   onGenerateNextBatchAction?: () => void;
   canGenerateNextBatch?: boolean;
   isGeneratingNextBatch?: boolean;
+
+  // M12.9 Phase 2 CHANGE:
+  onRegenerateSuiteAction?: () => void;
+  canRegenerateSuite?: boolean;
+  isRegeneratingSuite?: boolean;
 }) {
   const isDark = resolvedTheme === "dark";
 
@@ -295,6 +314,9 @@ function CasesTextCardContent({
 
   const showGenerateNextBatchAction =
     typeof onGenerateNextBatchAction === "function" && hasStructuredCases;
+
+  const showRegenerateSuiteAction =
+    typeof onRegenerateSuiteAction === "function" && hasStructuredCases;
 
   const copyText = async () => {
     try {
@@ -408,6 +430,18 @@ function CasesTextCardContent({
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {showRegenerateSuiteAction ? (
+            <SmallButton
+              onClick={() => {
+                onRegenerateSuiteAction?.();
+              }}
+              disabled={!canRegenerateSuite || isRegeneratingSuite}
+              resolvedTheme={resolvedTheme}
+            >
+              {isRegeneratingSuite ? "Regenerating..." : "Improve / Regenerate"}
+            </SmallButton>
+          ) : null}
+
           {showGenerateNextBatchAction ? (
             <SmallButton
               onClick={() => {
@@ -748,6 +782,9 @@ export default function CasesTextCard({
   onGenerateNextBatchAction,
   canGenerateNextBatch = false,
   isGeneratingNextBatch = false,
+  onRegenerateSuiteAction,
+  canRegenerateSuite = false,
+  isRegeneratingSuite = false,
 }: Props) {
   const parsedCases = useMemo(() => parseCases(text), [text]);
   const hasStructuredCases = parsedCases.length > 0;
@@ -770,6 +807,9 @@ export default function CasesTextCard({
       onGenerateNextBatchAction={onGenerateNextBatchAction}
       canGenerateNextBatch={canGenerateNextBatch}
       isGeneratingNextBatch={isGeneratingNextBatch}
+      onRegenerateSuiteAction={onRegenerateSuiteAction}
+      canRegenerateSuite={canRegenerateSuite}
+      isRegeneratingSuite={isRegeneratingSuite}
     />
   );
 }
