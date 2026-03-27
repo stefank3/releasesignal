@@ -27,6 +27,7 @@
 // - add artifact-driven workflow action contract for Generate Next Batch
 // - require refined requirement + persisted suite for next-batch execution
 // - add artifact-driven workflow action contract for Refine Requirement
+// - add artifact-driven workflow action contract for Improve / Regenerate Suite
 // - keep action execution separate from freeform send() flow
 
 "use client";
@@ -77,7 +78,8 @@ type WorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
   | "review_test_suite"
-  | "refine_requirement";
+  | "refine_requirement"
+  | "regenerate_suite";
 
 export type LastPending = {
   requestId: string;
@@ -107,9 +109,11 @@ export type UseChatSessionReturn = {
   canReviewTestSuite: boolean;
   canGenerateNextBatch: boolean;
   canRefineRequirement: boolean;
+  canRegenerateSuite: boolean;
 
   generateNextBatchOfTests: () => Promise<void>;
   refineRequirement: () => Promise<void>;
+  regenerateSuite: () => Promise<void>;
 
   rateLimitMsg: string | null;
   rate: RateMeta | null;
@@ -685,7 +689,8 @@ export function useChatSession(): UseChatSessionReturn {
     }
 
     if (
-      action === "generate_next_batch_of_tests" &&
+      (action === "generate_next_batch_of_tests" ||
+        action === "regenerate_suite") &&
       !(
         sessionArtifact?.refinedRequirement &&
         sessionArtifact?.testSuite &&
@@ -694,7 +699,9 @@ export function useChatSession(): UseChatSessionReturn {
       )
     ) {
       appendWorkflowActionError(
-        "Generate Next Batch unavailable",
+        action === "regenerate_suite"
+          ? "Improve / Regenerate Suite unavailable"
+          : "Generate Next Batch unavailable",
         "This action requires both a refined requirement artifact and a persisted test suite artifact.",
         requestId
       );
@@ -903,6 +910,52 @@ export function useChatSession(): UseChatSessionReturn {
         return;
       }
 
+      if (action === "regenerate_suite") {
+        const hasSuiteArtifact =
+          !!nextArtifact?.testSuite &&
+          Array.isArray(nextArtifact.testSuite.cases) &&
+          nextArtifact.testSuite.cases.length > 0;
+
+        const shouldRenderAsCasesText =
+          hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
+
+        if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
+          appendWorkflowActionError(
+            "Improve / Regenerate Suite failed",
+            "The action completed without producing a persisted test suite artifact or a valid suite response.",
+            serverRequestId
+          );
+          return;
+        }
+
+        setMode("cases");
+        setActiveSessionMode("cases");
+        setRateLimitMsg(null);
+
+        setItems((prev) => [
+          ...prev,
+          shouldRenderAsCasesText
+            ? ({
+                kind: "casesText",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+                ...(data?.workflowGuidance
+                  ? { workflowGuidance: data.workflowGuidance }
+                  : {}),
+              } as ChatItem)
+            : ({
+                kind: "text",
+                role: "bot",
+                text: reply || "No reply returned",
+                requestId: serverRequestId,
+              } as ChatItem),
+        ]);
+
+        await loadSessions(true);
+        return;
+      }
+
       if (action === "refine_requirement") {
         const hasRequirementArtifact = !!nextArtifact?.refinedRequirement;
         const shouldRenderAsRequirementText =
@@ -996,6 +1049,10 @@ export function useChatSession(): UseChatSessionReturn {
 
   const refineRequirement = async () => {
     await runWorkflowAction("refine_requirement");
+  };
+
+  const regenerateSuite = async () => {
+    await runWorkflowAction("regenerate_suite");
   };
 
   const reviewTestSuite = async () => {
@@ -1341,6 +1398,13 @@ export function useChatSession(): UseChatSessionReturn {
     !isSending &&
     !isRunningWorkflowAction;
 
+  const canRegenerateSuite =
+    !!activeSessionId &&
+    hasPinnedRequirement &&
+    hasPersistentTestSuite &&
+    !isSending &&
+    !isRunningWorkflowAction;
+
   const canReviewTestSuite =
     !!activeSessionId &&
     hasPersistentTestSuite &&
@@ -1383,9 +1447,11 @@ export function useChatSession(): UseChatSessionReturn {
     canReviewTestSuite,
     canGenerateNextBatch,
     canRefineRequirement,
+    canRegenerateSuite,
 
     generateNextBatchOfTests,
     refineRequirement,
+    regenerateSuite,
 
     rateLimitMsg,
     rate,
