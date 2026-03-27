@@ -5,18 +5,58 @@ import React, { useEffect, useState } from "react";
 // M12.9 CHANGE:
 // Keep RequirementCard presentational-only.
 // It may expose contextual actions, but execution logic must stay in the hook/container.
+//
+// M12.9 Phase 2 CHANGE:
+// - add Refine Requirement action surface
+// - keep visibility/enablement parent-driven
+// - do not move workflow execution into the card
 type RequirementCardProps = {
   text: string;
   onGenerateTestsAction?: () => void;
   canGenerateTests?: boolean;
   isGeneratingTests?: boolean;
+
+  onRefineRequirementAction?: () => void;
+  canRefineRequirement?: boolean;
+  isRefiningRequirement?: boolean;
 };
+
+function SmallButton(args: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={args.onClick}
+      disabled={args.disabled}
+      style={{
+        padding: "6px 10px",
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.20)",
+        background: args.disabled
+          ? "rgba(255,255,255,0.03)"
+          : "rgba(255,255,255,0.10)",
+        color: "#fff",
+        fontSize: 12,
+        fontWeight: 900,
+        cursor: args.disabled ? "not-allowed" : "pointer",
+        opacity: args.disabled ? 0.55 : 1,
+      }}
+    >
+      {args.children}
+    </button>
+  );
+}
 
 export default function RequirementCard({
   text,
   onGenerateTestsAction,
   canGenerateTests = false,
   isGeneratingTests = false,
+  onRefineRequirementAction,
+  canRefineRequirement = false,
+  isRefiningRequirement = false,
 }: RequirementCardProps) {
   const [toast, setToast] = useState<string | null>(null);
 
@@ -36,6 +76,8 @@ export default function RequirementCard({
   }
 
   const showGenerateTestsAction = typeof onGenerateTestsAction === "function";
+  const showRefineRequirementAction =
+    typeof onRefineRequirementAction === "function";
 
   return (
     <div
@@ -60,29 +102,34 @@ export default function RequirementCard({
       >
         <div style={{ fontWeight: 950 }}>Technical Requirement</div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {showGenerateTestsAction ? (
-            <button
-              onClick={onGenerateTestsAction}
-              disabled={!canGenerateTests || isGeneratingTests}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.20)",
-                background:
-                  !canGenerateTests || isGeneratingTests
-                    ? "rgba(255,255,255,0.03)"
-                    : "rgba(255,255,255,0.10)",
-                color: "#fff",
-                fontSize: 12,
-                fontWeight: 900,
-                cursor:
-                  !canGenerateTests || isGeneratingTests ? "not-allowed" : "pointer",
-                opacity: !canGenerateTests || isGeneratingTests ? 0.55 : 1,
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          {showRefineRequirementAction ? (
+            <SmallButton
+              onClick={() => {
+                onRefineRequirementAction?.();
               }}
+              disabled={!canRefineRequirement || isRefiningRequirement}
+            >
+              {isRefiningRequirement ? "Refining…" : "Refine Requirement"}
+            </SmallButton>
+          ) : null}
+
+          {showGenerateTestsAction ? (
+            <SmallButton
+              onClick={() => {
+                onGenerateTestsAction?.();
+              }}
+              disabled={!canGenerateTests || isGeneratingTests}
             >
               {isGeneratingTests ? "Generating…" : "Generate Tests"}
-            </button>
+            </SmallButton>
           ) : null}
 
           <button

@@ -90,7 +90,8 @@ Artifact-driven workspace actions are explicit request contracts.
 type WorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
-  | "review_test_suite";
+  | "review_test_suite"
+  | "refine_requirement";
 
 function getWorkflowAction(body: unknown): WorkflowAction | null {
   if (!body || typeof body !== "object") return null;
@@ -100,7 +101,8 @@ function getWorkflowAction(body: unknown): WorkflowAction | null {
   if (
     candidate === "generate_tests_from_requirement" ||
     candidate === "generate_next_batch_of_tests" ||
-    candidate === "review_test_suite"
+    candidate === "review_test_suite" ||
+    candidate === "refine_requirement"
   ) {
     return candidate;
   }
@@ -152,7 +154,6 @@ function getRefinedRequirementText(
     lines.push("");
   };
 
-  // Use only fields that are known to exist in your locked requirement format.
   pushSection("Objective", refined.objective);
   pushSection("Functional Scope", refined.functionalScope);
   pushSection("Business Rules", refined.businessRules);
@@ -161,8 +162,6 @@ function getRefinedRequirementText(
   pushSection("Test Strategy Hooks", refined.testStrategyHooks);
   pushSection("Minimal Repro Scenarios", refined.minimalReproScenarios);
 
-  // Controlled fallback for any remaining fields in the typed object
-  // without hardcoding names that may not exist in this repo version.
   const knownKeys = new Set([
     "objective",
     "functionalScope",
@@ -189,6 +188,7 @@ function getRefinedRequirementText(
   const text = lines.join("\n").trim();
   return text || null;
 }
+
 function buildWorkflowActionMessage(args: {
   workflowAction: WorkflowAction;
   sessionArtifact: SessionArtifact | null;
@@ -201,9 +201,28 @@ function buildWorkflowActionMessage(args: {
     return "Generate a test suite from the persisted refined requirement artifact for this session.";
   }
 
+  if (args.workflowAction === "refine_requirement") {
+    const requirementText =
+      getRefinedRequirementText(args.sessionArtifact) ??
+      "No persisted refined requirement artifact available.";
+
+    return [
+      "Refine the persisted refined requirement artifact for this session.",
+      "",
+      "Use ONLY the persisted refined requirement artifact as the source of truth.",
+      "Improve clarity, structure, completeness, edge coverage, and testability.",
+      "Do NOT change the product intent.",
+      "Do NOT invent new scope unless it is clearly implied by the existing artifact.",
+      "Return a refined technical requirement in the locked requirement format.",
+      "",
+      "PERSISTED REFINED REQUIREMENT:",
+      requirementText,
+    ].join("\n");
+  }
+
   const prerequisite = validateNextBatchPrerequisites({
-  requirementText: getRefinedRequirementText(args.sessionArtifact),
-  existingSuite: args.sessionArtifact?.testSuite ?? null,
+    requirementText: getRefinedRequirementText(args.sessionArtifact),
+    existingSuite: args.sessionArtifact?.testSuite ?? null,
   });
 
   if (!prerequisite.ok) {
@@ -407,8 +426,6 @@ export async function POST(req: Request) {
     sessionArtifact = sessionState.sessionArtifact;
     artifactUpdatedAtIso = sessionState.artifactUpdatedAtIso;
 
-    // M11:
-    // Structured session lifecycle classification returned by sessionStore.
     const sessionLifecycle = sessionState.sessionLifecycle;
 
     log("info", {
@@ -430,13 +447,6 @@ export async function POST(req: Request) {
       },
     });
 
-    /*
-    ---------------------------------------------------------
-    M11 TELEMETRY
-    ---------------------------------------------------------
-    Session lifecycle event emitted immediately after successful
-    session load/create resolution.
-    */
     await emitTelemetryEvent({
       eventType: sessionLifecycle,
       auth0Sub,
@@ -491,7 +501,8 @@ export async function POST(req: Request) {
     */
     if (workflowAction) {
       if (
-        workflowAction === "generate_tests_from_requirement" &&
+        (workflowAction === "generate_tests_from_requirement" ||
+          workflowAction === "refine_requirement") &&
         !hasMeaningfulRefinedRequirement(sessionArtifact)
       ) {
         await recordChatMetric({
@@ -504,7 +515,9 @@ export async function POST(req: Request) {
         return buildServerErrorResponse({
           requestId,
           errorMessage:
-            "Generate Tests action requires a persisted refined requirement artifact.",
+            workflowAction === "refine_requirement"
+              ? "Refine Requirement action requires a persisted refined requirement artifact."
+              : "Generate Tests action requires a persisted refined requirement artifact.",
           rateMeta,
           artifact: sessionArtifact,
           artifactUpdatedAt: artifactUpdatedAtIso,
@@ -512,10 +525,10 @@ export async function POST(req: Request) {
       }
 
       if (workflowAction === "generate_next_batch_of_tests") {
-      const nextBatchPrerequisite = validateNextBatchPrerequisites({
-        requirementText: getRefinedRequirementText(sessionArtifact),
-        existingSuite: sessionArtifact?.testSuite ?? null,
-      });
+        const nextBatchPrerequisite = validateNextBatchPrerequisites({
+          requirementText: getRefinedRequirementText(sessionArtifact),
+          existingSuite: sessionArtifact?.testSuite ?? null,
+        });
 
         if (!nextBatchPrerequisite.ok) {
           await recordChatMetric({
@@ -837,8 +850,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     GUIDED ARTIFACT PATCH
     ---------------------------------------------------------
-    SURGICAL CHANGE (M10 Pass 11):
-    Guided-answer artifact patching now lives in artifactUpdateService.ts.
     */
     const guidedArtifactResult = await applyGuidedArtifactPatch({
       sessionId,
@@ -851,19 +862,9 @@ export async function POST(req: Request) {
     sessionArtifact = guidedArtifactResult.sessionArtifact;
     artifactUpdatedAtIso = guidedArtifactResult.artifactUpdatedAtIso;
 
-    // M11:
-    // Structured refinement telemetry returned only when a guided
-    // requirement patch was successfully parsed and persisted.
     const requirementTelemetry: RequirementRefinedTelemetry | null =
       guidedArtifactResult.requirementTelemetry;
 
-    /*
-    ---------------------------------------------------------
-    M11 TELEMETRY
-    ---------------------------------------------------------
-    Requirement refinement event emitted only when a guided
-    requirement patch was successfully persisted.
-    */
     if (requirementTelemetry) {
       await emitTelemetryEvent({
         eventType: requirementTelemetry.eventType,
@@ -927,8 +928,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     POST-MODEL FLOW ORCHESTRATION
     ---------------------------------------------------------
-    SURGICAL CHANGE (M10 Pass 11):
-    route.ts no longer coordinates review / coach / cases branches inline.
     */
     const postModel = await runPostModelFlow({
       rawReply,
@@ -959,26 +958,15 @@ export async function POST(req: Request) {
     sessionArtifact = postModel.sessionArtifact;
     artifactUpdatedAtIso = postModel.artifactUpdatedAtIso;
 
-    // M11:
-    // Structured telemetry classification comes from the cases flow service
-    // via post-model orchestration. The route adds request/session/token context.
     const casesFlowTelemetry: CasesFlowTelemetry | null =
       postModel.casesFlowTelemetry;
 
-    // M12 Step 6:
-    // Deterministic suite intelligence returned from cases flow.
     const suiteAnalysis = postModel.suiteAnalysis;
     const workflowGuidance = postModel.workflowGuidance;
 
-    // M12 Step 5:
-    // Do not emit a successful suite-evolution telemetry event when the
-    // structured cases flow reports that the suite remained unchanged.
     const shouldEmitCasesTelemetry =
       !!casesFlowTelemetry && !casesFlowTelemetry.metadata.unchanged;
 
-    // M11:
-    // Structured review telemetry classification comes from the review flow
-    // via post-model orchestration. The route adds request/session/token context.
     const reviewFlowTelemetry: ReviewFlowTelemetry | null =
       postModel.reviewFlowTelemetry;
 
@@ -1028,8 +1016,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     SUITE ARTIFACT PERSIST
     ---------------------------------------------------------
-    SURGICAL CHANGE (M10 Pass 11):
-    Cases suite persistence now lives in artifactUpdateService.ts.
     */
     const suitePersistResult = await persistGeneratedSuiteArtifact({
       sessionId,
@@ -1045,9 +1031,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     REVIEW ARTIFACT PERSIST
     ---------------------------------------------------------
-    M12:
-    Persist the latest review result into session artifact state so
-    review remains aligned with the generated suite across reloads/history.
     */
     const reviewPersistResult = await persistReviewArtifact({
       sessionId,
@@ -1059,13 +1042,6 @@ export async function POST(req: Request) {
     sessionArtifact = reviewPersistResult.sessionArtifact;
     artifactUpdatedAtIso = reviewPersistResult.artifactUpdatedAtIso;
 
-    /*
-    ---------------------------------------------------------
-    M11 TELEMETRY
-    ---------------------------------------------------------
-    First persisted telemetry event path for Cases mode.
-    Emit only after the suite artifact has been persisted successfully.
-    */
     if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
       await emitTelemetryEvent({
         eventType: casesFlowTelemetry.eventType,
@@ -1090,13 +1066,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     */
     if (executionMode === "review") {
-      /*
-      ---------------------------------------------------------
-      M11 TELEMETRY
-      ---------------------------------------------------------
-      Review telemetry emitted for both successful and failed
-      review parsing outcomes.
-      */
       if (reviewFlowTelemetry) {
         await emitTelemetryEvent({
           eventType: reviewFlowTelemetry.eventType,
@@ -1170,7 +1139,8 @@ export async function POST(req: Request) {
         testSuiteAddedCount,
         hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
         hasTestSuite: !!getTestSuite(sessionArtifact),
-        suiteTelemetrySuppressed: !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
+        suiteTelemetrySuppressed:
+          !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
         suiteDuplicateGroups: casesFlowTelemetry?.metadata.duplicateGroups ?? 0,
         suiteUnchanged: casesFlowTelemetry?.metadata.unchanged ?? false,
         suiteCoverageLevel: suiteAnalysis?.coverageLevel,

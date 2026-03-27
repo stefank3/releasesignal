@@ -37,7 +37,7 @@
 // - allow next-batch execution to diverge from generic generate-tests flow
 // - keep branching explicit and artifact-driven
 
-import type { SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
+import type { RefinedRequirement, SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
 
 import { runCoachFlow } from "@/lib/server/chat/coachFlowService";
@@ -57,6 +57,7 @@ export type PostModelWorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
   | "review_test_suite"
+  | "refine_requirement"
   | null;
 
 export async function runPostModelFlow(args: {
@@ -168,11 +169,17 @@ export async function runPostModelFlow(args: {
   }
 
   if (args.wantCases) {
+    const casesWorkflowAction =
+      args.workflowAction === "generate_tests_from_requirement" ||
+      args.workflowAction === "generate_next_batch_of_tests"
+        ? args.workflowAction
+        : null;
+
     const casesFlow = await runCasesFlow({
       rawReply: args.rawReply,
       sessionArtifact,
       explicitRegenerationRequest: args.explicitRegenerationRequest,
-      workflowAction: args.workflowAction ?? null,
+      workflowAction: casesWorkflowAction,
     });
 
     replyTextForUser = casesFlow.replyTextForUser;

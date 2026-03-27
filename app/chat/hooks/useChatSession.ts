@@ -26,6 +26,7 @@
 // M12.9 Phase 2 CHANGE:
 // - add artifact-driven workflow action contract for Generate Next Batch
 // - require refined requirement + persisted suite for next-batch execution
+// - add artifact-driven workflow action contract for Refine Requirement
 // - keep action execution separate from freeform send() flow
 
 "use client";
@@ -75,7 +76,8 @@ const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
 type WorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
-  | "review_test_suite";
+  | "review_test_suite"
+  | "refine_requirement";
 
 export type LastPending = {
   requestId: string;
@@ -104,7 +106,10 @@ export type UseChatSessionReturn = {
   canGenerateTests: boolean;
   canReviewTestSuite: boolean;
   canGenerateNextBatch: boolean;
+  canRefineRequirement: boolean;
+
   generateNextBatchOfTests: () => Promise<void>;
+  refineRequirement: () => Promise<void>;
 
   rateLimitMsg: string | null;
   rate: RateMeta | null;
@@ -665,11 +670,14 @@ export function useChatSession(): UseChatSessionReturn {
     }
 
     if (
-      action === "generate_tests_from_requirement" &&
+      (action === "generate_tests_from_requirement" ||
+        action === "refine_requirement") &&
       !sessionArtifact?.refinedRequirement
     ) {
       appendWorkflowActionError(
-        "Generate Tests unavailable",
+        action === "refine_requirement"
+          ? "Refine Requirement unavailable"
+          : "Generate Tests unavailable",
         "No refined requirement artifact is available for this session.",
         requestId
       );
@@ -713,7 +721,11 @@ export function useChatSession(): UseChatSessionReturn {
 
     try {
       const requestedMode: Mode =
-        action === "review_test_suite" ? "review" : "cases";
+        action === "review_test_suite"
+          ? "review"
+          : action === "refine_requirement"
+            ? "coach"
+            : "cases";
 
       const { status, headers, data } = await fetchJSONWithMeta<ChatApiResponse>(
         "/api/chat",
@@ -891,6 +903,38 @@ export function useChatSession(): UseChatSessionReturn {
         return;
       }
 
+      if (action === "refine_requirement") {
+        const hasRequirementArtifact = !!nextArtifact?.refinedRequirement;
+        const shouldRenderAsRequirementText =
+          hasRequirementArtifact || looksLikeRefinedRequirementText(reply);
+
+        if (!hasRequirementArtifact && !shouldRenderAsRequirementText) {
+          appendWorkflowActionError(
+            "Refine Requirement failed",
+            "The action completed without producing an updated refined requirement artifact or recognizable requirement output.",
+            serverRequestId
+          );
+          return;
+        }
+
+        setMode("coach");
+        setActiveSessionMode("coach");
+        setRateLimitMsg(null);
+
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "text",
+            role: "bot",
+            text: reply || "No reply returned",
+            requestId: serverRequestId,
+          } as ChatItem,
+        ]);
+
+        await loadSessions(true);
+        return;
+      }
+
       if (action === "review_test_suite") {
         const hasReviewPayload = !!data?.review;
         const hasReviewArtifact = artifactHasReviewSignal(nextArtifact);
@@ -948,6 +992,10 @@ export function useChatSession(): UseChatSessionReturn {
 
   const generateNextBatchOfTests = async () => {
     await runWorkflowAction("generate_next_batch_of_tests");
+  };
+
+  const refineRequirement = async () => {
+    await runWorkflowAction("refine_requirement");
   };
 
   const reviewTestSuite = async () => {
@@ -1287,6 +1335,12 @@ export function useChatSession(): UseChatSessionReturn {
     !isSending &&
     !isRunningWorkflowAction;
 
+  const canRefineRequirement =
+    !!activeSessionId &&
+    hasPinnedRequirement &&
+    !isSending &&
+    !isRunningWorkflowAction;
+
   const canReviewTestSuite =
     !!activeSessionId &&
     hasPersistentTestSuite &&
@@ -1328,6 +1382,10 @@ export function useChatSession(): UseChatSessionReturn {
     canGenerateTests,
     canReviewTestSuite,
     canGenerateNextBatch,
+    canRefineRequirement,
+
+    generateNextBatchOfTests,
+    refineRequirement,
 
     rateLimitMsg,
     rate,
@@ -1388,7 +1446,6 @@ export function useChatSession(): UseChatSessionReturn {
 
     updateTestSuite,
     generateTestsFromRequirement,
-    generateNextBatchOfTests,
     reviewTestSuite,
 
     send,

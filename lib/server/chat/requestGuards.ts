@@ -8,6 +8,12 @@
 // - preserve existing validation for normal prompt-driven requests
 // - derive mode/execution from action when action is present
 // - keep guards deterministic and request-focused
+//
+// M12.9 Phase 2 CHANGE:
+// - recognize generate_next_batch_of_tests as a valid workflow action
+// - recognize refine_requirement as a valid workflow action
+// - treat next-batch as cases/coaching execution without requiring message
+// - treat refine_requirement as coach/non-cases execution without requiring message
 
 import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
@@ -48,7 +54,9 @@ type MetricRecorder = (args: {
 
 type WorkflowAction =
   | "generate_tests_from_requirement"
-  | "review_test_suite";
+  | "generate_next_batch_of_tests"
+  | "review_test_suite"
+  | "refine_requirement";
 
 type AuthResult =
   | {
@@ -114,7 +122,9 @@ function getWorkflowAction(body: ChatBody): WorkflowAction | null {
 
   if (
     candidate === "generate_tests_from_requirement" ||
-    candidate === "review_test_suite"
+    candidate === "generate_next_batch_of_tests" ||
+    candidate === "review_test_suite" ||
+    candidate === "refine_requirement"
   ) {
     return candidate;
   }
@@ -214,15 +224,15 @@ export async function parseAndValidateChatRequest(args: {
 
   const workflowAction = getWorkflowAction(body);
 
-  // M12.9 CHANGE:
-  // Artifact-driven actions do not require a freeform user message.
   if (workflowAction) {
     const clientMode: ClientMode =
       workflowAction === "review_test_suite"
         ? "review"
         : normalizeClientMode(body?.mode);
 
-    const wantCases = workflowAction === "generate_tests_from_requirement";
+    const wantCases =
+      workflowAction === "generate_tests_from_requirement" ||
+      workflowAction === "generate_next_batch_of_tests";
     const wantReview = workflowAction === "review_test_suite";
     const executionMode: ExecutionMode = wantReview ? "review" : "coach";
 
@@ -422,8 +432,14 @@ export async function enforceRateLimit(args: {
     auth0Sub: args.auth0Sub,
     orgId: args.orgId,
     mode: args.clientMode,
+    errorType: "rate_limited",
+    errorMessage: "Chat rate limit exceeded",
     durationMs: Date.now() - args.startTime,
-    meta: { resetSeconds },
+    meta: {
+      limit: CHAT_RATE_LIMIT.limit,
+      remaining,
+      resetSeconds,
+    },
   });
 
   await args.recordChatMetric({
