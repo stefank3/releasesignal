@@ -33,6 +33,7 @@
 //
 // M12.9 Phase 2 CHANGE:
 // - wire Generate Next Batch props into CasesTextCard
+// - wire Refine Requirement props into RequirementCard
 // - keep visibility/enablement parent-driven
 // - no workflow execution in this component
 
@@ -266,6 +267,10 @@ type Props = {
   canGenerateTests?: boolean;
   isGeneratingTests?: boolean;
 
+  onRefineRequirementAction?: () => void;
+  canRefineRequirement?: boolean;
+  isRefiningRequirement?: boolean;
+
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
@@ -285,6 +290,10 @@ export default function ChatMessageList({
   onGenerateTestsAction,
   canGenerateTests = false,
   isGeneratingTests = false,
+
+  onRefineRequirementAction,
+  canRefineRequirement = false,
+  isRefiningRequirement = false,
 
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
@@ -380,6 +389,9 @@ export default function ChatMessageList({
                       onGenerateTestsAction={onGenerateTestsAction}
                       canGenerateTests={canGenerateTests}
                       isGeneratingTests={isGeneratingTests}
+                      onRefineRequirementAction={onRefineRequirementAction}
+                      canRefineRequirement={canRefineRequirement}
+                      isRefiningRequirement={isRefiningRequirement}
                     />
                   </div>
                 ) : (

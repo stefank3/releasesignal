@@ -47,6 +47,11 @@
 // - pass contextual workflow action props into the message renderer
 // - treat workflow actions as a busy state for shared panel UX
 // - keep orchestration in hook; keep panel as layout + prop passing only
+//
+// M12.9 Phase 2 CHANGE:
+// - thread Refine Requirement action through panel-level message wiring
+// - keep action visibility and execution hook-driven
+// - do not introduce prompt-dependent fallback behavior
 
 "use client";
 
@@ -362,10 +367,17 @@ export default function ChatPanel({
               }}
               canGenerateTests={chat.canGenerateTests}
               isGeneratingTests={chat.isRunningWorkflowAction}
+              onRefineRequirementAction={() => {
+                void chat.refineRequirement();
+              }}
+              canRefineRequirement={chat.hasPinnedRequirement}
+              isRefiningRequirement={chat.isRunningWorkflowAction}
               onGenerateNextBatchAction={() => {
                 void chat.generateNextBatchOfTests();
               }}
-              canGenerateNextBatch={chat.hasPinnedRequirement && chat.hasPersistentTestSuite}
+              canGenerateNextBatch={
+                chat.hasPinnedRequirement && chat.hasPersistentTestSuite
+              }
               isGeneratingNextBatch={chat.isRunningWorkflowAction}
               onReviewTestSuiteAction={() => {
                 void chat.reviewTestSuite();
