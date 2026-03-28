@@ -53,12 +53,13 @@ import {
 } from "@/lib/server/chat/reviewFlowService";
 import { applyStandaloneReviewArtifactPatch } from "@/lib/server/chat/artifactUpdateService";
 
-export type PostModelWorkflowAction =
+type PostModelWorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
   | "review_test_suite"
   | "refine_requirement"
-  | null;
+  | "regenerate_suite"
+  |null;
 
 export async function runPostModelFlow(args: {
   rawReply: string;

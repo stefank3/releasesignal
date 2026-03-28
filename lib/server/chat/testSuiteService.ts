@@ -21,6 +21,11 @@
 // - keep next-batch flow append-only
 // - return explicit no-op message when no new cases survive dedupe
 // - avoid route/UI-owned next-batch baseline logic
+//
+// M12.9 Phase 2 FIX:
+// - add strict regenerate-suite replacement helper
+// - reject malformed/incomplete regenerated cases before persistence
+// - keep regenerate distinct from append-only next-batch behavior
 
 import type {
   SessionArtifact,
@@ -83,6 +88,21 @@ export type NextBatchMergeResult =
       message: string;
     };
 
+export type RegenerateSuiteResult =
+  | {
+      ok: true;
+      kind: "replaced";
+      nextSuite: TestSuiteArtifact;
+      replacedCount: number;
+      diffSummary: TestSuiteDiffSummary;
+      message: string;
+    }
+  | {
+      ok: false;
+      kind: "invalid_prerequisites" | "generation_failed";
+      message: string;
+    };
+
 /**
  * Normalize titles for lightweight duplicate filtering.
  * Kept for compatibility with older callers, but Step 5 merge safety
@@ -118,6 +138,13 @@ function normalizePastedSuiteText(text: string): string {
  *   TC-001 - Title
  * or
  *   TC-001: Title
+ *
+ * Structural minimum for accepted cases:
+ * - Type
+ * - Priority
+ * - Preconditions
+ * - Test Steps or Steps
+ * - Expected Result / Expected Results
  */
 export function parseGeneratedTestCases(
   text: string
@@ -141,9 +168,30 @@ export function parseGeneratedTestCases(
     const headerLine = String(lines[0] ?? "").trim();
     const titleMatch = headerLine.match(/^\s*TC-\d{1,4}\s*[-–:]\s*(.+)$/i);
     const title = String(titleMatch?.[1] ?? "").trim();
+    const normalizedBlock = block.trim();
 
-    if (!title || !block) continue;
-    out.push({ title, body: block });
+    const hasType = /(^|\n)\s*Type\s*:/i.test(normalizedBlock);
+    const hasPriority = /(^|\n)\s*Priority\s*:/i.test(normalizedBlock);
+    const hasPreconditions = /(^|\n)\s*Preconditions\s*:/i.test(normalizedBlock);
+    const hasSteps =
+      /(^|\n)\s*Test Steps\s*:/i.test(normalizedBlock) ||
+      /(^|\n)\s*Steps\s*:/i.test(normalizedBlock);
+    const hasExpected =
+      /(^|\n)\s*Expected Result(s)?\s*:/i.test(normalizedBlock);
+
+    if (
+      !title ||
+      !normalizedBlock ||
+      !hasType ||
+      !hasPriority ||
+      !hasPreconditions ||
+      !hasSteps ||
+      !hasExpected
+    ) {
+      continue;
+    }
+
+    out.push({ title, body: normalizedBlock });
   }
 
   return out;
@@ -496,6 +544,72 @@ export function mergeNextBatchIntoSuite(args: {
     message: `Added ${merged.addedCount} new test case${
       merged.addedCount === 1 ? "" : "s"
     } to the existing suite.`,
+  };
+}
+
+/**
+ * Strict replacement path for Improve / Regenerate Suite.
+ * This action must replace the suite only when a structurally valid
+ * regenerated suite is produced.
+ */
+export function regenerateSuiteFromGeneratedText(args: {
+  requirementText: string | null | undefined;
+  existingSuite: TestSuiteArtifact | null;
+  generatedText: string;
+}): RegenerateSuiteResult {
+  const prerequisite = validateNextBatchPrerequisites({
+    requirementText: args.requirementText,
+    existingSuite: args.existingSuite,
+  });
+
+  if (!prerequisite.ok) {
+    return {
+      ok: false,
+      kind: "invalid_prerequisites",
+      message: prerequisite.message,
+    };
+  }
+
+  const parsed = parseGeneratedTestCases(args.generatedText);
+  if (!parsed.length) {
+    return {
+      ok: false,
+      kind: "generation_failed",
+      message:
+        "Regenerate suite failed to produce a structurally valid replacement suite.",
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+
+  const freshCases: TestCase[] = parsed.map((c, idx) => {
+    const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
+    return buildStructuredCase(caseId, c.title, c.body);
+  });
+
+  const nextSuite: TestSuiteArtifact = {
+    version: prerequisite.existingSuite.version + 1,
+    cases: freshCases,
+    createdAt: prerequisite.existingSuite.createdAt,
+    lastUpdatedAt: nowIso,
+  };
+
+  return {
+    ok: true,
+    kind: "replaced",
+    nextSuite,
+    replacedCount: freshCases.length,
+    diffSummary: {
+      previousVersion: prerequisite.existingSuite.version,
+      nextVersion: prerequisite.existingSuite.version + 1,
+      addedCaseIds: freshCases.map((c) => c.id),
+      addedCount: freshCases.length,
+      duplicateSkippedCount: 0,
+      unchanged: false,
+    },
+    message: `Regenerated suite with ${freshCases.length} test case${
+      freshCases.length === 1 ? "" : "s"
+    }.`,
   };
 }
 

@@ -91,7 +91,8 @@ type WorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
   | "review_test_suite"
-  | "refine_requirement";
+  | "refine_requirement"
+  | "regenerate_suite";
 
 function getWorkflowAction(body: unknown): WorkflowAction | null {
   if (!body || typeof body !== "object") return null;
@@ -102,7 +103,8 @@ function getWorkflowAction(body: unknown): WorkflowAction | null {
     candidate === "generate_tests_from_requirement" ||
     candidate === "generate_next_batch_of_tests" ||
     candidate === "review_test_suite" ||
-    candidate === "refine_requirement"
+    candidate === "refine_requirement" ||
+    candidate === "regenerate_suite"
   ) {
     return candidate;
   }
@@ -217,6 +219,43 @@ function buildWorkflowActionMessage(args: {
       "",
       "PERSISTED REFINED REQUIREMENT:",
       requirementText,
+    ].join("\n");
+  }
+
+  if (args.workflowAction === "regenerate_suite") {
+    const prerequisite = validateNextBatchPrerequisites({
+      requirementText: getRefinedRequirementText(args.sessionArtifact),
+      existingSuite: args.sessionArtifact?.testSuite ?? null,
+    });
+
+    if (!prerequisite.ok) {
+      return "Improve and regenerate the persisted test suite from the persisted artifacts for this session.";
+    }
+
+    const baseline = buildNextBatchBaseline({
+      requirementText: prerequisite.requirementText,
+      existingSuite: prerequisite.existingSuite,
+    });
+
+    const existingSuiteSummary =
+      baseline.suiteSummary.trim() || "No existing test case headers available.";
+
+    return [
+      "Improve and regenerate the persisted test suite from the persisted artifacts for this session.",
+      "",
+      "Use ONLY the persisted refined requirement artifact and the persisted existing test suite artifact.",
+      "Regenerate the suite as a stronger replacement version.",
+      "Preserve valid coverage intent, but improve structure, coverage balance, edge cases, negative paths, and clarity where needed.",
+      "Do NOT append a next batch.",
+      "Do NOT return duplicate or near-duplicate tests.",
+      "Return STRICT plain-text test cases in the locked TC format only.",
+      "",
+      "PERSISTED REFINED REQUIREMENT:",
+      baseline.requirementText,
+      "",
+      `EXISTING SUITE COUNT: ${baseline.existingCount}`,
+      "EXISTING TEST CASE HEADERS:",
+      existingSuiteSummary,
     ].join("\n");
   }
 
@@ -572,9 +611,10 @@ export async function POST(req: Request) {
       const actionExecutionMode: "coach" | "review" =
         workflowAction === "review_test_suite" ? "review" : "coach";
 
-      const actionWantCases =
+       const actionWantCases =
         workflowAction === "generate_tests_from_requirement" ||
-        workflowAction === "generate_next_batch_of_tests";
+        workflowAction === "generate_next_batch_of_tests" ||
+        workflowAction === "regenerate_suite";
 
       const actionMessage = buildWorkflowActionMessage({
         workflowAction,

@@ -56,8 +56,9 @@ type WorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
   | "review_test_suite"
-  | "refine_requirement";
-
+  | "refine_requirement"
+  | "regenerate_suite";
+  
 type AuthResult =
   | {
       ok: false;
@@ -124,7 +125,8 @@ function getWorkflowAction(body: ChatBody): WorkflowAction | null {
     candidate === "generate_tests_from_requirement" ||
     candidate === "generate_next_batch_of_tests" ||
     candidate === "review_test_suite" ||
-    candidate === "refine_requirement"
+    candidate === "refine_requirement" ||
+    candidate === "regenerate_suite"
   ) {
     return candidate;
   }
@@ -230,11 +232,13 @@ export async function parseAndValidateChatRequest(args: {
         ? "review"
         : normalizeClientMode(body?.mode);
 
-    const wantCases =
-      workflowAction === "generate_tests_from_requirement" ||
-      workflowAction === "generate_next_batch_of_tests";
-    const wantReview = workflowAction === "review_test_suite";
-    const executionMode: ExecutionMode = wantReview ? "review" : "coach";
+const wantCases =
+  workflowAction === "generate_tests_from_requirement" ||
+  workflowAction === "generate_next_batch_of_tests" ||
+  workflowAction === "regenerate_suite";
+
+const wantReview = workflowAction === "review_test_suite";
+const executionMode: ExecutionMode = wantReview ? "review" : "coach";
 
     return {
       ok: true,
