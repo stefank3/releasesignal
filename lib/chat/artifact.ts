@@ -124,6 +124,8 @@ export type TestSuiteValidationResult = {
   duplicateGroups: DuplicateCaseGroup[];
   hasDuplicates: boolean;
   totalCases: number;
+  malformedCaseIds: string[];
+  hasMalformedCases: boolean;
 };
 
 export function normalizeWhitespace(value: string): string {
@@ -236,16 +238,59 @@ export function findDuplicateTestCases(cases: TestCase[]): DuplicateCaseGroup[] 
     }));
 }
 
+export function findMalformedTestCases(cases: TestCase[]): string[] {
+  const malformedIds: string[] = [];
+
+  for (const rawCase of cases) {
+    const testCase = normalizeTestCase(rawCase);
+    const body = normalizeMultilineText(testCase.body);
+    const title = normalizeWhitespace(testCase.title);
+
+    const hasType = /(^|\n)\s*Type\s*:/i.test(body);
+    const hasPriority = /(^|\n)\s*Priority\s*:/i.test(body);
+    const hasPreconditions = /(^|\n)\s*Preconditions\s*:/i.test(body);
+    const hasSteps =
+      /(^|\n)\s*Test Steps\s*:/i.test(body) ||
+      /(^|\n)\s*Steps\s*:/i.test(body);
+    const hasExpected =
+      /(^|\n)\s*Expected Result(s)?\s*:/i.test(body);
+
+    const suspiciousShortTitle = title.length < 12;
+    const suspiciousTruncatedEnding = /(when|if|with|without|and|or|observe)$/i.test(
+      title
+    );
+
+    if (
+      !title ||
+      !body ||
+      !hasType ||
+      !hasPriority ||
+      !hasPreconditions ||
+      !hasSteps ||
+      !hasExpected ||
+      suspiciousShortTitle ||
+      suspiciousTruncatedEnding
+    ) {
+      malformedIds.push(testCase.id);
+    }
+  }
+
+  return malformedIds;
+}
+
 export function validateTestSuite(
   suite: TestSuiteArtifact | null | undefined
 ): TestSuiteValidationResult {
   const cases = suite?.cases ?? [];
   const duplicateGroups = findDuplicateTestCases(cases);
+  const malformedCaseIds = findMalformedTestCases(cases);
 
   return {
     duplicateGroups,
     hasDuplicates: duplicateGroups.length > 0,
     totalCases: cases.length,
+    malformedCaseIds,
+    hasMalformedCases: malformedCaseIds.length > 0,
   };
 }
 
