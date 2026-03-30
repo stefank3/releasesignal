@@ -222,7 +222,7 @@ function buildWorkflowActionMessage(args: {
     ].join("\n");
   }
 
-  if (args.workflowAction === "regenerate_suite") {
+    if (args.workflowAction === "regenerate_suite") {
     const prerequisite = validateNextBatchPrerequisites({
       requirementText: getRefinedRequirementText(args.sessionArtifact),
       existingSuite: args.sessionArtifact?.testSuite ?? null,
@@ -244,10 +244,18 @@ function buildWorkflowActionMessage(args: {
       "Improve and regenerate the persisted test suite from the persisted artifacts for this session.",
       "",
       "Use ONLY the persisted refined requirement artifact and the persisted existing test suite artifact.",
-      "Regenerate the suite as a stronger replacement version.",
-      "Preserve valid coverage intent, but improve structure, coverage balance, edge cases, negative paths, and clarity where needed.",
+      "This is a REPLACEMENT action, not an append action.",
+      "Rewrite the suite as a cleaner, stronger replacement version.",
+      "Preserve valid coverage intent, but remove overlap, duplicates, near-duplicates, and repetitive coverage.",
+      "Consolidate similar tests into the strongest single test where appropriate.",
+      "Prefer a tighter, cleaner suite over a larger suite.",
+      "Improve weak tests by making steps clearer, expected results sharper, and coverage more purposeful.",
+      "Keep meaningful positive, negative, and edge coverage, but do NOT multiply similar scenarios unnecessarily.",
       "Do NOT append a next batch.",
-      "Do NOT return duplicate or near-duplicate tests.",
+      "Do NOT continue numbering from the old suite.",
+      "Generate a full replacement suite starting clean from TC-001.",
+      "Do NOT include malformed, partial, truncated, or placeholder test cases.",
+      "Every test case must include: Type, Priority, Preconditions, Test Steps, and Expected Result.",
       "Return STRICT plain-text test cases in the locked TC format only.",
       "",
       "PERSISTED REFINED REQUIREMENT:",
