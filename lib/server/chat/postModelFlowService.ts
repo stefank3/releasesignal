@@ -170,12 +170,13 @@ export async function runPostModelFlow(args: {
   }
 
   if (args.wantCases) {
-    const casesWorkflowAction =
-      args.workflowAction === "generate_tests_from_requirement" ||
-      args.workflowAction === "generate_next_batch_of_tests"
-        ? args.workflowAction
-        : null;
-
+const casesWorkflowAction =
+  args.workflowAction === "generate_tests_from_requirement" ||
+  args.workflowAction === "generate_next_batch_of_tests" ||
+  args.workflowAction === "regenerate_suite"
+    ? args.workflowAction
+    : null;
+    
     const casesFlow = await runCasesFlow({
       rawReply: args.rawReply,
       sessionArtifact,
