@@ -23,6 +23,11 @@
 // - split generate-next-batch from generic generate-tests flow
 // - enforce append-only next-batch merge behavior
 // - preserve explicit no-op message when no new coverage survives dedupe
+//
+// M12.9 Phase 2 FIX:
+// - wire regenerate_suite to strict replacement path
+// - keep regenerate distinct from append-only next-batch behavior
+// - preserve existing suite when no valid replacement suite is produced
 
 import type {
   SessionArtifact,
@@ -35,6 +40,7 @@ import type { TelemetryEventType } from "@/lib/server/telemetry/telemetryTypes";
 import {
   mergeGeneratedCasesIntoSuite,
   mergeNextBatchIntoSuite,
+  regenerateSuiteFromGeneratedText,
   renderTestSuiteForUser,
 } from "@/lib/server/chat/testSuiteService";
 import { analyzeTestSuite } from "@/lib/server/chat/suiteAnalysisService";
@@ -43,6 +49,7 @@ import { buildWorkflowGuidance } from "@/lib/server/chat/workflowAssistantServic
 export type CasesWorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
+  | "regenerate_suite"
   | "review_test_suite"
   | null;
 
@@ -149,24 +156,23 @@ export async function runCasesFlow(args: {
 }> {
   const workflowAction = args.workflowAction ?? null;
 
-  // If regeneration was explicitly requested, the previous suite is ignored
-  // so the next generated suite becomes a fresh baseline.
   const existingSuite = getTestSuite(args.sessionArtifact);
-  const existingSuiteForMerge = args.explicitRegenerationRequest
-    ? null
-    : existingSuite;
 
   let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
   let testSuiteAddedCount = 0;
   let diffSummary = {
-    previousVersion: existingSuiteForMerge?.version ?? null,
-    nextVersion: existingSuiteForMerge?.version ?? null,
+    previousVersion: existingSuite?.version ?? null,
+    nextVersion: existingSuite?.version ?? null,
     addedCaseIds: [] as string[],
     addedCount: 0,
     duplicateSkippedCount: 0,
     unchanged: true,
   };
-  let noOpReason: "no_new_coverage" | "duplicates_only" | "no_valid_cases" | undefined;
+  let noOpReason:
+    | "no_new_coverage"
+    | "duplicates_only"
+    | "no_valid_cases"
+    | undefined;
 
   if (workflowAction === "generate_next_batch_of_tests") {
     const merged = mergeNextBatchIntoSuite({
@@ -193,11 +199,37 @@ export async function runCasesFlow(args: {
             : "no_new_coverage";
       }
     }
+  } else if (workflowAction === "regenerate_suite") {
+    const regenerated = regenerateSuiteFromGeneratedText({
+      requirementText: args.sessionArtifact?.refinedRequirement
+        ? JSON.stringify(args.sessionArtifact.refinedRequirement)
+        : null,
+      existingSuite,
+      generatedText: args.rawReply.trim(),
+    });
+
+    if (!regenerated.ok) {
+      nextTestSuiteArtifact = existingSuite;
+      testSuiteAddedCount = 0;
+      noOpReason = "no_valid_cases";
+      diffSummary = {
+        previousVersion: existingSuite?.version ?? null,
+        nextVersion: existingSuite?.version ?? null,
+        addedCaseIds: [],
+        addedCount: 0,
+        duplicateSkippedCount: 0,
+        unchanged: true,
+      };
+    } else {
+      nextTestSuiteArtifact = regenerated.nextSuite;
+      testSuiteAddedCount = regenerated.replacedCount;
+      diffSummary = regenerated.diffSummary;
+    }
   } else {
     const merged = mergeGeneratedCasesIntoSuite({
-      existingSuite: existingSuiteForMerge,
+      existingSuite,
       generatedText: args.rawReply.trim(),
-      explicitReset: args.explicitRegenerationRequest,
+      explicitReset: false,
     });
 
     nextTestSuiteArtifact = merged.nextSuite;
@@ -216,12 +248,9 @@ export async function runCasesFlow(args: {
 
   const validation = validateTestSuite(nextTestSuiteArtifact);
 
-  // M12 Step 6:
-  // Deterministic suite intelligence layer
   const analysis = analyzeTestSuite(nextTestSuiteArtifact);
   const guidance = buildWorkflowGuidance(analysis);
 
-  // Render user-facing output from the structured suite when available.
   const replyTextForUser =
     nextTestSuiteArtifact &&
     !diffSummary.unchanged &&
@@ -236,18 +265,15 @@ export async function runCasesFlow(args: {
           noOpReason,
         });
 
-  // M11:
-  // Build structured telemetry classification only when a suite artifact exists.
-  // This avoids emitting telemetry from unstructured fallback text.
   let telemetry: CasesFlowTelemetry | null = null;
 
   if (nextTestSuiteArtifact) {
     const eventType: CasesFlowTelemetry["eventType"] =
       workflowAction === "generate_next_batch_of_tests"
         ? "test_suite_extended"
-        : args.explicitRegenerationRequest
+        : workflowAction === "regenerate_suite"
           ? "test_suite_regenerated"
-          : existingSuiteForMerge
+          : existingSuite
             ? "test_suite_extended"
             : "test_suite_generated";
 
