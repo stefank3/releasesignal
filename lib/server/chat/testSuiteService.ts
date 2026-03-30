@@ -26,6 +26,9 @@
 // - add strict regenerate-suite replacement helper
 // - reject malformed/incomplete regenerated cases before persistence
 // - keep regenerate distinct from append-only next-batch behavior
+// - drop malformed regenerated cases instead of failing the entire replacement
+// - dedupe regenerated replacement cases deterministically
+// - renumber cleaned replacement suite from TC-001
 
 import type {
   SessionArtifact,
@@ -34,7 +37,9 @@ import type {
 } from "@/lib/chat/artifact";
 import {
   buildTestCaseSignature,
+  normalizeMultilineText,
   normalizeTestCase,
+  normalizeWhitespace,
 } from "@/lib/chat/artifact";
 
 export type TestSuiteDiffSummary = {
@@ -260,6 +265,82 @@ function buildEmptyDiffSummary(): TestSuiteDiffSummary {
 
 function normalizeRequirementText(text: string | null | undefined): string {
   return String(text ?? "").replace(/\r/g, "").trim();
+}
+
+function isMalformedReplacementCase(testCase: TestCase): boolean {
+  const normalized = normalizeTestCase(testCase);
+  const body = normalizeMultilineText(normalized.body);
+  const title = normalizeWhitespace(normalized.title);
+
+  const hasType = /(^|\n)\s*Type\s*:/i.test(body);
+  const hasPriority = /(^|\n)\s*Priority\s*:/i.test(body);
+  const hasPreconditions = /(^|\n)\s*Preconditions\s*:/i.test(body);
+  const hasSteps =
+    /(^|\n)\s*Test Steps\s*:/i.test(body) ||
+    /(^|\n)\s*Steps\s*:/i.test(body);
+  const hasExpected = /(^|\n)\s*Expected Result(s)?\s*:/i.test(body);
+
+  const suspiciousShortTitle = title.length < 12;
+  const suspiciousTruncatedEnding =
+    /(when|if|with|without|and|or|observe)$/i.test(title);
+
+  return (
+    !title ||
+    !body ||
+    !hasType ||
+    !hasPriority ||
+    !hasPreconditions ||
+    !hasSteps ||
+    !hasExpected ||
+    suspiciousShortTitle ||
+    suspiciousTruncatedEnding
+  );
+}
+
+function sanitizeReplacementCases(parsed: Array<{ title: string; body: string }>): {
+  cases: TestCase[];
+  malformedDroppedCount: number;
+  duplicateSkippedCount: number;
+} {
+  const cases: TestCase[] = [];
+  const signatures = new Set<string>();
+
+  let malformedDroppedCount = 0;
+  let duplicateSkippedCount = 0;
+
+  for (const candidate of parsed) {
+    const tempCase = buildStructuredCase("TC-000", candidate.title, candidate.body);
+
+    if (isMalformedReplacementCase(tempCase)) {
+      malformedDroppedCount += 1;
+      continue;
+    }
+
+    const signature = buildTestCaseSignature(tempCase);
+    if (!signature) {
+      malformedDroppedCount += 1;
+      continue;
+    }
+
+    if (signatures.has(signature)) {
+      duplicateSkippedCount += 1;
+      continue;
+    }
+
+    signatures.add(signature);
+    cases.push(tempCase);
+  }
+
+  const renumberedCases = cases.map((c, idx) => {
+    const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
+    return buildStructuredCase(caseId, c.title, c.body);
+  });
+
+  return {
+    cases: renumberedCases,
+    malformedDroppedCount,
+    duplicateSkippedCount,
+  };
 }
 
 /**
@@ -549,8 +630,10 @@ export function mergeNextBatchIntoSuite(args: {
 
 /**
  * Strict replacement path for Improve / Regenerate Suite.
- * This action must replace the suite only when a structurally valid
- * regenerated suite is produced.
+ * This action replaces the suite with a cleaned regenerated version:
+ * - malformed regenerated cases are dropped
+ * - exact duplicate regenerated cases are dropped
+ * - remaining valid cases are renumbered cleanly from TC-001
  */
 export function regenerateSuiteFromGeneratedText(args: {
   requirementText: string | null | undefined;
@@ -580,36 +663,61 @@ export function regenerateSuiteFromGeneratedText(args: {
     };
   }
 
-  const nowIso = new Date().toISOString();
+  const cleaned = sanitizeReplacementCases(parsed);
+  if (!cleaned.cases.length) {
+    return {
+      ok: false,
+      kind: "generation_failed",
+      message:
+        "Regenerate suite produced only malformed or duplicate replacement cases.",
+    };
+  }
 
-  const freshCases: TestCase[] = parsed.map((c, idx) => {
-    const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
-    return buildStructuredCase(caseId, c.title, c.body);
-  });
+  const nowIso = new Date().toISOString();
 
   const nextSuite: TestSuiteArtifact = {
     version: prerequisite.existingSuite.version + 1,
-    cases: freshCases,
+    cases: cleaned.cases,
     createdAt: prerequisite.existingSuite.createdAt,
     lastUpdatedAt: nowIso,
   };
+
+  const removalNotes: string[] = [];
+  if (cleaned.malformedDroppedCount > 0) {
+    removalNotes.push(
+      `${cleaned.malformedDroppedCount} malformed case${
+        cleaned.malformedDroppedCount === 1 ? "" : "s"
+      } removed`
+    );
+  }
+  if (cleaned.duplicateSkippedCount > 0) {
+    removalNotes.push(
+      `${cleaned.duplicateSkippedCount} duplicate case${
+        cleaned.duplicateSkippedCount === 1 ? "" : "s"
+      } removed`
+    );
+  }
 
   return {
     ok: true,
     kind: "replaced",
     nextSuite,
-    replacedCount: freshCases.length,
+    replacedCount: cleaned.cases.length,
     diffSummary: {
       previousVersion: prerequisite.existingSuite.version,
       nextVersion: prerequisite.existingSuite.version + 1,
-      addedCaseIds: freshCases.map((c) => c.id),
-      addedCount: freshCases.length,
-      duplicateSkippedCount: 0,
+      addedCaseIds: cleaned.cases.map((c) => c.id),
+      addedCount: cleaned.cases.length,
+      duplicateSkippedCount: cleaned.duplicateSkippedCount,
       unchanged: false,
     },
-    message: `Regenerated suite with ${freshCases.length} test case${
-      freshCases.length === 1 ? "" : "s"
-    }.`,
+    message: removalNotes.length
+      ? `Regenerated suite with ${cleaned.cases.length} clean test case${
+          cleaned.cases.length === 1 ? "" : "s"
+        } (${removalNotes.join(", ")}).`
+      : `Regenerated suite with ${cleaned.cases.length} clean test case${
+          cleaned.cases.length === 1 ? "" : "s"
+        }.`,
   };
 }
 
