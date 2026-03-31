@@ -122,15 +122,41 @@ function looksLikeCasesPlainText(text: string): boolean {
  * Backward compatibility:
  * - If persisted mode is already "cases", honor it.
  */
+function looksLikeReviewJson(text: string): boolean {
+  try {
+    const obj = JSON.parse(String(text ?? ""));
+
+    return !!(
+      obj &&
+      typeof obj.score === "number" &&
+      obj.breakdown &&
+      typeof obj.breakdown.businessRelevance === "number" &&
+      Array.isArray(obj.riskGaps) &&
+      Array.isArray(obj.antiPatterns) &&
+      Array.isArray(obj.improvements)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function computeEffectiveMode(args: {
   persistedMode: Mode;
   lastAssistantMessage: null | { role: string; content: string };
 }): Mode {
-  if (args.persistedMode === "review") return "review";
-  if (args.persistedMode === "cases") return "cases"; // backward-compat
-
   const lastA = args.lastAssistantMessage;
-  if (lastA?.role === "assistant" && looksLikeCasesPlainText(lastA.content)) return "cases";
+
+  // BUG FIX (M12 Strategy + History triage):
+  // In a shared workspace session, persisted mode must not force the sidebar
+  // card to behave like the latest completed stage forever.
+  // Prefer explicit assistant content signals only; otherwise default to Strategy.
+  if (lastA?.role === "assistant" && looksLikeReviewJson(lastA.content)) {
+    return "review";
+  }
+
+  if (lastA?.role === "assistant" && looksLikeCasesPlainText(lastA.content)) {
+    return "cases";
+  }
 
   return "coach";
 }

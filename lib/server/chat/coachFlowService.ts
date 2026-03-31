@@ -10,9 +10,9 @@ import type { CoachResult } from "@/lib/framework/reviewSchema";
 import {
   buildCoachContinuityArtifactPatch,
   coachToTechnicalRequirementText,
-  coachToText,
   shouldReturnTechnicalRequirement,
 } from "@/lib/server/chat/coachFormatting";
+
 import { parseCoachResponse } from "@/lib/server/chat/modelResponseParser";
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 
@@ -74,15 +74,15 @@ export async function runCoachFlow(args: {
     ? null
     : sessionArtifact;
 
-  const replyTextForUser = shouldReturnTechnicalRequirement({
-    guidedAnswer: args.guidedAnswer,
-    artifact: effectiveArtifactForReply,
-  })
-    ? coachToTechnicalRequirementText(
-        coachParsed,
-        effectiveArtifactForReply
-      )
-    : coachToText(coachParsed);
+const replyTextForUser = shouldReturnTechnicalRequirement({
+  guidedAnswer: args.guidedAnswer,
+  artifact: effectiveArtifactForReply,
+})
+  ? coachToTechnicalRequirementText(
+      coachParsed,
+      effectiveArtifactForReply
+    )
+  : "I couldn't build a refined requirement from that input. Please retry.";
 
   return {
     coachParsed,

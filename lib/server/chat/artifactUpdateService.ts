@@ -11,16 +11,45 @@
 // - classify guided requirement refinement outcome
 // - return structured telemetry info to the caller
 // - do NOT emit telemetry directly from this service yet
+//
+// M12 CHANGE:
+// - add persisted review artifact writes after Review flow
+// - keep route.ts orchestration-only
+// - prepare artifact-driven design/review consistency
+// - mirror review into featureWorkspace only when that wrapper already exists
+//
+// M12 Step 5 CHANGE:
+// - enforce deterministic suite normalization before persist
+// - validate suite before save
+// - mirror testSuite into featureWorkspace only when that wrapper already exists
+//
+// M12 Step 7 CHANGE:
+// - keep persisted review aligned with latest suite / requirement context
+// - remove ad hoc artifact shape drift from returned state
+//
+// BUG FIX (M12.8):
+// - add standalone review artifact ingestion before deterministic review
+// - parse explicit structured requirement input via artifact-layer parser
+// - parse pasted suite text via deterministic test suite parser
+// - persist once, using artifact state as the only review input source
+
+import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
 import {
   type SessionArtifact,
   type TestSuiteArtifact,
   mergeArtifact,
+  normalizeTestCase,
   parseGuidedAnswerToRefinedRequirement,
+  parseStructuredRequirementInput,
+  validateTestSuite,
 } from "@/lib/chat/artifact";
 
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
-import { withUpdatedTestSuiteArtifact } from "@/lib/server/chat/testSuiteService";
+import {
+  parseGeneratedTestCases,
+  withUpdatedTestSuiteArtifact,
+} from "@/lib/server/chat/testSuiteService";
 
 // M11:
 // Structured telemetry classification for requirement refinement.
@@ -38,6 +67,103 @@ export type RequirementRefinedTelemetry = {
     acceptanceCriteriaCount: number;
   };
 };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+/**
+ * M12 / Step 7:
+ * Persist the latest review result as artifact state so Review is not only
+ * represented as a chat response, and keep it aligned with the latest
+ * requirement + suite context when featureWorkspace already exists.
+ */
+function withUpdatedReviewArtifact(
+  artifact: SessionArtifact | null,
+  reviewResult: ReviewResult
+): SessionArtifact {
+  const base = isRecord(artifact) ? { ...artifact } : {};
+  const next = {
+    ...base,
+    reviewResult,
+  } as SessionArtifact & Record<string, unknown>;
+
+  if (isRecord(base.featureWorkspace)) {
+    next.featureWorkspace = {
+      ...base.featureWorkspace,
+      ...(base.refinedRequirement
+        ? { refinedRequirement: base.refinedRequirement }
+        : {}),
+      ...(base.testSuite ? { testSuite: base.testSuite } : {}),
+      reviewResult,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+
+  return next as SessionArtifact;
+}
+
+function withFeatureWorkspaceSuiteMirror(
+  artifact: SessionArtifact,
+  testSuite: TestSuiteArtifact
+): SessionArtifact {
+  if (!isRecord(artifact.featureWorkspace)) {
+    return artifact;
+  }
+
+  return {
+    ...artifact,
+    featureWorkspace: {
+      ...artifact.featureWorkspace,
+      testSuite,
+      ...(artifact.refinedRequirement
+        ? { refinedRequirement: artifact.refinedRequirement }
+        : {}),
+      lastUpdatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function withFeatureWorkspaceRequirementMirror(
+  artifact: SessionArtifact
+): SessionArtifact {
+  if (!isRecord(artifact.featureWorkspace)) {
+    return artifact;
+  }
+
+  return {
+    ...artifact,
+    featureWorkspace: {
+      ...artifact.featureWorkspace,
+      ...(artifact.refinedRequirement
+        ? { refinedRequirement: artifact.refinedRequirement }
+        : {}),
+      ...(artifact.testSuite ? { testSuite: artifact.testSuite } : {}),
+      lastUpdatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function buildFreshSuiteFromParsedCases(
+  parsedCases: Array<{ title: string; body: string }>
+): TestSuiteArtifact | null {
+  if (!parsedCases.length) return null;
+
+  const nowIso = new Date().toISOString();
+
+  return {
+    version: 1,
+    createdAt: nowIso,
+    lastUpdatedAt: nowIso,
+    cases: parsedCases.map((testCase, index) =>
+      normalizeTestCase({
+        id: `TC-${String(index + 1).padStart(3, "0")}`,
+        title: testCase.title,
+        body: testCase.body,
+      })
+    ),
+  };
+}
 
 export async function applyGuidedArtifactPatch(args: {
   sessionId: string;
@@ -72,7 +198,9 @@ export async function applyGuidedArtifactPatch(args: {
     };
   }
 
-  const nextArtifact = mergeArtifact(args.sessionArtifact, patch);
+  const nextArtifact = withFeatureWorkspaceRequirementMirror(
+    mergeArtifact(args.sessionArtifact, patch)
+  );
 
   const saved = await saveSessionArtifact({
     sessionId: args.sessionId,
@@ -104,6 +232,69 @@ export async function applyGuidedArtifactPatch(args: {
   };
 }
 
+export async function applyStandaloneReviewArtifactPatch(args: {
+  sessionId: string;
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+  message: string;
+  reviewMode: boolean;
+}): Promise<{
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+}> {
+  if (!args.reviewMode) {
+    return {
+      sessionArtifact: args.sessionArtifact,
+      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+    };
+  }
+
+  const requirementPatch = parseStructuredRequirementInput(args.message);
+  const parsedCases = parseGeneratedTestCases(args.message);
+  const nextStandaloneSuite = buildFreshSuiteFromParsedCases(parsedCases);
+
+  if (!requirementPatch && !nextStandaloneSuite) {
+    return {
+      sessionArtifact: args.sessionArtifact,
+      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+    };
+  }
+
+  let nextArtifact: SessionArtifact =
+  args.sessionArtifact && typeof args.sessionArtifact === "object"
+    ? args.sessionArtifact
+    : {};
+    
+    if (requirementPatch) {
+    nextArtifact = mergeArtifact(nextArtifact, requirementPatch);
+    nextArtifact = withFeatureWorkspaceRequirementMirror(nextArtifact);
+  }
+
+  if (nextStandaloneSuite) {
+    validateTestSuite(nextStandaloneSuite);
+
+    const nextArtifactBase = withUpdatedTestSuiteArtifact(
+      nextArtifact,
+      nextStandaloneSuite
+    );
+
+    nextArtifact = withFeatureWorkspaceSuiteMirror(
+      nextArtifactBase,
+      nextStandaloneSuite
+    );
+  }
+
+  const saved = await saveSessionArtifact({
+    sessionId: args.sessionId,
+    artifact: nextArtifact,
+  });
+
+  return {
+    sessionArtifact: saved.artifact,
+    artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
+  };
+}
+
 export async function persistGeneratedSuiteArtifact(args: {
   sessionId: string;
   sessionArtifact: SessionArtifact | null;
@@ -120,9 +311,53 @@ export async function persistGeneratedSuiteArtifact(args: {
     };
   }
 
-  const nextArtifact = withUpdatedTestSuiteArtifact(
+  const normalizedSuite: TestSuiteArtifact = {
+    ...args.nextTestSuiteArtifact,
+    cases: args.nextTestSuiteArtifact.cases.map((c) => normalizeTestCase(c)),
+  };
+
+  validateTestSuite(normalizedSuite);
+
+  const nextArtifactBase = withUpdatedTestSuiteArtifact(
     args.sessionArtifact,
-    args.nextTestSuiteArtifact
+    normalizedSuite
+  );
+
+  const nextArtifact = withFeatureWorkspaceSuiteMirror(
+    nextArtifactBase,
+    normalizedSuite
+  );
+
+  const saved = await saveSessionArtifact({
+    sessionId: args.sessionId,
+    artifact: nextArtifact,
+  });
+
+  return {
+    sessionArtifact: saved.artifact,
+    artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
+  };
+}
+
+export async function persistReviewArtifact(args: {
+  sessionId: string;
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+  reviewResult: ReviewResult | null;
+}): Promise<{
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+}> {
+  if (!args.reviewResult) {
+    return {
+      sessionArtifact: args.sessionArtifact,
+      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+    };
+  }
+
+  const nextArtifact = withUpdatedReviewArtifact(
+    args.sessionArtifact,
+    args.reviewResult
   );
 
   const saved = await saveSessionArtifact({

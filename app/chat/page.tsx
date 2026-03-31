@@ -16,6 +16,11 @@
 // CHANGE (M10 Hydration Fix):
 // - prevents theme mismatch during SSR/client hydration
 // - keeps first render deterministic, then resolves system theme after mount
+//
+// CHANGE (M12 Step 7A):
+// - treat mode switching as a view change on the active workspace/session
+// - reload the same active session when mode changes
+// - stop sidebar selection from forcing legacy per-session mode behavior
 
 "use client";
 
@@ -27,7 +32,6 @@ import SessionSidebar from "./components/SessionSidebar";
 import ChatHeader from "./components/ChatHeader";
 import ChatToolbar from "./components/ChatToolbar";
 import ChatPanel from "./components/ChatPanel";
-
 
 type ThemeMode = "light" | "dark" | "system";
 
@@ -77,14 +81,34 @@ export default function ChatPage() {
     };
   }, []);
 
-  // M10 hydration fix:
-  // Keep SSR and first client render deterministic.
-  
-
   const resolvedTheme: "light" | "dark" =
     themeMode === "system" ? systemTheme : themeMode;
 
   const isDark = resolvedTheme === "dark";
+
+  const handleWorkspaceSelectAction = (id: string) => {
+    void (async () => {
+      // BUG FIX (M12 Strategy + History triage):
+      // History selection must restore the selected card's own stored mode,
+      // not the currently visible workspace tab.
+      const selectedSession = chat.sessions.find((s) => s.id === id);
+      const selectedMode = selectedSession?.mode ?? "coach";
+
+      await chat.selectSession(id, selectedMode);
+      bumpUiTickAction();
+    })();
+  };
+
+  const handleModeChangeAction = (mode: typeof chat.mode) => {
+    // BUG FIX (M12 Strategy + History triage):
+    // Manual tab switching must change only the visible workspace view.
+    // Do NOT reload the active session here, because session restore logic
+    // intentionally derives its effective mode from persisted history/artifact state.
+    // Re-selecting the session would snap the UI back to the persisted mode
+    // and prevent normal Strategy/Test Design/Test Review navigation.
+    chat.setMode(mode);
+    bumpUiTickAction();
+  };
 
   if (!mounted) {
     return (
@@ -130,11 +154,8 @@ export default function ChatPage() {
           chat.newChat();
           bumpUiTickAction();
         }}
-        onSelectSessionAction={(id, m) => {
-          void (async () => {
-            await chat.selectSession(id, m);
-            bumpUiTickAction();
-          })();
+        onSelectSessionAction={(id) => {
+          handleWorkspaceSelectAction(id);
         }}
         onLoadMoreSessionsAction={() => void chat.loadSessions(false)}
         onStartRenameAction={(id, title) => {
@@ -163,10 +184,7 @@ export default function ChatPage() {
           resolvedTheme={resolvedTheme}
           onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)}
           mode={chat.mode}
-          onModeChangeAction={(mode) => {
-            chat.setMode(mode);
-            bumpUiTickAction();
-          }}
+          onModeChangeAction={handleModeChangeAction}
         />
 
         <ChatToolbar

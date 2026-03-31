@@ -37,23 +37,42 @@
 // CHANGE (M10 Remaining Work - Assistant Tone Alignment):
 // - shift onboarding language away from chatbot cues
 // - reinforce workflow-assistant positioning
+//
+// CHANGE (M12 Step 1 - Workflow Progression Awareness):
+// - consume workflow progression state from useChatSession
+// - extract workflow banner into a dedicated child component
+// - keep ChatPanel focused on workspace layout orchestration
+//
+// M12.9 CHANGE:
+// - pass contextual workflow action props into the message renderer
+// - treat workflow actions as a busy state for shared panel UX
+// - keep orchestration in hook; keep panel as layout + prop passing only
+//
+// M12.9 Phase 2 CHANGE:
+// - thread Refine Requirement action through panel-level message wiring
+// - keep action visibility and execution hook-driven
+// - do not introduce prompt-dependent fallback behavior
+//
+// M12.9 Phase 2 CHANGE:
+// - thread Improve / Regenerate Suite action through panel-level message wiring
+// - keep it distinct from Generate Next Batch
+// - keep action visibility and execution hook-driven
 
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
-import { isNearBottom } from "../hooks/useChatSession";
+import { isNearBottom } from "../hooks/useChatSession.helpers";
 
-import ChatMessageList from "./ChatMessageList";
 import ChatInput from "./ChatInput";
+import ChatMessageList from "./ChatMessageList";
+import ChatWorkflowBanner from "./ChatWorkflowBanner";
+import FeatureWorkspaceSummary from "./FeatureWorkspaceSummary";
 import StrategyPanel from "./StrategyPanel";
 
 type Props = {
   chat: UseChatSessionReturn;
   onAfterSendAction?: () => void;
-
-  // M10 UI:
-  // Theme is resolved by the page shell so child components stay consistent.
   resolvedTheme?: "light" | "dark";
 };
 
@@ -174,7 +193,6 @@ export default function ChatPanel({
     return () => mq.removeEventListener("change", apply);
   }, []);
 
-  // Keep scroll preference updated based on user scrolling
   useEffect(() => {
     const el = chatBoxRef.current;
     if (!el) return;
@@ -187,7 +205,6 @@ export default function ChatPanel({
     return () => el.removeEventListener("scroll", onScroll);
   }, [chat]);
 
-  // Auto-scroll when new items arrive (only if user is already near bottom)
   useEffect(() => {
     const el = chatBoxRef.current;
     if (!el) return;
@@ -197,20 +214,20 @@ export default function ChatPanel({
     }
   }, [chat.items, chat]);
 
-  const effectiveSessionMode =
-    chat.activeSessionId && chat.activeSessionMode
-      ? chat.activeSessionMode
-      : chat.mode;
-
-  const isCoachSession = effectiveSessionMode === "coach";
-  const isTestDesignSession = effectiveSessionMode === "cases";
-
+  // BUG FIX (M12 Strategy + History triage):
+  // Panel rendering must follow the currently selected visible tab/view,
+  // not the persisted effective session classification.
+  // activeSessionMode is useful for workflow/history reasoning, but using it
+  // here causes Strategy/Test Design/Test Review shells to bleed across views.
+  const isCoachSession = chat.mode === "coach";
+  const isTestDesignSession = chat.mode === "cases";
   const isDark = resolvedTheme === "dark";
+
+  const isBusy = chat.isSending || chat.isRunningWorkflowAction;
 
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
     if (isNarrow) return "1fr";
-
     return "minmax(0, 1fr) 400px";
   }, [isCoachSession, isNarrow]);
 
@@ -257,9 +274,6 @@ export default function ChatPanel({
     lineHeight: 1.35,
   };
 
-  // Show the onboarding hint only for empty sessions before the first interaction.
-  const showOnboardingHint = chat.items.length === 0 && !chat.isSending;
-
   const strategyPanelWrapStyle: React.CSSProperties = {
     border: isDark
       ? "1px solid rgba(255,255,255,0.12)"
@@ -272,11 +286,6 @@ export default function ChatPanel({
       ? "0 8px 30px rgba(0,0,0,0.18)"
       : "0 8px 24px rgba(15,23,42,0.06)",
   };
-
-  const canUseRefinedRequirement =
-    isTestDesignSession &&
-    chat.hasPinnedRequirement &&
-    !!buildRefinedRequirementInput(chat.sessionArtifact);
 
   const helperBannerStyle: React.CSSProperties = {
     display: "flex",
@@ -307,6 +316,13 @@ export default function ChatPanel({
     whiteSpace: "nowrap",
   };
 
+  const showOnboardingHint = chat.items.length === 0 && !isBusy;
+
+  const canUseRefinedRequirement =
+    isTestDesignSession &&
+    chat.hasPinnedRequirement &&
+    !!buildRefinedRequirementInput(chat.sessionArtifact);
+
   return (
     <div
       style={{
@@ -316,7 +332,6 @@ export default function ChatPanel({
         gridTemplateColumns,
       }}
     >
-      {/* Left: unified chat surface (messages + input) */}
       <div>
         {showOnboardingHint ? (
           <OnboardingHint
@@ -325,11 +340,23 @@ export default function ChatPanel({
           />
         ) : null}
 
+        <FeatureWorkspaceSummary
+          chat={chat}
+          resolvedTheme={resolvedTheme}
+        />
+
+        <ChatWorkflowBanner
+          status={chat.workflowStatus}
+          resolvedTheme={resolvedTheme}
+        />
+
         <div style={leftPanelStyle}>
           <div ref={chatBoxRef} style={chatBoxStyle}>
-            {chat.isSending ? (
+            {isBusy ? (
               <div style={processingBannerStyle}>
-                {getProcessingLabel(chat.mode)}
+                {chat.isRunningWorkflowAction
+                  ? "Running workspace action…"
+                  : getProcessingLabel(chat.mode)}
               </div>
             ) : null}
 
@@ -337,6 +364,36 @@ export default function ChatPanel({
               items={chat.items}
               mode={chat.mode}
               resolvedTheme={resolvedTheme}
+              onUpdateTestSuiteAction={(cases) => {
+                void chat.updateTestSuite(cases);
+              }}
+              onGenerateTestsAction={() => {
+                void chat.generateTestsFromRequirement();
+              }}
+              canGenerateTests={chat.canGenerateTests}
+              isGeneratingTests={chat.isRunningWorkflowAction}
+              onRefineRequirementAction={() => {
+                void chat.refineRequirement();
+              }}
+              canRefineRequirement={chat.canRefineRequirement}
+              isRefiningRequirement={chat.isRunningWorkflowAction}
+              onGenerateNextBatchAction={() => {
+                void chat.generateNextBatchOfTests();
+              }}
+              canGenerateNextBatch={
+                chat.hasPinnedRequirement && chat.hasPersistentTestSuite
+              }
+              isGeneratingNextBatch={chat.isRunningWorkflowAction}
+              onRegenerateSuiteAction={() => {
+                void chat.regenerateSuite();
+              }}
+              canRegenerateSuite={chat.canRegenerateSuite}
+              isRegeneratingSuite={chat.isRunningWorkflowAction}
+              onReviewTestSuiteAction={() => {
+                void chat.reviewTestSuite();
+              }}
+              canReviewTestSuite={chat.canReviewTestSuite}
+              isReviewingTestSuite={chat.isRunningWorkflowAction}
             />
           </div>
 
@@ -366,6 +423,7 @@ export default function ChatPanel({
                     });
                   }}
                   style={helperButtonStyle}
+                  disabled={isBusy}
                 >
                   Use Refined Requirement
                 </button>
@@ -376,7 +434,7 @@ export default function ChatPanel({
               ref={inputRef}
               mode={chat.mode}
               value={chat.input}
-              disabled={chat.isSending}
+              disabled={isBusy}
               resolvedTheme={resolvedTheme}
               onChangeAction={(next: string) => chat.setInput(next)}
               onSendAction={() => {
@@ -390,7 +448,6 @@ export default function ChatPanel({
         </div>
       </div>
 
-      {/* Right: Strategy panel */}
       {isCoachSession ? (
         <div style={strategyPanelWrapStyle}>
           <StrategyPanel chat={chat} resolvedTheme={resolvedTheme} />

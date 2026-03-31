@@ -29,7 +29,7 @@ export type ReviewResult = {
  * WHY: Coach mode returns structured guidance that the UI can safely render.
  * It is not a bulk test-case generator.
  */
-export type RiskLevel = "Low" | "Med" | "High";
+export type RiskLevel = "Low" | "Medium" | "High";
 
 export type CoachRisk = {
   risk: string;

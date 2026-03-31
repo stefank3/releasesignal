@@ -3,9 +3,9 @@
 // Coach-mode formatting and continuity helpers moved out of route.ts
 // so the API route stays focused on orchestration.
 
+import { parseGuidedAnswerToRefinedRequirement } from "@/lib/chat/artifact";
 import type { SessionArtifact } from "@/lib/chat/artifact";
 import type { CoachResult } from "@/lib/framework/reviewSchema";
-import { parseGuidedAnswerToRefinedRequirement } from "@/lib/chat/artifact";
 
 function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): string[] {
   const out: string[] = [];
@@ -25,6 +25,23 @@ function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): str
   }
 
   return out;
+}
+
+function pushListSection(lines: string[], title: string, values?: string[], max = 12): void {
+  if (!Array.isArray(values) || values.length === 0) return;
+
+  const cleaned = values
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .slice(0, max);
+
+  if (cleaned.length === 0) return;
+
+  lines.push(title);
+  for (const value of cleaned) {
+    lines.push(`- ${value}`);
+  }
+  lines.push("");
 }
 
 /**
@@ -64,19 +81,62 @@ export function buildCoachContinuityArtifactPatch(args: {
     args.coach.highSignalApproach.goals[0] ||
     "";
 
-  const riskFocus = uniqueNonEmpty(
-    [...(existing?.riskFocus ?? []), ...args.coach.riskMatrix.map((r) => r.risk)],
+  const acceptanceCriteria = uniqueNonEmpty(
+    [
+      ...(existing?.acceptanceCriteria ?? []),
+      ...args.coach.highSignalApproach.testIdeas
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((idea) => idea.trim()),
+    ],
+    12
+  );
+
+  const functionalScope = uniqueNonEmpty(
+    [
+      ...(existing?.functionalScope ?? []),
+      ...(existing?.inScope ?? []),
+      ...args.coach.highSignalApproach.goals
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((goal) => goal.trim()),
+    ],
+    12
+  );
+
+  const riskAreas = uniqueNonEmpty(
+    [
+      ...(existing?.riskAreas ?? []),
+      ...(existing?.riskFocus ?? []),
+      ...args.coach.riskMatrix.map((r) => r.risk),
+    ],
+    12
+  );
+
+  const edgeCases = uniqueNonEmpty(
+    [
+      ...(existing?.edgeCases ?? []),
+      ...(args.coach.highSignalApproach.minimalRepro ?? []),
+    ],
     12
   );
 
   const patch = {
     objective: objective || undefined,
     context: nextContext || existing?.context || undefined,
+
+    // legacy compatibility
     inScope: existing?.inScope ?? [],
     outOfScope: existing?.outOfScope ?? [],
     integrations: existing?.integrations ?? [],
-    riskFocus,
-    acceptanceCriteria: existing?.acceptanceCriteria ?? [],
+    riskFocus: uniqueNonEmpty([...(existing?.riskFocus ?? []), ...riskAreas], 12),
+
+    // locked M12.8 fields
+    functionalScope,
+    businessRules: existing?.businessRules ?? [],
+    acceptanceCriteria,
+    edgeCases,
+    riskAreas,
   };
 
   const hasMeaningfulPatch =
@@ -86,7 +146,11 @@ export function buildCoachContinuityArtifactPatch(args: {
     patch.outOfScope.length > 0 ||
     patch.integrations.length > 0 ||
     patch.riskFocus.length > 0 ||
-    patch.acceptanceCriteria.length > 0;
+    patch.functionalScope.length > 0 ||
+    patch.businessRules.length > 0 ||
+    patch.acceptanceCriteria.length > 0 ||
+    patch.edgeCases.length > 0 ||
+    patch.riskAreas.length > 0;
 
   return hasMeaningfulPatch ? patch : null;
 }
@@ -131,10 +195,21 @@ export function coachToText(coach: CoachResult): string {
 }
 
 /**
- * Refined coach reply rendered as a reusable technical requirement artifact.
+ * M12.8 review validation lock:
+ * Render the refined requirement ONLY from persisted artifact fields.
+ *
+ * Why:
+ * - deterministic review must operate on the artifact contract, not coach prose
+ * - legacy coach fallbacks were allowing non-canonical strategy content to appear
+ *   as a "Refined Technical Requirement"
+ * - visible requirement output must match the same source of truth used by review
+ *
+ * NOTE:
+ * We intentionally keep the coach argument in the signature for compatibility with
+ * existing call sites, but it is no longer used here.
  */
 export function coachToTechnicalRequirementText(
-  coach: CoachResult,
+  _coach: CoachResult,
   artifact: SessionArtifact | null
 ): string {
   const lines: string[] = [];
@@ -147,79 +222,27 @@ export function coachToTechnicalRequirementText(
     lines.push("Objective:");
     lines.push(rr.objective.trim());
     lines.push("");
-  } else if (coach.highSignalApproach.goals[0]) {
-    lines.push("Objective:");
-    lines.push(coach.highSignalApproach.goals[0]);
-    lines.push("");
   }
 
   if (rr?.context?.trim()) {
     lines.push("Context / Constraints:");
     lines.push(rr.context.trim());
     lines.push("");
-  } else if (coach.assumptions.length) {
-    lines.push("Context / Assumptions:");
-    for (const a of coach.assumptions.slice(0, 6)) lines.push(`- ${a}`);
-    lines.push("");
   }
 
-  if (rr?.inScope?.length) {
-    lines.push("In Scope:");
-    for (const s of rr.inScope.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
+  const functionalScope =
+    rr?.functionalScope?.length ? rr.functionalScope : rr?.inScope;
+  const riskAreas =
+    rr?.riskAreas?.length ? rr.riskAreas : rr?.riskFocus;
 
-  if (rr?.outOfScope?.length) {
-    lines.push("Out of Scope:");
-    for (const s of rr.outOfScope.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.integrations?.length) {
-    lines.push("Integrations:");
-    for (const s of rr.integrations.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (rr?.acceptanceCriteria?.length) {
-    lines.push("Acceptance Criteria:");
-    for (const s of rr.acceptanceCriteria.slice(0, 12)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  lines.push("Primary Risk Focus:");
-  if (rr?.riskFocus?.length) {
-    for (const s of rr.riskFocus.slice(0, 12)) lines.push(`- ${s}`);
-  } else {
-    for (const r of coach.riskMatrix.slice(0, 6)) {
-      lines.push(`- ${r.risk} (Likelihood: ${r.likelihood}, Impact: ${r.impact})`);
-    }
-  }
-  lines.push("");
-
-  lines.push("Recommended Test Strategy:");
-  for (const g of coach.highSignalApproach.goals.slice(0, 6)) lines.push(`- ${g}`);
-  lines.push("");
-
-  lines.push("High-Signal Test Ideas:");
-  for (const t of coach.highSignalApproach.testIdeas.slice(0, 12)) lines.push(`- ${t}`);
-  lines.push("");
-
-  if (coach.highSignalApproach.minimalRepro?.length) {
-    lines.push("Minimal Repro / Diagnostic Path:");
-    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
-    lines.push("");
-  }
-
-  if (coach.optionalClarifications?.length) {
-    lines.push("Optional Clarifications:");
-    for (const q of coach.optionalClarifications.slice(0, 3)) lines.push(`- ${q}`);
-    lines.push("");
-  }
+  pushListSection(lines, "Functional Scope:", functionalScope);
+  pushListSection(lines, "Business Rules:", rr?.businessRules);
+  pushListSection(lines, "Acceptance Criteria:", rr?.acceptanceCriteria);
+  pushListSection(lines, "Edge Cases / Negative Paths:", rr?.edgeCases);
+  pushListSection(lines, "Risk Areas:", riskAreas);
 
   return lines.join("\n").trim();
 }
-
 /**
  * Artifact is meaningful only if at least one refinedRequirement field has content.
  */
@@ -236,17 +259,29 @@ export function hasMeaningfulRefinedRequirement(
   return (
     hasText(rr.objective) ||
     hasText(rr.context) ||
+    hasList(rr.functionalScope) ||
+    hasList(rr.businessRules) ||
+    hasList(rr.acceptanceCriteria) ||
+    hasList(rr.edgeCases) ||
+    hasList(rr.riskAreas) ||
     hasList(rr.inScope) ||
     hasList(rr.outOfScope) ||
     hasList(rr.integrations) ||
-    hasList(rr.riskFocus) ||
-    hasList(rr.acceptanceCriteria)
+    hasList(rr.riskFocus)
   );
 }
 
+/**
+ * M12.8 lock:
+ * Return technical requirement text only when a meaningful refined requirement
+ * artifact actually exists.
+ *
+ * guidedAnswer by itself is not enough, because that can still occur before the
+ * artifact is in a stable canonical shape.
+ */
 export function shouldReturnTechnicalRequirement(args: {
   guidedAnswer: boolean;
   artifact: SessionArtifact | null;
 }): boolean {
-  return args.guidedAnswer || hasMeaningfulRefinedRequirement(args.artifact);
+  return hasMeaningfulRefinedRequirement(args.artifact);
 }

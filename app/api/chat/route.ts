@@ -52,6 +52,7 @@ import { getOpenAITraceFromError } from "@/lib/openai";
 import {
   applyGuidedArtifactPatch,
   persistGeneratedSuiteArtifact,
+  persistReviewArtifact,
   type RequirementRefinedTelemetry,
 } from "@/lib/server/chat/artifactUpdateService";
 
@@ -61,6 +62,11 @@ import {
   buildReviewFlowResponse,
   type ReviewFlowTelemetry,
 } from "@/lib/server/chat/reviewFlowService";
+
+import {
+  buildNextBatchBaseline,
+  validateNextBatchPrerequisites,
+} from "@/lib/server/chat/testSuiteService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,6 +79,227 @@ function isExplicitRegenerationRequest(message: string): boolean {
   return /\b(regenerate|restart|start over|from scratch|fresh start|ignore previous|ignore the previous|discard previous|replace the suite|new suite)\b/i.test(
     message
   );
+}
+
+/*
+---------------------------------------------------------
+M12.9 WORKFLOW ACTIONS
+---------------------------------------------------------
+Artifact-driven workspace actions are explicit request contracts.
+*/
+type WorkflowAction =
+  | "generate_tests_from_requirement"
+  | "generate_next_batch_of_tests"
+  | "review_test_suite"
+  | "refine_requirement"
+  | "regenerate_suite";
+
+function getWorkflowAction(body: unknown): WorkflowAction | null {
+  if (!body || typeof body !== "object") return null;
+
+  const candidate = (body as { action?: unknown }).action;
+
+  if (
+    candidate === "generate_tests_from_requirement" ||
+    candidate === "generate_next_batch_of_tests" ||
+    candidate === "review_test_suite" ||
+    candidate === "refine_requirement" ||
+    candidate === "regenerate_suite"
+  ) {
+    return candidate;
+  }
+
+  return null;
+}
+
+function hasPersistedTestSuiteArtifact(
+  artifact: SessionArtifact | null
+): boolean {
+  return !!(
+    artifact?.testSuite &&
+    Array.isArray(artifact.testSuite.cases) &&
+    artifact.testSuite.cases.length > 0
+  );
+}
+
+function getRefinedRequirementText(
+  artifact: SessionArtifact | null
+): string | null {
+  const refined = artifact?.refinedRequirement;
+  if (!refined) return null;
+
+  const lines: string[] = [];
+
+  const pushSection = (title: string, value: unknown) => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      const items = value
+        .map((item) => String(item ?? "").trim())
+        .filter(Boolean);
+
+      if (!items.length) return;
+
+      lines.push(`${title}:`);
+      for (const item of items) {
+        lines.push(`- ${item}`);
+      }
+      lines.push("");
+      return;
+    }
+
+    const text = String(value).trim();
+    if (!text) return;
+
+    lines.push(`${title}:`);
+    lines.push(text);
+    lines.push("");
+  };
+
+  pushSection("Objective", refined.objective);
+  pushSection("Functional Scope", refined.functionalScope);
+  pushSection("Business Rules", refined.businessRules);
+  pushSection("Acceptance Criteria", refined.acceptanceCriteria);
+  pushSection("Non-Functional Constraints", refined.nonFunctionalConstraints);
+  pushSection("Test Strategy Hooks", refined.testStrategyHooks);
+  pushSection("Minimal Repro Scenarios", refined.minimalReproScenarios);
+
+  const knownKeys = new Set([
+    "objective",
+    "functionalScope",
+    "businessRules",
+    "acceptanceCriteria",
+    "nonFunctionalConstraints",
+    "testStrategyHooks",
+    "minimalReproScenarios",
+  ]);
+
+  const entries = Object.entries(refined as Record<string, unknown>).filter(
+    ([key, value]) => !knownKeys.has(key) && value != null
+  );
+
+  for (const [key, value] of entries) {
+    const label = key
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .replace(/^\w/, (c) => c.toUpperCase());
+
+    pushSection(label, value);
+  }
+
+  const text = lines.join("\n").trim();
+  return text || null;
+}
+
+function buildWorkflowActionMessage(args: {
+  workflowAction: WorkflowAction;
+  sessionArtifact: SessionArtifact | null;
+}): string {
+  if (args.workflowAction === "review_test_suite") {
+    return "Review the persisted test suite artifact for this session.";
+  }
+
+  if (args.workflowAction === "generate_tests_from_requirement") {
+    return "Generate a test suite from the persisted refined requirement artifact for this session.";
+  }
+
+  if (args.workflowAction === "refine_requirement") {
+    const requirementText =
+      getRefinedRequirementText(args.sessionArtifact) ??
+      "No persisted refined requirement artifact available.";
+
+    return [
+      "Refine the persisted refined requirement artifact for this session.",
+      "",
+      "Use ONLY the persisted refined requirement artifact as the source of truth.",
+      "Improve clarity, structure, completeness, edge coverage, and testability.",
+      "Do NOT change the product intent.",
+      "Do NOT invent new scope unless it is clearly implied by the existing artifact.",
+      "Return a refined technical requirement in the locked requirement format.",
+      "",
+      "PERSISTED REFINED REQUIREMENT:",
+      requirementText,
+    ].join("\n");
+  }
+
+    if (args.workflowAction === "regenerate_suite") {
+    const prerequisite = validateNextBatchPrerequisites({
+      requirementText: getRefinedRequirementText(args.sessionArtifact),
+      existingSuite: args.sessionArtifact?.testSuite ?? null,
+    });
+
+    if (!prerequisite.ok) {
+      return "Improve and regenerate the persisted test suite from the persisted artifacts for this session.";
+    }
+
+    const baseline = buildNextBatchBaseline({
+      requirementText: prerequisite.requirementText,
+      existingSuite: prerequisite.existingSuite,
+    });
+
+    const existingSuiteSummary =
+      baseline.suiteSummary.trim() || "No existing test case headers available.";
+
+    return [
+      "Improve and regenerate the persisted test suite from the persisted artifacts for this session.",
+      "",
+      "Use ONLY the persisted refined requirement artifact and the persisted existing test suite artifact.",
+      "This is a REPLACEMENT action, not an append action.",
+      "Rewrite the suite as a cleaner, stronger replacement version.",
+      "Preserve valid coverage intent, but remove overlap, duplicates, near-duplicates, and repetitive coverage.",
+      "Consolidate similar tests into the strongest single test where appropriate.",
+      "Prefer a tighter, cleaner suite over a larger suite.",
+      "Improve weak tests by making steps clearer, expected results sharper, and coverage more purposeful.",
+      "Keep meaningful positive, negative, and edge coverage, but do NOT multiply similar scenarios unnecessarily.",
+      "Do NOT append a next batch.",
+      "Do NOT continue numbering from the old suite.",
+      "Generate a full replacement suite starting clean from TC-001.",
+      "Do NOT include malformed, partial, truncated, or placeholder test cases.",
+      "Every test case must include: Type, Priority, Preconditions, Test Steps, and Expected Result.",
+      "Return STRICT plain-text test cases in the locked TC format only.",
+      "",
+      "PERSISTED REFINED REQUIREMENT:",
+      baseline.requirementText,
+      "",
+      `EXISTING SUITE COUNT: ${baseline.existingCount}`,
+      "EXISTING TEST CASE HEADERS:",
+      existingSuiteSummary,
+    ].join("\n");
+  }
+
+  const prerequisite = validateNextBatchPrerequisites({
+    requirementText: getRefinedRequirementText(args.sessionArtifact),
+    existingSuite: args.sessionArtifact?.testSuite ?? null,
+  });
+
+  if (!prerequisite.ok) {
+    return "Generate additional tests from the persisted artifacts for this session.";
+  }
+
+  const baseline = buildNextBatchBaseline({
+    requirementText: prerequisite.requirementText,
+    existingSuite: prerequisite.existingSuite,
+  });
+
+  const existingSuiteSummary =
+    baseline.suiteSummary.trim() || "No existing test case headers available.";
+
+  return [
+    "Generate the next batch of tests from the persisted artifacts for this session.",
+    "",
+    "Use ONLY the persisted refined requirement artifact and the persisted existing test suite artifact.",
+    "Generate only NEW tests that expand coverage for uncovered requirement areas, missing edge cases, or missing negative paths.",
+    "Do NOT regenerate the full suite.",
+    "Do NOT duplicate or restate existing tests.",
+    "Return STRICT plain-text test cases in the locked TC format only.",
+    "",
+    "PERSISTED REFINED REQUIREMENT:",
+    baseline.requirementText,
+    "",
+    `EXISTING SUITE COUNT: ${baseline.existingCount}`,
+    "EXISTING TEST CASE HEADERS:",
+    existingSuiteSummary,
+  ].join("\n");
 }
 
 export async function POST(req: Request) {
@@ -146,6 +373,8 @@ export async function POST(req: Request) {
       weakInput,
       explicitRegenerationRequest,
     } = parsedRequest;
+
+    const workflowAction = getWorkflowAction(body);
 
     modeForMetric = clientMode;
 
@@ -244,8 +473,6 @@ export async function POST(req: Request) {
     sessionArtifact = sessionState.sessionArtifact;
     artifactUpdatedAtIso = sessionState.artifactUpdatedAtIso;
 
-    // M11:
-    // Structured session lifecycle classification returned by sessionStore.
     const sessionLifecycle = sessionState.sessionLifecycle;
 
     log("info", {
@@ -263,16 +490,10 @@ export async function POST(req: Request) {
         explicitRegenerationRequest,
         hasArtifact: !!sessionArtifact,
         hasTestSuite: !!getTestSuite(sessionArtifact),
+        workflowAction,
       },
     });
 
-    /*
-    ---------------------------------------------------------
-    M11 TELEMETRY
-    ---------------------------------------------------------
-    Session lifecycle event emitted immediately after successful
-    session load/create resolution.
-    */
     await emitTelemetryEvent({
       eventType: sessionLifecycle,
       auth0Sub,
@@ -284,6 +505,7 @@ export async function POST(req: Request) {
         clientMode,
         hasArtifact: !!sessionArtifact,
         hasTestSuite: !!getTestSuite(sessionArtifact),
+        workflowAction,
       },
     });
 
@@ -319,6 +541,349 @@ export async function POST(req: Request) {
 
     /*
     ---------------------------------------------------------
+    M12.9 WORKFLOW ACTIONS
+    ---------------------------------------------------------
+    Artifact-driven workspace actions bypass freeform prompt handling.
+    They resolve from persisted artifact state only.
+    */
+    if (workflowAction) {
+      if (
+        (workflowAction === "generate_tests_from_requirement" ||
+          workflowAction === "refine_requirement") &&
+        !hasMeaningfulRefinedRequirement(sessionArtifact)
+      ) {
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: modeForMetric,
+          status: 400,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return buildServerErrorResponse({
+          requestId,
+          errorMessage:
+            workflowAction === "refine_requirement"
+              ? "Refine Requirement action requires a persisted refined requirement artifact."
+              : "Generate Tests action requires a persisted refined requirement artifact.",
+          rateMeta,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        });
+      }
+
+      if (workflowAction === "generate_next_batch_of_tests") {
+        const nextBatchPrerequisite = validateNextBatchPrerequisites({
+          requirementText: getRefinedRequirementText(sessionArtifact),
+          existingSuite: sessionArtifact?.testSuite ?? null,
+        });
+
+        if (!nextBatchPrerequisite.ok) {
+          await recordChatMetric({
+            nowMs: Date.now(),
+            mode: modeForMetric,
+            status: 400,
+            latencyMs: Date.now() - startTime,
+          });
+
+          return buildServerErrorResponse({
+            requestId,
+            errorMessage: nextBatchPrerequisite.message,
+            rateMeta,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
+          });
+        }
+      }
+
+      if (
+        workflowAction === "review_test_suite" &&
+        !hasPersistedTestSuiteArtifact(sessionArtifact)
+      ) {
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: modeForMetric,
+          status: 400,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return buildServerErrorResponse({
+          requestId,
+          errorMessage:
+            "Review Test Suite action requires a persisted test suite artifact.",
+          rateMeta,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        });
+      }
+
+      const actionExecutionMode: "coach" | "review" =
+        workflowAction === "review_test_suite" ? "review" : "coach";
+
+       const actionWantCases =
+        workflowAction === "generate_tests_from_requirement" ||
+        workflowAction === "generate_next_batch_of_tests" ||
+        workflowAction === "regenerate_suite";
+
+      const actionMessage = buildWorkflowActionMessage({
+        workflowAction,
+        sessionArtifact,
+      });
+
+      const { messagesForModel } = buildPromptPayload({
+        message: actionMessage,
+        weakInput: false,
+        guidedAnswer: false,
+        wantCases: actionWantCases,
+        executionMode: actionExecutionMode,
+        explicitRegenerationRequest: false,
+        sessionArtifact,
+      });
+
+      const completionResult = await executeChatCompletion({
+        messagesForModel,
+        executionMode: actionExecutionMode,
+        wantCases: actionWantCases,
+      });
+
+      const rawReply = completionResult.rawReply;
+
+      const promptTokens = completionResult.promptTokens;
+      const completionTokens = completionResult.completionTokens;
+      const totalTokens = completionResult.totalTokens;
+
+      const usage = {
+        promptTokens,
+        completionTokens,
+        totalTokens,
+      };
+
+      const creditsCharged = completionResult.creditsCharged;
+      const costUsd = completionResult.costUsd;
+      const costEur = completionResult.costEur;
+
+      openaiModel = completionResult.model;
+      openaiLatencyMs = completionResult.openaiLatencyMs;
+
+      const postModel = await runPostModelFlow({
+        rawReply,
+        executionMode: actionExecutionMode,
+        wantCases: actionWantCases,
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        message: actionMessage,
+        guidedAnswer: false,
+        weakInput: false,
+        explicitRegenerationRequest: false,
+        workflowAction,
+      });
+
+      const coachParsed: CoachResult | null = postModel.coachParsed;
+      const replyTextForUser: string | null = postModel.replyTextForUser;
+
+      const reviewObj: ReviewResult | null = postModel.reviewObj;
+      const reviewRepaired = postModel.reviewRepaired;
+
+      const assistantContentToStore = postModel.assistantContentToStore;
+
+      const nextTestSuiteArtifact: TestSuiteArtifact | null =
+        postModel.nextTestSuiteArtifact;
+      const testSuiteAddedCount = postModel.testSuiteAddedCount;
+
+      sessionArtifact = postModel.sessionArtifact;
+      artifactUpdatedAtIso = postModel.artifactUpdatedAtIso;
+
+      const casesFlowTelemetry: CasesFlowTelemetry | null =
+        postModel.casesFlowTelemetry;
+
+      const suiteAnalysis = postModel.suiteAnalysis;
+      const workflowGuidance = postModel.workflowGuidance;
+
+      const shouldEmitCasesTelemetry =
+        !!casesFlowTelemetry && !casesFlowTelemetry.metadata.unchanged;
+
+      const reviewFlowTelemetry: ReviewFlowTelemetry | null =
+        postModel.reviewFlowTelemetry;
+
+      let creditsRemaining: number | null = null;
+
+      try {
+        creditsRemaining = await persistAssistantWithBillingTx({
+          sessionId,
+          auth0Sub,
+          requestId,
+          creditsCharged,
+          assistantContentToStore,
+          promptTokens,
+          completionTokens,
+        });
+      } catch (e) {
+        if (e instanceof InsufficientCreditsError) {
+          await recordChatMetric({
+            nowMs: Date.now(),
+            mode: actionExecutionMode,
+            status: 402,
+            latencyMs: Date.now() - startTime,
+          });
+
+          return buildInsufficientCreditsBillingResponse({
+            requestId,
+            clientMode: actionExecutionMode,
+            sessionId,
+            creditsCharged,
+            creditsRemaining: orgState.wallet?.balance ?? 0,
+            usage,
+            rateMeta,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
+          });
+        }
+
+        throw e;
+      }
+
+      const suitePersistResult = await persistGeneratedSuiteArtifact({
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        nextTestSuiteArtifact,
+      });
+
+      sessionArtifact = suitePersistResult.sessionArtifact;
+      artifactUpdatedAtIso = suitePersistResult.artifactUpdatedAtIso;
+
+      const reviewPersistResult = await persistReviewArtifact({
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        reviewResult: reviewObj,
+      });
+
+      sessionArtifact = reviewPersistResult.sessionArtifact;
+      artifactUpdatedAtIso = reviewPersistResult.artifactUpdatedAtIso;
+
+      if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
+        await emitTelemetryEvent({
+          eventType: casesFlowTelemetry.eventType,
+          auth0Sub,
+          organizationId: orgId,
+          sessionId,
+          workflowStage: "test_design",
+          status: "success",
+          durationMs: Date.now() - startTime,
+          tokenInput: promptTokens,
+          tokenOutput: completionTokens,
+          tokenTotal: totalTokens,
+          artifactType: casesFlowTelemetry.artifactType,
+          artifactVersion: casesFlowTelemetry.artifactVersion,
+          metadataJson: casesFlowTelemetry.metadata,
+        });
+      }
+
+      if (actionExecutionMode === "review") {
+        if (reviewFlowTelemetry) {
+          await emitTelemetryEvent({
+            eventType: reviewFlowTelemetry.eventType,
+            auth0Sub,
+            organizationId: orgId,
+            sessionId,
+            workflowStage: "test_review",
+            status:
+              reviewFlowTelemetry.eventType === "review_failed"
+                ? "failed"
+                : "success",
+            durationMs: Date.now() - startTime,
+            tokenInput: promptTokens,
+            tokenOutput: completionTokens,
+            tokenTotal: totalTokens,
+            artifactType: reviewFlowTelemetry.artifactType,
+            metadataJson: reviewFlowTelemetry.metadata,
+          });
+        }
+
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: actionExecutionMode,
+          status: 200,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return buildReviewFlowResponse({
+          requestId,
+          clientMode: actionExecutionMode,
+          rawReply,
+          sessionId,
+          creditsCharged,
+          creditsRemaining,
+          usage,
+          rateMeta,
+          reviewObj,
+          reviewRepaired,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        });
+      }
+
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: actionExecutionMode,
+        status: 200,
+        latencyMs: Date.now() - startTime,
+      });
+
+      log("info", {
+        event: "chat_completed",
+        requestId,
+        auth0Sub,
+        orgId,
+        sessionId,
+        mode: clientMode,
+        durationMs: Date.now() - startTime,
+        model: openaiModel,
+        openaiLatencyMs,
+        retryCount,
+        meta: {
+          workflowAction,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          creditsCharged,
+          creditsRemaining,
+          costUsd,
+          costEur,
+          testSuiteAddedCount,
+          hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
+          hasTestSuite: !!getTestSuite(sessionArtifact),
+          suiteTelemetrySuppressed:
+            !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
+          suiteDuplicateGroups: casesFlowTelemetry?.metadata.duplicateGroups ?? 0,
+          suiteUnchanged: casesFlowTelemetry?.metadata.unchanged ?? false,
+          suiteCoverageLevel: suiteAnalysis?.coverageLevel,
+          suiteDuplicateRisk: suiteAnalysis?.duplicateRisk,
+          suiteMissingAreasCount: suiteAnalysis?.missingAreas.length ?? 0,
+          workflowRecommendedAction: workflowGuidance?.recommendedAction,
+          workflowGuidanceMessage: workflowGuidance?.message,
+        },
+      });
+
+      return buildChatSuccessResponse({
+        requestId,
+        clientMode: actionExecutionMode,
+        reply: replyTextForUser ?? "No reply returned",
+        coach: coachParsed,
+        sessionId,
+        creditsCharged,
+        creditsRemaining,
+        usage,
+        rateMeta,
+        workflowGuidance,
+        artifact: sessionArtifact,
+        artifactUpdatedAt: artifactUpdatedAtIso,
+      });
+    }
+
+    /*
+    ---------------------------------------------------------
     PERSIST USER MESSAGE
     ---------------------------------------------------------
     */
@@ -333,8 +898,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     GUIDED ARTIFACT PATCH
     ---------------------------------------------------------
-    SURGICAL CHANGE (M10 Pass 11):
-    Guided-answer artifact patching now lives in artifactUpdateService.ts.
     */
     const guidedArtifactResult = await applyGuidedArtifactPatch({
       sessionId,
@@ -347,19 +910,9 @@ export async function POST(req: Request) {
     sessionArtifact = guidedArtifactResult.sessionArtifact;
     artifactUpdatedAtIso = guidedArtifactResult.artifactUpdatedAtIso;
 
-    // M11:
-    // Structured refinement telemetry returned only when a guided
-    // requirement patch was successfully parsed and persisted.
     const requirementTelemetry: RequirementRefinedTelemetry | null =
       guidedArtifactResult.requirementTelemetry;
 
-    /*
-    ---------------------------------------------------------
-    M11 TELEMETRY
-    ---------------------------------------------------------
-    Requirement refinement event emitted only when a guided
-    requirement patch was successfully persisted.
-    */
     if (requirementTelemetry) {
       await emitTelemetryEvent({
         eventType: requirementTelemetry.eventType,
@@ -423,8 +976,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     POST-MODEL FLOW ORCHESTRATION
     ---------------------------------------------------------
-    SURGICAL CHANGE (M10 Pass 11):
-    route.ts no longer coordinates review / coach / cases branches inline.
     */
     const postModel = await runPostModelFlow({
       rawReply,
@@ -437,6 +988,7 @@ export async function POST(req: Request) {
       guidedAnswer,
       weakInput,
       explicitRegenerationRequest,
+      workflowAction,
     });
 
     const coachParsed: CoachResult | null = postModel.coachParsed;
@@ -454,15 +1006,15 @@ export async function POST(req: Request) {
     sessionArtifact = postModel.sessionArtifact;
     artifactUpdatedAtIso = postModel.artifactUpdatedAtIso;
 
-    // M11:
-    // Structured telemetry classification comes from the cases flow service
-    // via post-model orchestration. The route adds request/session/token context.
     const casesFlowTelemetry: CasesFlowTelemetry | null =
       postModel.casesFlowTelemetry;
 
-    // M11:
-    // Structured review telemetry classification comes from the review flow
-    // via post-model orchestration. The route adds request/session/token context.
+    const suiteAnalysis = postModel.suiteAnalysis;
+    const workflowGuidance = postModel.workflowGuidance;
+
+    const shouldEmitCasesTelemetry =
+      !!casesFlowTelemetry && !casesFlowTelemetry.metadata.unchanged;
+
     const reviewFlowTelemetry: ReviewFlowTelemetry | null =
       postModel.reviewFlowTelemetry;
 
@@ -512,8 +1064,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     SUITE ARTIFACT PERSIST
     ---------------------------------------------------------
-    SURGICAL CHANGE (M10 Pass 11):
-    Cases suite persistence now lives in artifactUpdateService.ts.
     */
     const suitePersistResult = await persistGeneratedSuiteArtifact({
       sessionId,
@@ -527,12 +1077,20 @@ export async function POST(req: Request) {
 
     /*
     ---------------------------------------------------------
-    M11 TELEMETRY
+    REVIEW ARTIFACT PERSIST
     ---------------------------------------------------------
-    First persisted telemetry event path for Cases mode.
-    Emit only after the suite artifact has been persisted successfully.
     */
-    if (casesFlowTelemetry) {
+    const reviewPersistResult = await persistReviewArtifact({
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      reviewResult: reviewObj,
+    });
+
+    sessionArtifact = reviewPersistResult.sessionArtifact;
+    artifactUpdatedAtIso = reviewPersistResult.artifactUpdatedAtIso;
+
+    if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
       await emitTelemetryEvent({
         eventType: casesFlowTelemetry.eventType,
         auth0Sub,
@@ -556,13 +1114,6 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     */
     if (executionMode === "review") {
-      /*
-      ---------------------------------------------------------
-      M11 TELEMETRY
-      ---------------------------------------------------------
-      Review telemetry emitted for both successful and failed
-      review parsing outcomes.
-      */
       if (reviewFlowTelemetry) {
         await emitTelemetryEvent({
           eventType: reviewFlowTelemetry.eventType,
@@ -636,6 +1187,15 @@ export async function POST(req: Request) {
         testSuiteAddedCount,
         hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
         hasTestSuite: !!getTestSuite(sessionArtifact),
+        suiteTelemetrySuppressed:
+          !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
+        suiteDuplicateGroups: casesFlowTelemetry?.metadata.duplicateGroups ?? 0,
+        suiteUnchanged: casesFlowTelemetry?.metadata.unchanged ?? false,
+        suiteCoverageLevel: suiteAnalysis?.coverageLevel,
+        suiteDuplicateRisk: suiteAnalysis?.duplicateRisk,
+        suiteMissingAreasCount: suiteAnalysis?.missingAreas.length ?? 0,
+        workflowRecommendedAction: workflowGuidance?.recommendedAction,
+        workflowGuidanceMessage: workflowGuidance?.message,
       },
     });
 
@@ -649,6 +1209,7 @@ export async function POST(req: Request) {
       creditsRemaining,
       usage,
       rateMeta,
+      workflowGuidance,
       artifact: sessionArtifact,
       artifactUpdatedAt: artifactUpdatedAtIso,
     });

@@ -1,4 +1,4 @@
- // lib/server/chat/responseBuilder.ts
+// lib/server/chat/responseBuilder.ts
 // M10 extraction:
 // Centralize API response shaping so route.ts focuses on orchestration only.
 
@@ -7,6 +7,7 @@ import { responseHeaders } from "@/lib/chat/http";
 import type { RateMeta, ClientMode } from "@/lib/chat/chatTypes";
 import type { SessionArtifact } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
+import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 
 type UsagePayload = {
   promptTokens: number;
@@ -204,6 +205,7 @@ export function buildChatSuccessResponse(args: {
   creditsRemaining: number | null;
   usage: UsagePayload;
   rateMeta: RateMeta | null;
+  workflowGuidance?: WorkflowGuidance | null;
 } & SharedArtifactPayload) {
   return NextResponse.json(
     {
@@ -216,6 +218,7 @@ export function buildChatSuccessResponse(args: {
       creditsRemaining: args.creditsRemaining,
       usage: args.usage,
       rate: args.rateMeta,
+      workflowGuidance: args.workflowGuidance ?? undefined,
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
     },

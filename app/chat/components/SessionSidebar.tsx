@@ -17,12 +17,16 @@
 // - add theme-aware sidebar rendering
 // - remove dark-only styling assumptions
 // - fix washed-out / shadowed appearance in light mode
+//
+// CHANGE (M12 Strategy + History triage):
+// - render sidebar entries as workspace cards, not stage-specific cards
+// - stage is now informational only
+// - avoid implying separate Strategy/Test Design/Test Review sessions
 
 "use client";
 
 import React from "react";
 import type { Mode, SessionListItem } from "../chat.types";
-import { ModeBadge } from "./ChatUI";
 
 function sessionGlyph(title: string) {
   const t = (title || "New chat").trim();
@@ -30,6 +34,12 @@ function sessionGlyph(title: string) {
   const a = (parts[0]?.[0] ?? "N").toUpperCase();
   const b = (parts[1]?.[0] ?? "").toUpperCase();
   return (a + b).slice(0, 2);
+}
+
+function getStageLabel(mode: Mode): string {
+  if (mode === "review") return "Current stage: Test Review";
+  if (mode === "cases") return "Current stage: Test Design";
+  return "Current stage: Strategy";
 }
 
 function PinnedBadge({
@@ -138,6 +148,37 @@ function SuiteBadge({
   );
 }
 
+function WorkspaceBadge({
+  resolvedTheme = "dark",
+}: {
+  resolvedTheme?: "light" | "dark";
+}) {
+  const isDark = resolvedTheme === "dark";
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "2px 7px",
+        borderRadius: 999,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.16)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.05)" : "rgba(15,23,42,0.04)",
+        color: isDark ? "#fff" : "#0f172a",
+        fontSize: 10,
+        fontWeight: 900,
+        whiteSpace: "nowrap",
+      }}
+      title="Shared QA workspace session"
+    >
+      Workspace
+    </span>
+  );
+}
+
 type Props = {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -164,9 +205,6 @@ type Props = {
   onCancelRenameAction: () => void;
 
   onDeleteSessionAction: (sessionId: string) => void;
-
-  // M10 UI:
-  // Resolved by page shell and passed down to keep chrome consistent.
   resolvedTheme?: "light" | "dark";
 };
 
@@ -226,7 +264,7 @@ export default function SessionSidebar({
       >
         {!sidebarCollapsed ? (
           <div style={{ color: sidebarText, fontWeight: 900, fontSize: 14 }}>
-            History
+            Workspaces
           </div>
         ) : (
           <div />
@@ -246,9 +284,7 @@ export default function SessionSidebar({
             fontWeight: 950,
             cursor: "pointer",
             width: sidebarCollapsed ? 44 : "auto",
-            boxShadow: isDark
-              ? "none"
-              : "0 4px 10px rgba(15,23,42,0.05)",
+            boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
           }}
         >
           {sidebarCollapsed ? "＋" : "New"}
@@ -262,7 +298,7 @@ export default function SessionSidebar({
           const preview =
             s.lastMessage?.role === "user"
               ? s.lastMessage.content.slice(0, 80)
-              : "Open to view";
+              : "Open workspace";
           const effectiveMode = (s.effectiveMode ?? s.mode) as Mode;
           const hasPinned = !!s.hasPinnedRequirement;
 
@@ -274,7 +310,7 @@ export default function SessionSidebar({
               <button
                 key={s.id}
                 onClick={() => onSelectSessionAction(s.id, effectiveMode)}
-                title={`${title} • ${effectiveMode.toUpperCase()}${hasPinned ? " • PINNED" : ""}${hasSuite ? " • SUITE" : ""}`}
+                title={`${title}${hasPinned ? " • PINNED" : ""}${hasSuite ? " • SUITE" : ""}`}
                 style={{
                   width: "100%",
                   borderRadius: 14,
@@ -297,9 +333,7 @@ export default function SessionSidebar({
                   padding: 9,
                   display: "grid",
                   placeItems: "center",
-                  boxShadow: isDark
-                    ? "none"
-                    : "0 4px 10px rgba(15,23,42,0.04)",
+                  boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.04)",
                 }}
               >
                 <div
@@ -360,9 +394,7 @@ export default function SessionSidebar({
                     ? "rgba(255,255,255,0.05)"
                     : "rgba(255,255,255,0.78)",
                 overflow: "hidden",
-                boxShadow: isDark
-                  ? "none"
-                  : "0 6px 14px rgba(15,23,42,0.04)",
+                boxShadow: isDark ? "none" : "0 6px 14px rgba(15,23,42,0.04)",
               }}
             >
               <button
@@ -399,7 +431,19 @@ export default function SessionSidebar({
                     {title}
                   </div>
 
-                  <ModeBadge mode={effectiveMode} compact />
+                  <WorkspaceBadge resolvedTheme={resolvedTheme} />
+                </div>
+
+                <div
+                  style={{
+                    fontSize: 10,
+                    opacity: 0.68,
+                    marginTop: 5,
+                    lineHeight: 1.35,
+                    color: sidebarText,
+                  }}
+                >
+                  {getStageLabel(effectiveMode)}
                 </div>
 
                 <div
@@ -562,7 +606,7 @@ export default function SessionSidebar({
 
         {sessions.length === 0 && !sidebarCollapsed && (
           <div style={{ color: subtleText, fontSize: 12, lineHeight: 1.45 }}>
-            No sessions yet. Send your first message to create one.
+            No workspaces yet. Send your first message to create one.
           </div>
         )}
 

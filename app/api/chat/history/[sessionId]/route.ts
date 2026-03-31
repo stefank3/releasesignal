@@ -64,6 +64,24 @@ function looksLikeCasesPlainText(text: string): boolean {
   return false;
 }
 
+function looksLikeReviewJson(text: string): boolean {
+  try {
+    const obj = JSON.parse(String(text ?? ""));
+
+    return !!(
+      obj &&
+      typeof obj.score === "number" &&
+      obj.breakdown &&
+      typeof obj.breakdown.businessRelevance === "number" &&
+      Array.isArray(obj.riskGaps) &&
+      Array.isArray(obj.antiPatterns) &&
+      Array.isArray(obj.improvements)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Compute the UI-effective mode for a session.
  *
@@ -76,13 +94,20 @@ function computeEffectiveMode(args: {
   persistedMode: Mode;
   lastMessage: null | { role: string; content: string };
 }): Mode {
-  // ✅ FIX: persisted "review" and persisted "cases" must remain stable.
-  // Otherwise, a short/non-structured last assistant message can flip the UI mode.
-  if (args.persistedMode === "review") return "review";
-  if (args.persistedMode === "cases") return "cases";
-
   const last = args.lastMessage;
-  if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) return "cases";
+
+  // BUG FIX (M12 Strategy + History triage):
+  // For shared workspace sessions, the detail history route must not force
+  // the UI back to persisted review/cases mode. Restore mode from the latest
+  // assistant content signal first, and fall back to coach when content is
+  // not explicitly review/cases.
+  if (last?.role === "assistant" && looksLikeReviewJson(last.content)) {
+    return "review";
+  }
+
+  if (last?.role === "assistant" && looksLikeCasesPlainText(last.content)) {
+    return "cases";
+  }
 
   return "coach";
 }
@@ -266,4 +291,86 @@ export async function DELETE(_req: NextRequest, ctx: Ctx) {
   }
 
   return NextResponse.json({ ok: true }, { status: 200 });
+}
+
+/**
+ * PATCH /api/chat/history/:sessionId/artifact
+ *
+ * M12 Step 4B:
+ * Persist updated SessionArtifact (e.g. editable test suite)
+ *
+ * SECURITY:
+ * - Requires Auth0 session
+ * - Only allows updating own session
+ */
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const authSession = await auth0.getSession();
+  const sub = authSession?.user?.sub;
+
+  if (!sub) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const params = await resolveParams(ctx);
+  const sessionId = params?.sessionId;
+
+  if (!sessionId) {
+    return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
+  }
+
+  let body: unknown;
+
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const artifact = (body as any)?.artifact;
+
+  if (!artifact || typeof artifact !== "object") {
+    return NextResponse.json(
+      { error: "Invalid artifact payload" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    // SECURITY: ownership check
+    const existing = await prisma.chatSession.findFirst({
+      where: { id: sessionId, auth0Sub: sub },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const updated = await prisma.chatSession.update({
+      where: { id: sessionId },
+      data: {
+        artifactJson: artifact,
+        artifactUpdatedAt: new Date(),
+      },
+      select: {
+        artifactJson: true,
+        artifactUpdatedAt: true,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      artifact: readArtifact(updated.artifactJson),
+      artifactUpdatedAt: updated.artifactUpdatedAt
+        ? updated.artifactUpdatedAt.toISOString()
+        : null,
+    });
+  } catch (err) {
+    console.error("Artifact update failed", err);
+
+    return NextResponse.json(
+      { error: "Failed to update artifact" },
+      { status: 500 }
+    );
+  }
 }

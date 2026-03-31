@@ -16,10 +16,38 @@
 // - add theme-aware message rendering
 // - remove hardcoded dark-only text/surface assumptions
 // - keep behavior unchanged while supporting light / dark / system themes
+//
+// CHANGE (M12 Step 4B):
+// - add callback bridge for editable test suite persistence
+// - allow CasesTextCard to send edited cases back into session orchestration
+// - keep this component as a prop-passing layer only
+//
+// CHANGE (M12 Step 6 / UI hardening):
+// - surface deterministic workflow guidance for cases responses
+// - tolerate multiple message payload shapes while UI mapping is stabilized
+//
+// M12.9 CHANGE:
+// - wire contextual workflow action props into RequirementCard / CasesTextCard
+// - keep this component as a rendering + prop-passing layer only
+// - no workflow logic or API calls here
+//
+// M12.9 Phase 2 CHANGE:
+// - wire Generate Next Batch props into CasesTextCard
+// - wire Refine Requirement props into RequirementCard
+// - keep visibility/enablement parent-driven
+// - no workflow execution in this component
+//
+// M12.9 Phase 2 CHANGE:
+// - wire Improve / Regenerate Suite props into CasesTextCard
+// - keep it distinct from Generate Next Batch
+// - keep parent-driven visibility/enablement
 
 "use client";
 
 import React from "react";
+
+import type { TestCase } from "@/lib/chat/artifact";
+import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 
 import type { ChatItem, Mode, ReviewResult, CasesResult } from "../chat.types";
 
@@ -127,20 +155,170 @@ function tryFormatCoachJson(text: string): string | null {
   }
 }
 
+function isWorkflowGuidance(value: unknown): value is WorkflowGuidance {
+  if (!value || typeof value !== "object") return false;
+
+  const candidate = value as Partial<WorkflowGuidance>;
+
+  return (
+    typeof candidate.message === "string" &&
+    typeof candidate.rationale === "string" &&
+    (candidate.recommendedAction === "generate_more_cases" ||
+      candidate.recommendedAction === "review_suite" ||
+      candidate.recommendedAction === "refine_requirement" ||
+      candidate.recommendedAction === "ready_for_execution")
+  );
+}
+
+function getWorkflowGuidance(item: ChatItem): WorkflowGuidance | null {
+  const candidate = item as ChatItem & {
+    workflowGuidance?: unknown;
+    payload?: { workflowGuidance?: unknown };
+    response?: { workflowGuidance?: unknown };
+    data?: { workflowGuidance?: unknown };
+    meta?: { workflowGuidance?: unknown };
+  };
+
+  const possibleValues = [
+    candidate.workflowGuidance,
+    candidate.payload?.workflowGuidance,
+    candidate.response?.workflowGuidance,
+    candidate.data?.workflowGuidance,
+    candidate.meta?.workflowGuidance,
+  ];
+
+  for (const value of possibleValues) {
+    if (isWorkflowGuidance(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function formatRecommendedAction(
+  action: WorkflowGuidance["recommendedAction"]
+): string {
+  switch (action) {
+    case "generate_more_cases":
+      return "Generate more test cases";
+    case "review_suite":
+      return "Review the suite";
+    case "refine_requirement":
+      return "Refine the requirement";
+    case "ready_for_execution":
+      return "Ready for execution";
+    default:
+      return "Next step";
+  }
+}
+
+function WorkflowGuidanceCard(args: {
+  guidance: WorkflowGuidance;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        border: isDark
+          ? "1px solid rgba(120,180,255,0.28)"
+          : "1px solid rgba(37,99,235,0.20)",
+        borderRadius: 14,
+        padding: 12,
+        background: isDark
+          ? "rgba(120,180,255,0.08)"
+          : "rgba(37,99,235,0.05)",
+        color: isDark ? "#ffffff" : "#0f172a",
+      }}
+    >
+      <div
+        style={{ fontSize: 11, opacity: 0.72, fontWeight: 900, marginBottom: 6 }}
+      >
+        Assistant Insight
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 900, marginBottom: 6 }}>
+        {formatRecommendedAction(args.guidance.recommendedAction)}
+      </div>
+
+      <div style={{ fontSize: 12, lineHeight: 1.5, opacity: 0.9 }}>
+        {args.guidance.message}
+      </div>
+
+      <div
+        style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72, marginTop: 8 }}
+      >
+        Why: {args.guidance.rationale}
+      </div>
+    </div>
+  );
+}
+
+type Props = {
+  items: ChatItem[];
+  mode: Mode;
+  resolvedTheme?: "light" | "dark";
+
+  onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
+
+  onGenerateTestsAction?: () => void;
+  canGenerateTests?: boolean;
+  isGeneratingTests?: boolean;
+
+  onRefineRequirementAction?: () => void;
+  canRefineRequirement?: boolean;
+  isRefiningRequirement?: boolean;
+
+  onReviewTestSuiteAction?: () => void;
+  canReviewTestSuite?: boolean;
+  isReviewingTestSuite?: boolean;
+
+  onGenerateNextBatchAction?: () => void;
+  canGenerateNextBatch?: boolean;
+  isGeneratingNextBatch?: boolean;
+
+  onRegenerateSuiteAction?: () => void;
+  canRegenerateSuite?: boolean;
+  isRegeneratingSuite?: boolean;
+};
+
 export default function ChatMessageList({
   items,
   mode,
   resolvedTheme = "dark",
-}: {
-  items: ChatItem[];
-  mode: Mode;
-  resolvedTheme?: "light" | "dark";
-}) {
+  onUpdateTestSuiteAction,
+
+  onGenerateTestsAction,
+  canGenerateTests = false,
+  isGeneratingTests = false,
+
+  onRefineRequirementAction,
+  canRefineRequirement = false,
+  isRefiningRequirement = false,
+
+  onReviewTestSuiteAction,
+  canReviewTestSuite = false,
+  isReviewingTestSuite = false,
+
+  onGenerateNextBatchAction,
+  canGenerateNextBatch = false,
+  isGeneratingNextBatch = false,
+
+  onRegenerateSuiteAction,
+  canRegenerateSuite = false,
+  isRegeneratingSuite = false,
+}: Props) {
   const isDark = resolvedTheme === "dark";
 
-  const emptyStateColor = isDark ? "rgba(255,255,255,0.78)" : "rgba(15,23,42,0.78)";
+  const emptyStateColor = isDark
+    ? "rgba(255,255,255,0.78)"
+    : "rgba(15,23,42,0.78)";
   const requestIdColor = isDark ? "#ffffff" : "#0f172a";
-  const unknownColor = isDark ? "rgba(255,255,255,0.7)" : "rgba(15,23,42,0.7)";
+  const unknownColor = isDark
+    ? "rgba(255,255,255,0.7)"
+    : "rgba(15,23,42,0.7)";
 
   if (items.length === 0) {
     return (
@@ -169,7 +347,6 @@ export default function ChatMessageList({
         const reqPart = it.requestId ?? "no-rid";
         const key = `${it.kind}-${rolePart}-${reqPart}-${idx}`;
 
-        // ---------------- TEXT ----------------
         if (it.kind === "text") {
           const isUser = it.role === "user";
 
@@ -180,7 +357,6 @@ export default function ChatMessageList({
 
           const isRequirement =
             !isUser &&
-            mode === "coach" &&
             typeof textToShow === "string" &&
             textToShow.startsWith("Refined Technical Requirement");
 
@@ -214,13 +390,21 @@ export default function ChatMessageList({
               >
                 {isRequirement ? (
                   <div style={{ width: "100%", maxWidth: "100%" }}>
-                    <RequirementCard text={textToShow} />
+                    <RequirementCard
+                      text={textToShow}
+                      onGenerateTestsAction={onGenerateTestsAction}
+                      canGenerateTests={canGenerateTests}
+                      isGeneratingTests={isGeneratingTests}
+                      onRefineRequirementAction={onRefineRequirementAction}
+                      canRefineRequirement={canRefineRequirement}
+                      isRefiningRequirement={isRefiningRequirement}
+                    />
                   </div>
                 ) : (
                   <div style={bubbleStyle}>
                     {textToShow}
 
-                    {it.requestId && (
+                    {it.requestId ? (
                       <div
                         style={{
                           marginTop: 10,
@@ -230,7 +414,7 @@ export default function ChatMessageList({
                       >
                         requestId: {it.requestId.slice(0, 8)}…
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -250,7 +434,6 @@ export default function ChatMessageList({
           );
         }
 
-        // ---------------- REVIEW ----------------
         if (it.kind === "review") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
@@ -262,9 +445,9 @@ export default function ChatMessageList({
           );
         }
 
-        // ---------------- CASES TEXT ----------------
         if (it.kind === "casesText") {
           const isPersistedSuite = looksLikePersistedTestSuiteText(it.text);
+          const workflowGuidance = getWorkflowGuidance(it);
 
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
@@ -280,12 +463,31 @@ export default function ChatMessageList({
                 </div>
               ) : null}
 
-              <CasesTextCard text={it.text} />
+              {workflowGuidance ? (
+                <WorkflowGuidanceCard
+                  guidance={workflowGuidance}
+                  resolvedTheme={resolvedTheme}
+                />
+              ) : null}
+
+              <CasesTextCard
+                text={it.text}
+                resolvedTheme={resolvedTheme}
+                onUpdateTestSuiteAction={onUpdateTestSuiteAction}
+                onReviewTestSuiteAction={onReviewTestSuiteAction}
+                canReviewTestSuite={canReviewTestSuite}
+                isReviewingTestSuite={isReviewingTestSuite}
+                onGenerateNextBatchAction={onGenerateNextBatchAction}
+                canGenerateNextBatch={canGenerateNextBatch}
+                isGeneratingNextBatch={isGeneratingNextBatch}
+                onRegenerateSuiteAction={onRegenerateSuiteAction}
+                canRegenerateSuite={canRegenerateSuite}
+                isRegeneratingSuite={isRegeneratingSuite}
+              />
             </div>
           );
         }
 
-        // ---------------- LEGACY CASES ----------------
         if (it.kind === "casesLegacy") {
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
@@ -294,7 +496,6 @@ export default function ChatMessageList({
           );
         }
 
-        // ---------------- ERROR ----------------
         if (it.kind === "error") {
           return (
             <div
@@ -311,7 +512,9 @@ export default function ChatMessageList({
                 color: isDark ? "#ffffff" : "#7f1d1d",
               }}
             >
-              <div style={{ fontWeight: 950, marginBottom: 10 }}>{it.title}</div>
+              <div style={{ fontWeight: 950, marginBottom: 10 }}>
+                {it.title}
+              </div>
               <pre
                 style={{
                   margin: 0,
@@ -327,7 +530,10 @@ export default function ChatMessageList({
         }
 
         return (
-          <div key={key} style={{ fontSize: 12, opacity: 0.7, color: unknownColor }}>
+          <div
+            key={key}
+            style={{ fontSize: 12, opacity: 0.7, color: unknownColor }}
+          >
             Unknown message type
           </div>
         );

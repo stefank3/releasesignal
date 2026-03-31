@@ -2,7 +2,62 @@
 
 import React, { useEffect, useState } from "react";
 
-export default function RequirementCard({ text }: { text: string }) {
+// M12.9 CHANGE:
+// Keep RequirementCard presentational-only.
+// It may expose contextual actions, but execution logic must stay in the hook/container.
+//
+// M12.9 Phase 2 CHANGE:
+// - add Refine Requirement action surface
+// - keep visibility/enablement parent-driven
+// - do not move workflow execution into the card
+type RequirementCardProps = {
+  text: string;
+  onGenerateTestsAction?: () => void;
+  canGenerateTests?: boolean;
+  isGeneratingTests?: boolean;
+
+  onRefineRequirementAction?: () => void;
+  canRefineRequirement?: boolean;
+  isRefiningRequirement?: boolean;
+};
+
+function SmallButton(args: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={args.onClick}
+      disabled={args.disabled}
+      style={{
+        padding: "6px 10px",
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.20)",
+        background: args.disabled
+          ? "rgba(255,255,255,0.03)"
+          : "rgba(255,255,255,0.10)",
+        color: "#fff",
+        fontSize: 12,
+        fontWeight: 900,
+        cursor: args.disabled ? "not-allowed" : "pointer",
+        opacity: args.disabled ? 0.55 : 1,
+      }}
+    >
+      {args.children}
+    </button>
+  );
+}
+
+export default function RequirementCard({
+  text,
+  onGenerateTestsAction,
+  canGenerateTests = false,
+  isGeneratingTests = false,
+  onRefineRequirementAction,
+  canRefineRequirement = false,
+  isRefiningRequirement = false,
+}: RequirementCardProps) {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,6 +75,10 @@ export default function RequirementCard({ text }: { text: string }) {
     }
   }
 
+  const showGenerateTestsAction = typeof onGenerateTestsAction === "function";
+  const showRefineRequirementAction =
+    typeof onRefineRequirementAction === "function";
+
   return (
     <div
       style={{
@@ -32,24 +91,63 @@ export default function RequirementCard({ text }: { text: string }) {
         gap: 12,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
         <div style={{ fontWeight: 950 }}>Technical Requirement</div>
 
-        <button
-          onClick={copy}
+        <div
           style={{
-            padding: "6px 10px",
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.20)",
-            background: "rgba(255,255,255,0.06)",
-            color: "#fff",
-            fontSize: 12,
-            fontWeight: 900,
-            cursor: "pointer",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
           }}
         >
-          Copy
-        </button>
+          {showRefineRequirementAction ? (
+            <SmallButton
+              onClick={() => {
+                onRefineRequirementAction?.();
+              }}
+              disabled={!canRefineRequirement || isRefiningRequirement}
+            >
+              {isRefiningRequirement ? "Refining…" : "Refine Requirement"}
+            </SmallButton>
+          ) : null}
+
+          {showGenerateTestsAction ? (
+            <SmallButton
+              onClick={() => {
+                onGenerateTestsAction?.();
+              }}
+              disabled={!canGenerateTests || isGeneratingTests}
+            >
+              {isGeneratingTests ? "Generating…" : "Generate Tests"}
+            </SmallButton>
+          ) : null}
+
+          <button
+            onClick={copy}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.20)",
+              background: "rgba(255,255,255,0.06)",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Copy
+          </button>
+        </div>
       </div>
 
       {toast ? (

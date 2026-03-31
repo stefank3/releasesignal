@@ -9,6 +9,11 @@
 // We do NOT emit telemetry directly from this file yet.
 // Instead, this file returns structured lifecycle information so the route
 // can emit telemetry with full request/user/org context.
+//
+// M12 Step 7A CHANGE:
+// - remove legacy mode-locked session behavior
+// - allow the same workspace session to be reused across coach / cases / review
+// - treat persisted mode as last active mode, not as a hard session lock
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -56,7 +61,7 @@ export async function loadOrCreateSession(args: {
       response: ReturnType<typeof sessionModeMismatchResponse>;
     }
 > {
-  const { auth0Sub, requestId, body, clientMode, rateMeta } = args;
+  const { auth0Sub, requestId, body, clientMode } = args;
 
   let sessionId = body?.sessionId;
   let sessionArtifact: SessionArtifact | null = null;
@@ -78,23 +83,18 @@ export async function loadOrCreateSession(args: {
       // fall through into the create/upsert path below.
       sessionId = undefined;
     } else {
-      // CHANGE: normalize once and use it consistently
-      // (comparison + mismatch payload).
+      // M12 Step 7A:
+      // Persisted mode is now treated as the last active mode for this
+      // workspace session, not as a hard lock.
       const persistedMode = existing.mode
         ? normalizePersistedMode(existing.mode)
         : null;
 
-      if (persistedMode && persistedMode !== clientMode) {
-        return {
-          ok: false,
-          response: sessionModeMismatchResponse({
-            requestId,
-            rateMeta,
-            // CHANGE: return normalized values so UI messaging is stable.
-            sessionMode: persistedMode,
-            requestedMode: clientMode,
-          }),
-        };
+      if (persistedMode !== clientMode) {
+        await prisma.chatSession.update({
+          where: { id: existing.id },
+          data: { mode: clientMode },
+        });
       }
 
       sessionArtifact = readArtifact(existing.artifactJson);
@@ -126,26 +126,14 @@ export async function loadOrCreateSession(args: {
         artifactJson: Prisma.DbNull,
         artifactUpdatedAt: null,
       },
-      update: {},
+      update: {
+        // M12 Step 7A:
+        // If the same logical workspace session is reopened in another mode,
+        // keep the session and update the last active mode.
+        mode: clientMode,
+      },
       select: { id: true, mode: true, artifactJson: true, artifactUpdatedAt: true },
     });
-
-    // CHANGE: normalize once; use normalized in mismatch payload too.
-    const persistedMode = sessionRow.mode
-      ? normalizePersistedMode(sessionRow.mode)
-      : null;
-
-    if (persistedMode && persistedMode !== clientMode) {
-      return {
-        ok: false,
-        response: sessionModeMismatchResponse({
-          requestId,
-          rateMeta,
-          sessionMode: persistedMode,
-          requestedMode: clientMode,
-        }),
-      };
-    }
 
     sessionId = sessionRow.id;
     sessionArtifact = readArtifact(sessionRow.artifactJson);

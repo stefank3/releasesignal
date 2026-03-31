@@ -2,6 +2,18 @@
 // M10 extraction:
 // Centralize request/auth/preflight guard logic so route.ts
 // focuses on orchestration instead of validation plumbing.
+//
+// M12.9 CHANGE:
+// - allow artifact-driven workflow action requests without freeform message
+// - preserve existing validation for normal prompt-driven requests
+// - derive mode/execution from action when action is present
+// - keep guards deterministic and request-focused
+//
+// M12.9 Phase 2 CHANGE:
+// - recognize generate_next_batch_of_tests as a valid workflow action
+// - recognize refine_requirement as a valid workflow action
+// - treat next-batch as cases/coaching execution without requiring message
+// - treat refine_requirement as coach/non-cases execution without requiring message
 
 import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
@@ -40,6 +52,13 @@ type MetricRecorder = (args: {
   rateLimited?: boolean;
 }) => Promise<void>;
 
+type WorkflowAction =
+  | "generate_tests_from_requirement"
+  | "generate_next_batch_of_tests"
+  | "review_test_suite"
+  | "refine_requirement"
+  | "regenerate_suite";
+  
 type AuthResult =
   | {
       ok: false;
@@ -98,6 +117,22 @@ type RateLimitResult =
       ok: true;
       rateMeta: RateMeta;
     };
+
+function getWorkflowAction(body: ChatBody): WorkflowAction | null {
+  const candidate = (body as { action?: unknown })?.action;
+
+  if (
+    candidate === "generate_tests_from_requirement" ||
+    candidate === "generate_next_batch_of_tests" ||
+    candidate === "review_test_suite" ||
+    candidate === "refine_requirement" ||
+    candidate === "regenerate_suite"
+  ) {
+    return candidate;
+  }
+
+  return null;
+}
 
 export async function requireAuthenticatedUser(args: {
   requestId: string;
@@ -186,6 +221,35 @@ export async function parseAndValidateChatRequest(args: {
     return {
       ok: false,
       response: buildInvalidJsonBodyResponse(args.requestId),
+    };
+  }
+
+  const workflowAction = getWorkflowAction(body);
+
+  if (workflowAction) {
+    const clientMode: ClientMode =
+      workflowAction === "review_test_suite"
+        ? "review"
+        : normalizeClientMode(body?.mode);
+
+const wantCases =
+  workflowAction === "generate_tests_from_requirement" ||
+  workflowAction === "generate_next_batch_of_tests" ||
+  workflowAction === "regenerate_suite";
+
+const wantReview = workflowAction === "review_test_suite";
+const executionMode: ExecutionMode = wantReview ? "review" : "coach";
+
+    return {
+      ok: true,
+      body,
+      message: "",
+      clientMode,
+      wantCases,
+      wantReview,
+      executionMode,
+      weakInput: false,
+      explicitRegenerationRequest: false,
     };
   }
 
@@ -372,8 +436,14 @@ export async function enforceRateLimit(args: {
     auth0Sub: args.auth0Sub,
     orgId: args.orgId,
     mode: args.clientMode,
+    errorType: "rate_limited",
+    errorMessage: "Chat rate limit exceeded",
     durationMs: Date.now() - args.startTime,
-    meta: { resetSeconds },
+    meta: {
+      limit: CHAT_RATE_LIMIT.limit,
+      remaining,
+      resetSeconds,
+    },
   });
 
   await args.recordChatMetric({
