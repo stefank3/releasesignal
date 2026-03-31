@@ -610,7 +610,11 @@ export function useChatSession(): UseChatSessionReturn {
       setSessionArtifact(nextArtifact);
       setArtifactUpdatedAt(nowIso);
 
-      await fetchJSON(`/api/chat/history/${activeSessionId}`, {
+      const data = await fetchJSON<{
+        ok: boolean;
+        artifact?: SessionArtifact | null;
+        artifactUpdatedAt?: string | null;
+      }>(`/api/chat/history/${activeSessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -618,7 +622,14 @@ export function useChatSession(): UseChatSessionReturn {
         }),
       });
 
+      if (data?.artifact) {
+        setSessionArtifact(data.artifact);
+        setArtifactUpdatedAt(data.artifactUpdatedAt ?? nowIso);
+      }
+
+      await loadSessionMessages(activeSessionId, true, activeSessionMode);
       void loadSessions(true);
+      
     } catch (err) {
       console.error("Failed to update test suite", err);
     }
