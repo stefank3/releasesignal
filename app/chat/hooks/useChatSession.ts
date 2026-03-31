@@ -29,6 +29,12 @@
 // - add artifact-driven workflow action contract for Refine Requirement
 // - add artifact-driven workflow action contract for Improve / Regenerate Suite
 // - keep action execution separate from freeform send() flow
+//
+// M12.9 Phase 2 FIX:
+// - prevent stale history payloads from overwriting a newer saved artifact
+// - keep PATCH response as authoritative after editable suite save
+// - guard reset-time rehydration using artifactUpdatedAt
+// - avoid immediate post-save full history reset reload that can re-pin stale suite state
 
 "use client";
 
@@ -206,6 +212,30 @@ function looksLikeRefinedRequirementText(text: string): boolean {
   );
 }
 
+function shouldApplyIncomingArtifact(args: {
+  currentArtifactUpdatedAt: string | null;
+  incomingArtifactUpdatedAt: string | null;
+}): boolean {
+  const { currentArtifactUpdatedAt, incomingArtifactUpdatedAt } = args;
+
+  if (!currentArtifactUpdatedAt) {
+    return true;
+  }
+
+  if (!incomingArtifactUpdatedAt) {
+    return false;
+  }
+
+  const currentMs = Date.parse(currentArtifactUpdatedAt);
+  const incomingMs = Date.parse(incomingArtifactUpdatedAt);
+
+  if (Number.isNaN(currentMs) || Number.isNaN(incomingMs)) {
+    return incomingArtifactUpdatedAt >= currentArtifactUpdatedAt;
+  }
+
+  return incomingMs >= currentMs;
+}
+
 export function useChatSession(): UseChatSessionReturn {
   const [mode, setMode] = useState<Mode>("coach");
   const [input, setInput] = useState("");
@@ -261,6 +291,17 @@ export function useChatSession(): UseChatSessionReturn {
   const [artifactUpdatedAt, setArtifactUpdatedAt] = useState<string | null>(
     null
   );
+
+  const currentSessionArtifactRef = useRef<SessionArtifact | null>(null);
+  const currentArtifactUpdatedAtRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    currentSessionArtifactRef.current = sessionArtifact;
+  }, [sessionArtifact]);
+
+  useEffect(() => {
+    currentArtifactUpdatedAtRef.current = artifactUpdatedAt;
+  }, [artifactUpdatedAt]);
 
   /*
   ---------------------------------------------------------
@@ -393,10 +434,28 @@ export function useChatSession(): UseChatSessionReturn {
       }>(url.toString());
 
       const historyArtifact = data.artifact ?? null;
+      const historyArtifactUpdatedAt = data.artifactUpdatedAt ?? null;
+
+      const shouldApplyHistoryArtifact = reset
+        ? shouldApplyIncomingArtifact({
+            currentArtifactUpdatedAt: currentArtifactUpdatedAtRef.current,
+            incomingArtifactUpdatedAt: historyArtifactUpdatedAt,
+          })
+        : true;
+
+      const effectiveHistoryArtifact =
+        reset && !shouldApplyHistoryArtifact
+          ? currentSessionArtifactRef.current
+          : historyArtifact;
+
+      const effectiveHistoryArtifactUpdatedAt =
+        reset && !shouldApplyHistoryArtifact
+          ? currentArtifactUpdatedAtRef.current
+          : historyArtifactUpdatedAt;
 
       if (reset) {
-        setSessionArtifact(historyArtifact);
-        setArtifactUpdatedAt(data.artifactUpdatedAt ?? null);
+        setSessionArtifact(effectiveHistoryArtifact);
+        setArtifactUpdatedAt(effectiveHistoryArtifactUpdatedAt);
         setWorkflowActionError(null);
       }
 
@@ -412,7 +471,7 @@ export function useChatSession(): UseChatSessionReturn {
       const { mapped, effectiveSessionMode } = mapHistoryItems({
         items: data.items,
         sessionMode: nextSessionMode,
-        sessionArtifact: historyArtifact,
+        sessionArtifact: effectiveHistoryArtifact,
       });
 
       if (reset) {
@@ -627,9 +686,7 @@ export function useChatSession(): UseChatSessionReturn {
         setArtifactUpdatedAt(data.artifactUpdatedAt ?? nowIso);
       }
 
-      await loadSessionMessages(activeSessionId, true, activeSessionMode);
       void loadSessions(true);
-      
     } catch (err) {
       console.error("Failed to update test suite", err);
     }

@@ -26,6 +26,15 @@
 // - keep it distinct from Next Batch
 // - keep parent-driven visibility/enablement
 // - do not introduce workflow logic into the card
+//
+// M12.9 Phase 2 FIX:
+// - persist edited suite when user clicks Done on a case edit session
+// - keep top Save as fallback, but make edit completion the primary persistence path
+// - block Done-close when validation issues exist or save fails
+//
+// DEBUG TEMP:
+// - add explicit logs for Done click and save guard path
+// - confirm whether save exits early before calling parent persistence callback
 
 "use client";
 
@@ -74,7 +83,7 @@ type Props = {
 
 function SmallButton(args: {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick: () => void | Promise<void>;
   disabled?: boolean;
   resolvedTheme: "light" | "dark";
 }) {
@@ -83,7 +92,9 @@ function SmallButton(args: {
   return (
     <button
       type="button"
-      onClick={args.onClick}
+      onClick={() => {
+        void args.onClick();
+      }}
       disabled={args.disabled}
       style={{
         padding: "6px 10px",
@@ -344,23 +355,84 @@ function CasesTextCardContent({
     }
   };
 
-  const saveSuite = async () => {
-    if (!onUpdateTestSuiteAction || !hasStructuredCases || !isDirty) return;
+  const saveSuite = async (): Promise<boolean> => {
+    console.log("saveSuite called", {
+      hasUpdateAction: !!onUpdateTestSuiteAction,
+      hasStructuredCases,
+      isDirty,
+      hasValidationIssues,
+      persistedCasesCount: persistedCases.length,
+      editingId,
+    });
+
+    if (!onUpdateTestSuiteAction || !hasStructuredCases || !isDirty) {
+      console.log("saveSuite early return", {
+        reason: !onUpdateTestSuiteAction
+          ? "missing_update_action"
+          : !hasStructuredCases
+            ? "no_structured_cases"
+            : "not_dirty",
+      });
+      return true;
+    }
 
     if (hasValidationIssues) {
+      console.log("saveSuite blocked by validation", {
+        duplicateGroups: duplicateGroups.map((group) => group.ids),
+        duplicateIds: validation.duplicateIds,
+        malformedHeaderIds: validation.malformedHeaderIds,
+        emptyCaseIds: validation.emptyCaseIds,
+      });
       setToast("Resolve suite issues before saving");
-      return;
+      return false;
     }
 
     try {
       setIsSaving(true);
+      console.log("saveSuite invoking onUpdateTestSuiteAction", {
+        persistedCasesCount: persistedCases.length,
+        caseIds: persistedCases.map((tc) => tc.id),
+      });
       await onUpdateTestSuiteAction(persistedCases);
+      console.log("saveSuite onUpdateTestSuiteAction resolved");
       setToast("Saved ✓");
-      setEditingId(null);
-    } catch {
+      return true;
+    } catch (error) {
+      console.log("saveSuite failed", { error });
       setToast("Save failed");
+      return false;
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleEditToggle = async (id: string) => {
+    const isCurrentlyEditing = editingId === id;
+
+    console.log("Done/Edit clicked", {
+      id,
+      isCurrentlyEditing,
+      isDirty,
+      hasValidationIssues,
+      editingId,
+    });
+
+    if (!isCurrentlyEditing) {
+      setEditingId(id);
+      return;
+    }
+
+    // M12.9 Phase 2 FIX:
+    // Clicking Done should persist the edited suite immediately so users do not
+    // need to scroll back to the top Save action on long suites.
+    const didSave = await saveSuite();
+    console.log("handleEditToggle save result", {
+      id,
+      didSave,
+    });
+
+    if (didSave) {
+      setEditingId(null);
     }
   };
 
@@ -369,6 +441,12 @@ function CasesTextCardContent({
     field: "title" | "body",
     value: string
   ) => {
+    console.log("updateCaseField", {
+      id,
+      field,
+      valueLength: value.length,
+    });
+
     setEditedCases((prev) =>
       prev.map((c) => {
         if (c.id !== id) return c;
@@ -435,7 +513,7 @@ function CasesTextCardContent({
               onClick={() => {
                 onRegenerateSuiteAction?.();
               }}
-              disabled={!canRegenerateSuite || isRegeneratingSuite}
+              disabled={!canRegenerateSuite || isRegeneratingSuite || isSaving}
               resolvedTheme={resolvedTheme}
             >
               {isRegeneratingSuite ? "Regenerating..." : "Improve / Regenerate"}
@@ -447,7 +525,7 @@ function CasesTextCardContent({
               onClick={() => {
                 onGenerateNextBatchAction?.();
               }}
-              disabled={!canGenerateNextBatch || isGeneratingNextBatch}
+              disabled={!canGenerateNextBatch || isGeneratingNextBatch || isSaving}
               resolvedTheme={resolvedTheme}
             >
               {isGeneratingNextBatch ? "Generating..." : "Generate Next Batch"}
@@ -459,21 +537,25 @@ function CasesTextCardContent({
               onClick={() => {
                 onReviewTestSuiteAction?.();
               }}
-              disabled={!canReviewTestSuite || isReviewingTestSuite}
+              disabled={!canReviewTestSuite || isReviewingTestSuite || isSaving}
               resolvedTheme={resolvedTheme}
             >
               {isReviewingTestSuite ? "Reviewing..." : "Review Test Suite"}
             </SmallButton>
           ) : null}
 
-          <SmallButton onClick={copyText} resolvedTheme={resolvedTheme}>
+          <SmallButton
+            onClick={copyText}
+            disabled={isSaving}
+            resolvedTheme={resolvedTheme}
+          >
             Copy
           </SmallButton>
 
           {hasStructuredCases ? (
             <SmallButton
-              onClick={() => {
-                void saveSuite();
+              onClick={async () => {
+                await saveSuite();
               }}
               disabled={
                 !isDirty ||
@@ -648,10 +730,11 @@ function CasesTextCardContent({
                   </div>
 
                   <SmallButton
-                    onClick={() => setEditingId(isEditing ? null : tc.id)}
+                    onClick={() => handleEditToggle(tc.id)}
+                    disabled={isSaving}
                     resolvedTheme={resolvedTheme}
                   >
-                    {isEditing ? "Done" : "Edit"}
+                    {isEditing ? (isSaving ? "Saving..." : "Done") : "Edit"}
                   </SmallButton>
                 </div>
 

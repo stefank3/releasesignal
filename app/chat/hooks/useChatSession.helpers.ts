@@ -130,6 +130,12 @@ function looksLikeJson(s: string) {
   return t.startsWith("{") || t.startsWith("[");
 }
 
+function looksLikePersistedSuiteHeader(text: string): boolean {
+  return /^Test Suite v\d+\s*\nTotal test cases:\s*\d+/i.test(
+    String(text ?? "").trim()
+  );
+}
+
 export function tryFormatCoachJson(text: string): string | null {
   try {
     const obj = JSON.parse(text) as {
@@ -263,6 +269,32 @@ export function artifactHasTestSuiteSignal(artifact: SessionArtifact | null): bo
   );
 }
 
+function getPersistedSuiteText(artifact: SessionArtifact | null): string | null {
+  if (!isRecord(artifact)) return null;
+
+  const testSuite = artifact["testSuite"];
+  if (!isRecord(testSuite)) return null;
+
+  const version =
+    typeof testSuite["version"] === "number" ? testSuite["version"] : null;
+  const cases = Array.isArray(testSuite["cases"]) ? testSuite["cases"] : null;
+
+  if (!version || !cases?.length) return null;
+
+  const caseBodies = cases
+    .map((tc) => {
+      if (!isRecord(tc)) return "";
+      return typeof tc["body"] === "string" ? tc["body"].trim() : "";
+    })
+    .filter(Boolean);
+
+  if (!caseBodies.length) return null;
+
+  return [`Test Suite v${version}`, `Total test cases: ${caseBodies.length}`, "", ...caseBodies]
+    .join("\n")
+    .trim();
+}
+
 export function deriveWorkflowStatus(args: {
   mode: Mode;
   activeSessionMode: Mode;
@@ -352,11 +384,7 @@ function mapAssistantHistoryItem(args: {
     return { kind: "casesLegacy", role: "bot", cases: maybeCasesLegacy };
   }
 
-  // FIX (M12.9 history dedup):
-  // Do NOT replace every assistant message with the persisted suite just because
-  // the workspace currently has a suite artifact. Only classify actual cases
-  // message content as casesText.
-  if (looksLikeCasesPlainText(content)) {
+  if (looksLikeCasesPlainText(content) || looksLikePersistedSuiteHeader(content)) {
     return { kind: "casesText", role: "bot", text: content };
   }
 
@@ -376,7 +404,15 @@ function deriveEffectiveHistorySessionMode(args: {
   sessionMode: Mode;
   sessionArtifact?: SessionArtifact | null;
 }): Mode {
-  const { items, sessionMode } = args;
+  const { items, sessionMode, sessionArtifact } = args;
+
+  if (artifactHasReviewSignal(sessionArtifact ?? null)) {
+    return "review";
+  }
+
+  if (artifactHasTestSuiteSignal(sessionArtifact ?? null)) {
+    return "cases";
+  }
 
   const latestAssistant = [...items].reverse().find((m) => m.role === "assistant");
 
@@ -390,7 +426,8 @@ function deriveEffectiveHistorySessionMode(args: {
 
   if (
     tryParseCasesLegacy(latestAssistant.content) ||
-    looksLikeCasesPlainText(latestAssistant.content)
+    looksLikeCasesPlainText(latestAssistant.content) ||
+    looksLikePersistedSuiteHeader(latestAssistant.content)
   ) {
     return "cases";
   }
@@ -423,6 +460,11 @@ export function mapHistoryItems(args: {
       }, -1)
     : -1;
 
+  const hasPersistedSuiteArtifact = artifactHasTestSuiteSignal(
+    sessionArtifact ?? null
+  );
+  const persistedSuiteText = getPersistedSuiteText(sessionArtifact ?? null);
+
   const mapped: ChatItem[] = items
     .filter((m, index) => {
       if (m.role === "system") return false;
@@ -432,6 +474,18 @@ export function mapHistoryItems(args: {
         m.role === "assistant" &&
         looksLikeRefinedRequirementText(m.content) &&
         index !== latestRequirementAssistantIndex
+      ) {
+        return false;
+      }
+
+      // M12.9 Phase 2 FIX:
+      // When a persisted suite artifact exists, suppress older assistant
+      // suite-text messages from history replay. The canonical suite card
+      // will be injected from the latest artifact after mapping.
+      if (
+        hasPersistedSuiteArtifact &&
+        m.role === "assistant" &&
+        (looksLikeCasesPlainText(m.content) || looksLikePersistedSuiteHeader(m.content))
       ) {
         return false;
       }
@@ -449,6 +503,17 @@ export function mapHistoryItems(args: {
         fallbackMode: effectiveSessionMode,
       });
     });
+
+  // M12.9 Phase 2 FIX:
+  // Inject exactly one canonical suite card from the persisted artifact so
+  // refresh/session replay always reflects the latest saved suite state.
+  if (persistedSuiteText) {
+    mapped.push({
+      kind: "casesText",
+      role: "bot",
+      text: persistedSuiteText,
+    });
+  }
 
   return { mapped, effectiveSessionMode };
 }
