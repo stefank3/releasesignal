@@ -2,6 +2,11 @@
 // M12 Step 1:
 // Extract workflow progression banner from ChatPanel so the panel stays focused
 // on workspace layout and input orchestration.
+//
+// M12.11 CHANGE:
+// - improve first-run clarity without changing workflow behavior
+// - add contextual help/onboarding copy driven only by existing workflow status
+// - keep banner presentational-only and artifact/workflow-state agnostic
 
 "use client";
 
@@ -13,11 +18,67 @@ type Props = {
   resolvedTheme?: "light" | "dark";
 };
 
+function getGuidanceFromStatus(status: WorkflowStatus): {
+  helpLabel: string;
+  helpText: string;
+} {
+  const title = String(status.title ?? "").toLowerCase();
+  const description = String(status.description ?? "").toLowerCase();
+  const nextAction = String(status.nextAction ?? "").toLowerCase();
+  const combined = `${title} ${description} ${nextAction}`;
+
+  // M12.11 NOTE:
+  // Contextual onboarding/help is derived from display status only.
+  // No workflow decisions are made here.
+  if (
+    combined.includes("requirement") ||
+    combined.includes("clarif") ||
+    combined.includes("strategy")
+  ) {
+    return {
+      helpLabel: "How to start",
+      helpText:
+        "Begin by shaping the requirement. Once the requirement is clear, generate the test suite from the saved artifact.",
+    };
+  }
+
+  if (
+    combined.includes("test design") ||
+    combined.includes("generate tests") ||
+    combined.includes("suite")
+  ) {
+    return {
+      helpLabel: "What to do here",
+      helpText:
+        "Use this step to create or refine the test suite. The workspace stays centered on the latest saved requirement and suite.",
+    };
+  }
+
+  if (
+    combined.includes("review") ||
+    combined.includes("score") ||
+    combined.includes("coverage")
+  ) {
+    return {
+      helpLabel: "What to expect",
+      helpText:
+        "Review evaluates the current saved suite against the current saved requirement and highlights gaps, risks, and improvement areas.",
+    };
+  }
+
+  return {
+    helpLabel: "Need a starting point?",
+    helpText:
+      "Follow the next suggested action below. The workspace will keep showing the latest saved artifacts for this session.",
+  };
+}
+
 export default function ChatWorkflowBanner({
   status,
   resolvedTheme = "dark",
 }: Props) {
   const isDark = resolvedTheme === "dark";
+  const guidance = getGuidanceFromStatus(status);
 
   return (
     <div
@@ -31,10 +92,43 @@ export default function ChatWorkflowBanner({
         background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
         color: isDark ? "#ffffff" : "#0f172a",
         display: "grid",
-        gap: 6,
+        gap: 8,
       }}
     >
-      <div style={{ fontSize: 12, fontWeight: 950 }}>{status.title}</div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 950 }}>{status.title}</div>
+
+        {/* M12.11 NOTE:
+            Small onboarding/help marker only.
+            Visual guidance, no state or action ownership. */}
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 900,
+            letterSpacing: 0.3,
+            textTransform: "uppercase",
+            padding: "4px 8px",
+            borderRadius: 999,
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.12)"
+              : "1px solid rgba(15,23,42,0.12)",
+            background: isDark
+              ? "rgba(255,255,255,0.05)"
+              : "rgba(255,255,255,0.7)",
+            opacity: 0.9,
+          }}
+        >
+          Guided workflow
+        </div>
+      </div>
 
       <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.45 }}>
         {status.description}
@@ -42,6 +136,33 @@ export default function ChatWorkflowBanner({
 
       <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
         Next: <strong style={{ fontWeight: 900 }}>{status.nextAction}</strong>
+      </div>
+
+      {/* M12.11 NOTE:
+          First-run/contextual help surface.
+          Content stays presentational and follows the already-resolved status. */}
+      <div
+        style={{
+          marginTop: 2,
+          padding: "8px 10px",
+          borderRadius: 10,
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.08)"
+            : "1px solid rgba(15,23,42,0.08)",
+          background: isDark
+            ? "rgba(255,255,255,0.03)"
+            : "rgba(255,255,255,0.72)",
+          display: "grid",
+          gap: 4,
+        }}
+      >
+        <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.82 }}>
+          {guidance.helpLabel}
+        </div>
+
+        <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
+          {guidance.helpText}
+        </div>
       </div>
     </div>
   );
