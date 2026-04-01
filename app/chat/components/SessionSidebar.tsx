@@ -22,6 +22,12 @@
 // - render sidebar entries as workspace cards, not stage-specific cards
 // - stage is now informational only
 // - avoid implying separate Strategy/Test Design/Test Review sessions
+//
+// M12.10 CHANGE:
+// - improve active workspace visibility in the sidebar
+// - make artifact state easier to scan across many sessions
+// - reduce visual weight of stage text vs. workspace identity
+// - surface latest workspace update more clearly without changing behavior
 
 "use client";
 
@@ -37,9 +43,18 @@ function sessionGlyph(title: string) {
 }
 
 function getStageLabel(mode: Mode): string {
-  if (mode === "review") return "Current stage: Test Review";
-  if (mode === "cases") return "Current stage: Test Design";
-  return "Current stage: Strategy";
+  if (mode === "review") return "Test Review";
+  if (mode === "cases") return "Test Design";
+  return "Strategy";
+}
+
+function formatUpdatedAt(updatedAt?: string | null): string | null {
+  if (!updatedAt) return null;
+
+  const d = new Date(updatedAt);
+  if (Number.isNaN(d.getTime())) return null;
+
+  return d.toLocaleString();
 }
 
 function PinnedBadge({
@@ -49,11 +64,7 @@ function PinnedBadge({
   updatedAt?: string | null;
   resolvedTheme?: "light" | "dark";
 }) {
-  const ts =
-    typeof updatedAt === "string" && updatedAt
-      ? new Date(updatedAt).toLocaleString()
-      : null;
-
+  const ts = formatUpdatedAt(updatedAt);
   const isDark = resolvedTheme === "dark";
 
   return (
@@ -76,7 +87,7 @@ function PinnedBadge({
       }}
     >
       <span aria-hidden="true">📌</span>
-      Pinned
+      Requirement
     </span>
   );
 }
@@ -148,15 +159,22 @@ function SuiteBadge({
   );
 }
 
-function WorkspaceBadge({
+function ReviewBadge({
+  score,
   resolvedTheme = "dark",
 }: {
+  score?: number | null;
   resolvedTheme?: "light" | "dark";
 }) {
   const isDark = resolvedTheme === "dark";
 
   return (
     <span
+      title={
+        typeof score === "number"
+          ? `Persisted review result • ${score}/100`
+          : "Persisted review result exists"
+      }
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -172,11 +190,66 @@ function WorkspaceBadge({
         fontWeight: 900,
         whiteSpace: "nowrap",
       }}
-      title="Shared QA workspace session"
     >
-      Workspace
+      <span aria-hidden="true">📊</span>
+      {typeof score === "number" ? `Review ${score}/100` : "Review"}
     </span>
   );
+}
+
+function WorkspaceBadge({
+  active = false,
+  resolvedTheme = "dark",
+}: {
+  active?: boolean;
+  resolvedTheme?: "light" | "dark";
+}) {
+  const isDark = resolvedTheme === "dark";
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "2px 7px",
+        borderRadius: 999,
+        border: active
+          ? isDark
+            ? "1px solid rgba(74,222,128,0.34)"
+            : "1px solid rgba(22,163,74,0.25)"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.16)"
+            : "1px solid rgba(15,23,42,0.14)",
+        background: active
+          ? isDark
+            ? "rgba(74,222,128,0.10)"
+            : "rgba(22,163,74,0.08)"
+          : isDark
+            ? "rgba(255,255,255,0.05)"
+            : "rgba(15,23,42,0.04)",
+        color: isDark ? "#fff" : "#0f172a",
+        fontSize: 10,
+        fontWeight: 900,
+        whiteSpace: "nowrap",
+      }}
+      title={active ? "Active workspace" : "Shared QA workspace session"}
+    >
+      {active ? "Active workspace" : "Workspace"}
+    </span>
+  );
+}
+
+function getReviewMeta(
+  session: SessionListItem
+): { hasReview: boolean; score: number | null } {
+  const raw = session as unknown as Record<string, unknown>;
+
+  const hasReview = raw["hasReviewArtifact"] === true;
+  const score =
+    typeof raw["reviewScore"] === "number" ? (raw["reviewScore"] as number) : null;
+
+  return { hasReview, score };
 }
 
 type Props = {
@@ -263,8 +336,13 @@ export default function SessionSidebar({
         }}
       >
         {!sidebarCollapsed ? (
-          <div style={{ color: sidebarText, fontWeight: 900, fontSize: 14 }}>
-            Workspaces
+          <div style={{ display: "grid", gap: 2 }}>
+            <div style={{ color: sidebarText, fontWeight: 900, fontSize: 14 }}>
+              Workspaces
+            </div>
+            <div style={{ color: subtleText, fontSize: 11, lineHeight: 1.35 }}>
+              Persisted QA workspace sessions
+            </div>
           </div>
         ) : (
           <div />
@@ -305,26 +383,33 @@ export default function SessionSidebar({
           const suiteMeta = getSuiteMeta(s);
           const hasSuite = suiteMeta.hasSuite;
 
+          const reviewMeta = getReviewMeta(s);
+          const hasReview = reviewMeta.hasReview;
+
+          const updatedAtLabel = formatUpdatedAt(s.artifactUpdatedAt ?? null);
+
           if (sidebarCollapsed) {
             return (
               <button
                 key={s.id}
                 onClick={() => onSelectSessionAction(s.id, effectiveMode)}
-                title={`${title}${hasPinned ? " • PINNED" : ""}${hasSuite ? " • SUITE" : ""}`}
+                title={`${title}${hasPinned ? " • REQUIREMENT" : ""}${hasSuite ? " • SUITE" : ""}${
+                  hasReview ? " • REVIEW" : ""
+                }`}
                 style={{
                   width: "100%",
                   borderRadius: 14,
                   border: active
                     ? isDark
-                      ? "1px solid rgba(255,255,255,0.28)"
-                      : "1px solid rgba(15,23,42,0.20)"
+                      ? "1px solid rgba(74,222,128,0.32)"
+                      : "1px solid rgba(22,163,74,0.22)"
                     : isDark
                       ? "1px solid rgba(255,255,255,0.14)"
                       : "1px solid rgba(15,23,42,0.10)",
                   background: active
                     ? isDark
-                      ? "rgba(255,255,255,0.12)"
-                      : "rgba(15,23,42,0.08)"
+                      ? "rgba(74,222,128,0.12)"
+                      : "rgba(22,163,74,0.08)"
                     : isDark
                       ? "rgba(255,255,255,0.05)"
                       : "rgba(255,255,255,0.72)",
@@ -369,6 +454,7 @@ export default function SessionSidebar({
                 >
                   {hasPinned ? <span title="Pinned requirement">📌</span> : null}
                   {hasSuite ? <span title="Persistent test suite">🧪</span> : null}
+                  {hasReview ? <span title="Persisted review">📊</span> : null}
                 </div>
               </button>
             );
@@ -381,15 +467,15 @@ export default function SessionSidebar({
                 borderRadius: 12,
                 border: active
                   ? isDark
-                    ? "1px solid rgba(255,255,255,0.22)"
-                    : "1px solid rgba(15,23,42,0.16)"
+                    ? "1px solid rgba(74,222,128,0.30)"
+                    : "1px solid rgba(22,163,74,0.22)"
                   : isDark
                     ? "1px solid rgba(255,255,255,0.14)"
                     : "1px solid rgba(15,23,42,0.10)",
                 background: active
                   ? isDark
-                    ? "rgba(255,255,255,0.10)"
-                    : "rgba(15,23,42,0.07)"
+                    ? "rgba(74,222,128,0.08)"
+                    : "rgba(22,163,74,0.06)"
                   : isDark
                     ? "rgba(255,255,255,0.05)"
                     : "rgba(255,255,255,0.78)",
@@ -425,32 +511,55 @@ export default function SessionSidebar({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      maxWidth: 210,
+                      maxWidth: 190,
                     }}
                   >
                     {title}
                   </div>
 
-                  <WorkspaceBadge resolvedTheme={resolvedTheme} />
+                  <WorkspaceBadge
+                    active={active}
+                    resolvedTheme={resolvedTheme}
+                  />
                 </div>
 
                 <div
                   style={{
-                    fontSize: 10,
-                    opacity: 0.68,
-                    marginTop: 5,
-                    lineHeight: 1.35,
-                    color: sidebarText,
+                    display: "grid",
+                    gap: 4,
+                    marginTop: 6,
                   }}
                 >
-                  {getStageLabel(effectiveMode)}
+                  <div
+                    style={{
+                      fontSize: 10,
+                      opacity: 0.68,
+                      lineHeight: 1.35,
+                      color: sidebarText,
+                    }}
+                  >
+                    Stage: {getStageLabel(effectiveMode)}
+                  </div>
+
+                  {updatedAtLabel ? (
+                    <div
+                      style={{
+                        fontSize: 10,
+                        opacity: 0.68,
+                        lineHeight: 1.35,
+                        color: sidebarText,
+                      }}
+                    >
+                      Updated: {updatedAtLabel}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div
                   style={{
                     fontSize: 11,
                     opacity: 0.72,
-                    marginTop: 5,
+                    marginTop: 6,
                     lineHeight: 1.3,
                     minHeight: 28,
                     color: sidebarText,
@@ -459,10 +568,10 @@ export default function SessionSidebar({
                   {preview}
                 </div>
 
-                {hasPinned || hasSuite ? (
+                {hasPinned || hasSuite || hasReview ? (
                   <div
                     style={{
-                      marginTop: 7,
+                      marginTop: 8,
                       display: "flex",
                       alignItems: "center",
                       gap: 6,
@@ -484,10 +593,11 @@ export default function SessionSidebar({
                       />
                     ) : null}
 
-                    {s.artifactUpdatedAt ? (
-                      <span style={{ fontSize: 10, opacity: 0.68, color: sidebarText }}>
-                        {new Date(s.artifactUpdatedAt).toLocaleString()}
-                      </span>
+                    {hasReview ? (
+                      <ReviewBadge
+                        score={reviewMeta.score}
+                        resolvedTheme={resolvedTheme}
+                      />
                     ) : null}
                   </div>
                 ) : null}
