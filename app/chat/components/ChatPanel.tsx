@@ -63,6 +63,11 @@
 // - reduce perceived duplication in the workspace overview area
 // - keep summary + banner both visible but easier to distinguish
 // - preserve existing workflow behavior and rendering order
+//
+// M12.11 CHANGE:
+// - strengthen first-run guidance and empty-state clarity
+// - add presentational onboarding copy around how the workspace is used
+// - keep all workflow/artifact decisions hook-driven and unchanged
 
 "use client";
 
@@ -84,6 +89,8 @@ type Props = {
 
 function OnboardingHint(args: {
   showStrategyHint: boolean;
+  hasWorkspaceArtifacts: boolean;
+  nextAction: string;
   resolvedTheme: "light" | "dark";
 }) {
   const isDark = args.resolvedTheme === "dark";
@@ -100,18 +107,49 @@ function OnboardingHint(args: {
         background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
         color: isDark ? "#ffffff" : "#0f172a",
         display: "grid",
-        gap: 6,
+        gap: 10,
       }}
     >
-      <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.92 }}>
-        Getting started
+      <div style={{ display: "grid", gap: 5 }}>
+        <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.92 }}>
+          Getting started
+        </div>
+
+        <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.5 }}>
+          This workspace helps you clarify a requirement, generate a structured
+          test suite, and review coverage against the saved artifacts.
+        </div>
       </div>
 
-      <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.5 }}>
-        Start by describing the feature or system under test.
-        {args.showStrategyHint
-          ? " Use Strategy to clarify scope and risks, then continue to Test Design."
-          : ""}
+      <div
+        style={{
+          display: "grid",
+          gap: 4,
+          padding: "8px 10px",
+          borderRadius: 10,
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.08)"
+            : "1px solid rgba(15,23,42,0.08)",
+          background: isDark
+            ? "rgba(255,255,255,0.03)"
+            : "rgba(255,255,255,0.72)",
+        }}
+      >
+        <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.82 }}>
+          Start here
+        </div>
+
+        <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
+          Describe the feature, release area, or system under test.
+          {args.showStrategyHint
+            ? " Use Strategy to clarify scope and risks first, then continue into Test Design."
+            : ""}
+        </div>
+
+        <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
+          Next suggested move:{" "}
+          <strong style={{ fontWeight: 900 }}>{args.nextAction}</strong>
+        </div>
       </div>
 
       <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
@@ -121,6 +159,15 @@ function OnboardingHint(args: {
           Clarify the login flow with MFA, identify the main risks, then generate
           a structured test suite.
         </span>
+      </div>
+
+      {/* M12.11 NOTE:
+          Clarifies what users should expect from an empty workspace.
+          Informational only; no state or workflow ownership. */}
+      <div style={{ fontSize: 11, opacity: 0.66, lineHeight: 1.45 }}>
+        {args.hasWorkspaceArtifacts
+          ? "Saved workspace artifacts will remain visible above the chat as you continue."
+          : "No saved requirement, suite, or review exists yet for this workspace."}
       </div>
     </div>
   );
@@ -143,11 +190,42 @@ function WorkspaceSectionLabel(args: {
         color: isDark ? "#ffffff" : "#0f172a",
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 950, opacity: 0.9, letterSpacing: 0.2 }}>
+      <div
+        style={{ fontSize: 11, fontWeight: 950, opacity: 0.9, letterSpacing: 0.2 }}
+      >
         {args.title}
       </div>
       <div style={{ fontSize: 11, opacity: 0.65, lineHeight: 1.4 }}>
         {args.description}
+      </div>
+    </div>
+  );
+}
+
+function EmptyWorkspaceHint(args: { resolvedTheme: "light" | "dark" }) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: isDark
+          ? "1px dashed rgba(255,255,255,0.12)"
+          : "1px dashed rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.6)",
+        color: isDark ? "#ffffff" : "#0f172a",
+        display: "grid",
+        gap: 4,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.84 }}>
+        Empty workspace
+      </div>
+      <div style={{ fontSize: 11, opacity: 0.7, lineHeight: 1.45 }}>
+        Once you save a refined requirement, generate a suite, or complete a
+        review, the latest persisted workspace state will appear here.
       </div>
     </div>
   );
@@ -335,7 +413,7 @@ export default function ChatPanel({
     background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
   };
 
-   const helperButtonStyle: React.CSSProperties = {
+  const helperButtonStyle: React.CSSProperties = {
     padding: "8px 12px",
     borderRadius: 12,
     border: isDark
@@ -383,6 +461,8 @@ export default function ChatPanel({
         {showOnboardingHint ? (
           <OnboardingHint
             showStrategyHint={isCoachSession}
+            hasWorkspaceArtifacts={hasWorkspaceArtifacts}
+            nextAction={chat.workflowStatus.nextAction}
             resolvedTheme={resolvedTheme}
           />
         ) : null}
@@ -394,7 +474,7 @@ export default function ChatPanel({
               description={
                 hasWorkspaceArtifacts
                   ? "Current persisted requirement, suite, and review state for this workspace."
-                  : "No persisted workspace artifacts yet."
+                  : "No persisted workspace artifacts yet. Start by shaping the requirement or continuing the next recommended step."
               }
               resolvedTheme={resolvedTheme}
             />
@@ -402,6 +482,9 @@ export default function ChatPanel({
               chat={chat}
               resolvedTheme={resolvedTheme}
             />
+            {!hasWorkspaceArtifacts && !isBusy ? (
+              <EmptyWorkspaceHint resolvedTheme={resolvedTheme} />
+            ) : null}
           </div>
 
           <div>
