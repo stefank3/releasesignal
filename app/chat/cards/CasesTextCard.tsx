@@ -35,6 +35,12 @@
 // DEBUG TEMP:
 // - add explicit logs for Done click and save guard path
 // - confirm whether save exits early before calling parent persistence callback
+//
+// M12.10 CHANGE:
+// - separate suite workflow actions from local editing controls
+// - make edit/save state easier to scan in long suites
+// - clarify copy-ready output vs editable workspace content
+// - preserve existing validation and persistence behavior
 
 "use client";
 
@@ -122,6 +128,50 @@ function SmallButton(args: {
     >
       {args.children}
     </button>
+  );
+}
+
+function SectionLabel(args: {
+  title: string;
+  description?: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 2,
+        marginBottom: 8,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 900,
+          letterSpacing: 0.2,
+          color: isDark ? "#ffffff" : "#0f172a",
+          opacity: 0.92,
+        }}
+      >
+        {args.title}
+      </div>
+
+      {args.description ? (
+        <div
+          style={{
+            fontSize: 11,
+            lineHeight: 1.4,
+            color: isDark
+              ? "rgba(255,255,255,0.68)"
+              : "rgba(15,23,42,0.62)",
+          }}
+        >
+          {args.description}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -479,6 +529,12 @@ function CasesTextCardContent({
     );
   };
 
+  const editingSummary = editingId
+    ? `Editing ${editingId}${isDirty ? " • unsaved changes" : ""}`
+    : isDirty
+      ? "Unsaved suite changes"
+      : "Suite is in sync";
+
   return (
     <div
       style={{
@@ -493,81 +549,128 @@ function CasesTextCardContent({
     >
       <div
         style={{
-          display: "flex",
-          justifyContent: "space-between",
+          display: "grid",
           gap: 12,
-          alignItems: "flex-start",
-          flexWrap: "wrap",
         }}
       >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 900 }}>Generated Test Cases</div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              {hasStructuredCases ? "Editable workspace" : "Copy-paste output"}
+            </div>
+          </div>
+
+          {hasStructuredCases ? (
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 900,
+                padding: "4px 8px",
+                borderRadius: 999,
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.14)"
+                  : "1px solid rgba(15,23,42,0.12)",
+                background: isDark
+                  ? "rgba(255,255,255,0.04)"
+                  : "rgba(15,23,42,0.04)",
+                color: isDark
+                  ? "rgba(255,255,255,0.82)"
+                  : "rgba(15,23,42,0.82)",
+              }}
+            >
+              {editingSummary}
+            </div>
+          ) : null}
+        </div>
+
         <div>
-          <div style={{ fontWeight: 900 }}>Generated Test Cases</div>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            {hasStructuredCases ? "Editable workspace" : "Copy-paste output"}
+          <SectionLabel
+            title="Workflow actions"
+            description="Run artifact-driven suite actions from the current persisted workspace."
+            resolvedTheme={resolvedTheme}
+          />
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {showRegenerateSuiteAction ? (
+              <SmallButton
+                onClick={() => {
+                  onRegenerateSuiteAction?.();
+                }}
+                disabled={!canRegenerateSuite || isRegeneratingSuite || isSaving}
+                resolvedTheme={resolvedTheme}
+              >
+                {isRegeneratingSuite ? "Regenerating..." : "Improve / Regenerate"}
+              </SmallButton>
+            ) : null}
+
+            {showGenerateNextBatchAction ? (
+              <SmallButton
+                onClick={() => {
+                  onGenerateNextBatchAction?.();
+                }}
+                disabled={!canGenerateNextBatch || isGeneratingNextBatch || isSaving}
+                resolvedTheme={resolvedTheme}
+              >
+                {isGeneratingNextBatch ? "Generating..." : "Generate Next Batch"}
+              </SmallButton>
+            ) : null}
+
+            {showReviewAction ? (
+              <SmallButton
+                onClick={() => {
+                  onReviewTestSuiteAction?.();
+                }}
+                disabled={!canReviewTestSuite || isReviewingTestSuite || isSaving}
+                resolvedTheme={resolvedTheme}
+              >
+                {isReviewingTestSuite ? "Reviewing..." : "Review Test Suite"}
+              </SmallButton>
+            ) : null}
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {showRegenerateSuiteAction ? (
-            <SmallButton
-              onClick={() => {
-                onRegenerateSuiteAction?.();
-              }}
-              disabled={!canRegenerateSuite || isRegeneratingSuite || isSaving}
-              resolvedTheme={resolvedTheme}
-            >
-              {isRegeneratingSuite ? "Regenerating..." : "Improve / Regenerate"}
-            </SmallButton>
-          ) : null}
-
-          {showGenerateNextBatchAction ? (
-            <SmallButton
-              onClick={() => {
-                onGenerateNextBatchAction?.();
-              }}
-              disabled={!canGenerateNextBatch || isGeneratingNextBatch || isSaving}
-              resolvedTheme={resolvedTheme}
-            >
-              {isGeneratingNextBatch ? "Generating..." : "Generate Next Batch"}
-            </SmallButton>
-          ) : null}
-
-          {showReviewAction ? (
-            <SmallButton
-              onClick={() => {
-                onReviewTestSuiteAction?.();
-              }}
-              disabled={!canReviewTestSuite || isReviewingTestSuite || isSaving}
-              resolvedTheme={resolvedTheme}
-            >
-              {isReviewingTestSuite ? "Reviewing..." : "Review Test Suite"}
-            </SmallButton>
-          ) : null}
-
-          <SmallButton
-            onClick={copyText}
-            disabled={isSaving}
+        <div>
+          <SectionLabel
+            title="Local editing"
+            description="Copy or save edits made in this suite card."
             resolvedTheme={resolvedTheme}
-          >
-            Copy
-          </SmallButton>
+          />
 
-          {hasStructuredCases ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <SmallButton
-              onClick={async () => {
-                await saveSuite();
-              }}
-              disabled={
-                !isDirty ||
-                isSaving ||
-                !onUpdateTestSuiteAction ||
-                hasValidationIssues
-              }
+              onClick={copyText}
+              disabled={isSaving}
               resolvedTheme={resolvedTheme}
             >
-              {isSaving ? "Saving..." : "Save"}
+              Copy
             </SmallButton>
-          ) : null}
+
+            {hasStructuredCases ? (
+              <SmallButton
+                onClick={async () => {
+                  await saveSuite();
+                }}
+                disabled={
+                  !isDirty ||
+                  isSaving ||
+                  !onUpdateTestSuiteAction ||
+                  hasValidationIssues
+                }
+                resolvedTheme={resolvedTheme}
+              >
+                {isSaving ? "Saving..." : "Save"}
+              </SmallButton>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -621,6 +724,12 @@ function CasesTextCardContent({
               ) : null}
             </div>
           ) : null}
+
+          <SectionLabel
+            title="Editable cases"
+            description="Update case titles and bodies here. Done saves the edited suite."
+            resolvedTheme={resolvedTheme}
+          />
 
           {editedCases.map((tc) => {
             const isEditing = editingId === tc.id;
@@ -697,6 +806,26 @@ function CasesTextCardContent({
                           }}
                         >
                           CHECK
+                        </div>
+                      ) : null}
+
+                      {isEditing ? (
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            padding: "2px 6px",
+                            borderRadius: 999,
+                            border: isDark
+                              ? "1px solid rgba(120,180,255,0.24)"
+                              : "1px solid rgba(37,99,235,0.22)",
+                            background: isDark
+                              ? "rgba(120,180,255,0.10)"
+                              : "rgba(37,99,235,0.08)",
+                            color: isDark ? "#ffffff" : "#0f172a",
+                          }}
+                        >
+                          EDITING
                         </div>
                       ) : null}
                     </div>
@@ -801,9 +930,11 @@ function CasesTextCardContent({
               paddingTop: 12,
             }}
           >
-            <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
-              Copy-ready suite output
-            </div>
+            <SectionLabel
+              title="Copy-ready suite output"
+              description="This is the current rendered suite text after local edits."
+              resolvedTheme={resolvedTheme}
+            />
 
             <pre
               style={{
@@ -831,25 +962,33 @@ function CasesTextCardContent({
           </div>
         </div>
       ) : (
-        <pre
-          style={{
-            marginTop: 14,
-            whiteSpace: "pre-wrap",
-            fontSize: 13,
-            lineHeight: 1.55,
-            background: isDark ? "rgba(0,0,0,0.22)" : "rgba(15,23,42,0.04)",
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.10)"
-              : "1px solid rgba(15,23,42,0.10)",
-            borderRadius: 16,
-            padding: 14,
-            color: isDark
-              ? "rgba(255,255,255,0.92)"
-              : "rgba(15,23,42,0.92)",
-          }}
-        >
-          {text}
-        </pre>
+        <div style={{ marginTop: 14 }}>
+          <SectionLabel
+            title="Rendered output"
+            description="This response is not in editable structured suite format."
+            resolvedTheme={resolvedTheme}
+          />
+
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              fontSize: 13,
+              lineHeight: 1.55,
+              background: isDark ? "rgba(0,0,0,0.22)" : "rgba(15,23,42,0.04)",
+              border: isDark
+                ? "1px solid rgba(255,255,255,0.10)"
+                : "1px solid rgba(15,23,42,0.10)",
+              borderRadius: 16,
+              padding: 14,
+              color: isDark
+                ? "rgba(255,255,255,0.92)"
+                : "rgba(15,23,42,0.92)",
+              margin: 0,
+            }}
+          >
+            {text}
+          </pre>
+        </div>
       )}
     </div>
   );
