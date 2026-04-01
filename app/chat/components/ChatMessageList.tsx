@@ -523,13 +523,14 @@ export default function ChatMessageList({
                   <div style={{ width: "100%", maxWidth: "100%" }}>
                     <RequirementCard
                       text={textToShow}
+                      resolvedTheme={resolvedTheme}
                       onGenerateTestsAction={onGenerateTestsAction}
                       canGenerateTests={canGenerateTests}
                       isGeneratingTests={isGeneratingTests}
                       onRefineRequirementAction={onRefineRequirementAction}
                       canRefineRequirement={canRefineRequirement}
                       isRefiningRequirement={isRefiningRequirement}
-                    />
+                        />
                   </div>
                 ) : (
                   <div style={bubbleStyle}>
