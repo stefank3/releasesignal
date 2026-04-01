@@ -18,6 +18,12 @@
 // - keep UI trigger-only; action execution remains in hook
 // - expose explicit workflow action error banner
 // - preserve existing toolbar layout and demo/session controls
+//
+// M12.10 CHANGE:
+// - improve toolbar clarity by separating session controls from workspace controls
+// - make workspace action availability easier to scan
+// - keep action gating hook-driven and artifact-driven
+// - preserve existing action behavior and session lock behavior
 
 "use client";
 
@@ -43,6 +49,27 @@ function modeLabel(m: Mode) {
     : m === "review"
       ? "Test Review"
       : "Test Design";
+}
+
+function SectionHint(args: {
+  text: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        marginTop: 6,
+        marginBottom: 10,
+        fontSize: 11,
+        lineHeight: 1.4,
+        color: isDark ? "rgba(255,255,255,0.68)" : "rgba(15,23,42,0.62)",
+      }}
+    >
+      {args.text}
+    </div>
+  );
 }
 
 type Props = {
@@ -117,6 +144,15 @@ export default function ChatToolbar({
     chat.setInput(text);
   };
 
+  const isBusy = chat.isSending || chat.isRunningWorkflowAction;
+  const hasWorkspace = !!chat.activeSessionId;
+
+  const workspaceActionHint = !hasWorkspace
+    ? "Workspace actions appear after a session is created."
+    : chat.hasPinnedRequirement
+      ? "Actions below use persisted workspace artifacts, not prompt reconstruction."
+      : "A refined requirement is needed before Generate Tests becomes available.";
+
   return (
     <>
       {/* Demo toolbar */}
@@ -130,7 +166,7 @@ export default function ChatToolbar({
               localStorage.removeItem(STORAGE_KEY);
               onAfterUiAction?.();
             }}
-            disabled={chat.isSending || chat.isRunningWorkflowAction}
+            disabled={isBusy}
           >
             Clear
           </HeaderButton>
@@ -141,7 +177,7 @@ export default function ChatToolbar({
         <HeaderButton
           resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("coach", DEMO_COACH_LOGIN)}
-          disabled={chat.isSending || chat.isRunningWorkflowAction}
+          disabled={isBusy}
         >
           Login + MFA (Strategy)
         </HeaderButton>
@@ -149,7 +185,7 @@ export default function ChatToolbar({
         <HeaderButton
           resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("review", DEMO_REVIEW_LOGIN)}
-          disabled={chat.isSending || chat.isRunningWorkflowAction}
+          disabled={isBusy}
         >
           Login + MFA (Test Review)
         </HeaderButton>
@@ -157,7 +193,7 @@ export default function ChatToolbar({
         <HeaderButton
           resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("review", DEMO_REVIEW_EXPORT)}
-          disabled={chat.isSending || chat.isRunningWorkflowAction}
+          disabled={isBusy}
         >
           Export CSV (Test Review)
         </HeaderButton>
@@ -165,7 +201,7 @@ export default function ChatToolbar({
         <HeaderButton
           resolvedTheme={resolvedTheme}
           onClickAction={() => loadDemoAction("cases", DEMO_CASES_LOGIN)}
-          disabled={chat.isSending || chat.isRunningWorkflowAction}
+          disabled={isBusy}
         >
           Login + MFA (Test Design)
         </HeaderButton>
@@ -176,6 +212,7 @@ export default function ChatToolbar({
       {/* Session actions toolbar */}
       <Toolbar resolvedTheme={resolvedTheme}>
         <Group>
+          <Chip resolvedTheme={resolvedTheme}>Session</Chip>
           <ModeBadge mode={chat.mode} resolvedTheme={resolvedTheme} />
           {rateChipText && (
             <Chip resolvedTheme={resolvedTheme}>{rateChipText}</Chip>
@@ -201,19 +238,15 @@ export default function ChatToolbar({
           )}
         </Group>
 
-        {/* M8.2:
-            Removed redundant mode switcher buttons from the toolbar.
-            ChatHeader is now the primary workflow selector.
-        */}
         <Group>
-          <Chip resolvedTheme={resolvedTheme}>New session</Chip>
+          <Chip resolvedTheme={resolvedTheme}>New workspace</Chip>
           <HeaderButton
             resolvedTheme={resolvedTheme}
             onClickAction={() => {
               chat.startNewSessionInMode("coach");
               onAfterUiAction?.();
             }}
-            disabled={chat.isSending || chat.isRunningWorkflowAction}
+            disabled={isBusy}
           >
             Strategy
           </HeaderButton>
@@ -223,7 +256,7 @@ export default function ChatToolbar({
               chat.startNewSessionInMode("cases");
               onAfterUiAction?.();
             }}
-            disabled={chat.isSending || chat.isRunningWorkflowAction}
+            disabled={isBusy}
           >
             Test Design
           </HeaderButton>
@@ -233,12 +266,17 @@ export default function ChatToolbar({
               chat.startNewSessionInMode("review");
               onAfterUiAction?.();
             }}
-            disabled={chat.isSending || chat.isRunningWorkflowAction}
+            disabled={isBusy}
           >
             Test Review
           </HeaderButton>
         </Group>
       </Toolbar>
+
+      <SectionHint
+        text="Session controls manage the current workspace context and session lifecycle."
+        resolvedTheme={resolvedTheme}
+      />
 
       {/* M12.9:
           Contextual workspace actions are artifact-driven.
@@ -264,6 +302,8 @@ export default function ChatToolbar({
           ) : null}
         </Group>
       </Toolbar>
+
+      <SectionHint text={workspaceActionHint} resolvedTheme={resolvedTheme} />
 
       {/* Mode lock banner (null-safe) */}
       {chat.modeLockMsg &&
