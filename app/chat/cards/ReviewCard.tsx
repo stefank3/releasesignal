@@ -12,6 +12,12 @@
 // - add theme-aware rendering
 // - support light / dark / system theme via resolvedTheme prop
 // - keep review visualization structure unchanged
+//
+// M12.10 CHANGE:
+// - separate review actions from score summary and findings
+// - make the current review result easier to scan in long sessions
+// - align review card structure with requirement and suite cards
+// - preserve existing review rendering behavior and empty-state handling
 
 "use client";
 
@@ -77,6 +83,7 @@ function SmallButton({
 
   return (
     <button
+      type="button"
       onClick={onClick}
       style={{
         padding: "6px 10px",
@@ -98,6 +105,50 @@ function SmallButton({
     >
       {children}
     </button>
+  );
+}
+
+function SectionLabel(args: {
+  title: string;
+  description?: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 2,
+        marginBottom: 8,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 900,
+          letterSpacing: 0.2,
+          color: isDark ? "#ffffff" : "#0f172a",
+          opacity: 0.92,
+        }}
+      >
+        {args.title}
+      </div>
+
+      {args.description ? (
+        <div
+          style={{
+            fontSize: 11,
+            lineHeight: 1.4,
+            color: isDark
+              ? "rgba(255,255,255,0.68)"
+              : "rgba(15,23,42,0.62)",
+          }}
+        >
+          {args.description}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -182,7 +233,7 @@ function Section({
   const isDark = resolvedTheme === "dark";
 
   return (
-    <div style={{ marginTop: 14 }}>
+    <div>
       <div
         style={{
           fontSize: 13,
@@ -195,7 +246,12 @@ function Section({
       </div>
 
       {items.length === 0 ? (
-        <div style={{ fontSize: 13, color: isDark ? "rgba(255,255,255,0.68)" : "#666" }}>
+        <div
+          style={{
+            fontSize: 13,
+            color: isDark ? "rgba(255,255,255,0.68)" : "#666",
+          }}
+        >
           None.
         </div>
       ) : (
@@ -382,6 +438,8 @@ export default function ReviewCard({
           ? "0 6px 22px rgba(0,0,0,0.18)"
           : "0 6px 22px rgba(0,0,0,0.06)",
         color: isDark ? "#fff" : "#111",
+        display: "grid",
+        gap: 16,
       }}
     >
       <div
@@ -390,9 +448,10 @@ export default function ReviewCard({
           alignItems: "flex-start",
           justifyContent: "space-between",
           gap: 14,
+          flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: 0.2 }}>
             Review Score
           </div>
@@ -409,29 +468,77 @@ export default function ReviewCard({
 
         <div
           style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "flex-end",
-            gap: 10,
+            fontSize: 11,
+            fontWeight: 900,
+            padding: "4px 8px",
+            borderRadius: 999,
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.14)"
+              : "1px solid rgba(15,23,42,0.12)",
+            background: isDark
+              ? "rgba(255,255,255,0.04)"
+              : "rgba(15,23,42,0.04)",
+            color: isDark
+              ? "rgba(255,255,255,0.82)"
+              : "rgba(15,23,42,0.82)",
           }}
         >
-          <div style={{ display: "flex", gap: 8 }}>
-            <SmallButton
-              onClick={() => copyText(reviewToMarkdown(review), "Markdown")}
-              resolvedTheme={resolvedTheme}
-            >
-              Copy MD
-            </SmallButton>
+          Review artifact
+        </div>
+      </div>
 
-            <SmallButton
-              onClick={() => copyText(reviewToJson(review), "JSON")}
-              variant="dark"
-              resolvedTheme={resolvedTheme}
-            >
-              Copy JSON
-            </SmallButton>
-          </div>
+      <div>
+        <SectionLabel
+          title="Review actions"
+          description="Copy this review result in markdown or JSON format for external use."
+          resolvedTheme={resolvedTheme}
+        />
 
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <SmallButton
+            onClick={() => copyText(reviewToMarkdown(review), "Markdown")}
+            resolvedTheme={resolvedTheme}
+          >
+            Copy MD
+          </SmallButton>
+
+          <SmallButton
+            onClick={() => copyText(reviewToJson(review), "JSON")}
+            variant="dark"
+            resolvedTheme={resolvedTheme}
+          >
+            Copy JSON
+          </SmallButton>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid #f0f0f0",
+          borderRadius: 16,
+          padding: 14,
+          background: isDark ? "rgba(255,255,255,0.04)" : "#fafafa",
+        }}
+      >
+        <SectionLabel
+          title="Score summary"
+          description="Current persisted review score and grade."
+          resolvedTheme={resolvedTheme}
+        />
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
           <div
             style={{
               border: isDark ? "1px solid #fff" : "1px solid #111",
@@ -450,6 +557,7 @@ export default function ReviewCard({
             style={{
               fontSize: 12,
               color: isDark ? "rgba(255,255,255,0.66)" : "#666",
+              fontWeight: 800,
             }}
           >
             {grade}
@@ -460,7 +568,6 @@ export default function ReviewCard({
       {toast && (
         <div
           style={{
-            marginTop: 12,
             display: "inline-block",
             padding: "6px 10px",
             borderRadius: 999,
@@ -471,6 +578,7 @@ export default function ReviewCard({
             color: isDark ? "#fff" : "#111",
             fontSize: 12,
             fontWeight: 800,
+            width: "fit-content",
           }}
         >
           {toast}
@@ -479,16 +587,6 @@ export default function ReviewCard({
 
       <div
         style={{
-          marginTop: 16,
-          borderTop: isDark
-            ? "1px solid rgba(255,255,255,0.10)"
-            : "1px solid #f1f1f1",
-        }}
-      />
-
-      <div
-        style={{
-          marginTop: 16,
           border: isDark
             ? "1px solid rgba(255,255,255,0.10)"
             : "1px solid #f0f0f0",
@@ -499,15 +597,11 @@ export default function ReviewCard({
           gap: 12,
         }}
       >
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 900,
-            color: isDark ? "rgba(255,255,255,0.82)" : "#333",
-          }}
-        >
-          Breakdown
-        </div>
+        <SectionLabel
+          title="Breakdown"
+          description="Category-by-category scoring for the current review."
+          resolvedTheme={resolvedTheme}
+        />
 
         <BarRow
           label="Business relevance"
@@ -541,14 +635,7 @@ export default function ReviewCard({
         />
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr",
-          gap: 14,
-          marginTop: 16,
-        }}
-      >
+      <div style={{ display: "grid", gap: 14 }}>
         <div
           style={{
             border: isDark
@@ -559,8 +646,13 @@ export default function ReviewCard({
             background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
           }}
         >
-          <Section
+          <SectionLabel
             title="Top risk gaps"
+            description="Highest-priority coverage gaps identified in the review."
+            resolvedTheme={resolvedTheme}
+          />
+          <Section
+            title=""
             items={review.riskGaps}
             resolvedTheme={resolvedTheme}
           />
@@ -576,8 +668,13 @@ export default function ReviewCard({
             background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
           }}
         >
-          <Section
+          <SectionLabel
             title="Anti-patterns"
+            description="Design or structure issues that reduce suite effectiveness."
+            resolvedTheme={resolvedTheme}
+          />
+          <Section
+            title=""
             items={review.antiPatterns}
             resolvedTheme={resolvedTheme}
           />
@@ -593,8 +690,13 @@ export default function ReviewCard({
             background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
           }}
         >
-          <Section
+          <SectionLabel
             title="Prioritized improvements"
+            description="Recommended next improvements based on the current review."
+            resolvedTheme={resolvedTheme}
+          />
+          <Section
+            title=""
             items={review.improvements}
             resolvedTheme={resolvedTheme}
           />
