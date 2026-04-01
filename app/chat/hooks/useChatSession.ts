@@ -475,8 +475,10 @@ export function useChatSession(): UseChatSessionReturn {
       });
 
       if (reset) {
-        setActiveSessionMode(effectiveSessionMode);
-        setMode(effectiveSessionMode);
+        // BUG FIX (M12.10):
+        // Preserve the selected/restored visible mode for the workspace.
+        setActiveSessionMode(sessionMode);
+        setMode(sessionMode);
       }
 
       setItems((prev) => (reset ? mapped : [...mapped, ...prev]));
