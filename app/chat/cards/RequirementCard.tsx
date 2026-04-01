@@ -10,8 +10,17 @@ import React, { useEffect, useState } from "react";
 // - add Refine Requirement action surface
 // - keep visibility/enablement parent-driven
 // - do not move workflow execution into the card
+//
+// M12.10 CHANGE:
+// - separate requirement workflow actions from local copy action
+// - improve readability of action availability at the card level
+// - add theme-aware styling to match the rest of the workspace
+// - preserve existing action behavior and presentational-only role
+
 type RequirementCardProps = {
   text: string;
+  resolvedTheme?: "light" | "dark";
+
   onGenerateTestsAction?: () => void;
   canGenerateTests?: boolean;
   isGeneratingTests?: boolean;
@@ -25,19 +34,35 @@ function SmallButton(args: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  resolvedTheme: "light" | "dark";
 }) {
+  const isDark = args.resolvedTheme === "dark";
+
   return (
     <button
+      type="button"
       onClick={args.onClick}
       disabled={args.disabled}
       style={{
         padding: "6px 10px",
         borderRadius: 10,
-        border: "1px solid rgba(255,255,255,0.20)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.20)"
+          : "1px solid rgba(15,23,42,0.14)",
         background: args.disabled
-          ? "rgba(255,255,255,0.03)"
-          : "rgba(255,255,255,0.10)",
-        color: "#fff",
+          ? isDark
+            ? "rgba(255,255,255,0.03)"
+            : "rgba(15,23,42,0.03)"
+          : isDark
+            ? "rgba(255,255,255,0.08)"
+            : "rgba(15,23,42,0.05)",
+        color: args.disabled
+          ? isDark
+            ? "rgba(255,255,255,0.45)"
+            : "rgba(15,23,42,0.45)"
+          : isDark
+            ? "#ffffff"
+            : "#0f172a",
         fontSize: 12,
         fontWeight: 900,
         cursor: args.disabled ? "not-allowed" : "pointer",
@@ -49,8 +74,52 @@ function SmallButton(args: {
   );
 }
 
+function SectionLabel(args: {
+  title: string;
+  description?: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 2,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 900,
+          letterSpacing: 0.2,
+          color: isDark ? "#ffffff" : "#0f172a",
+          opacity: 0.92,
+        }}
+      >
+        {args.title}
+      </div>
+
+      {args.description ? (
+        <div
+          style={{
+            fontSize: 11,
+            lineHeight: 1.4,
+            color: isDark
+              ? "rgba(255,255,255,0.68)"
+              : "rgba(15,23,42,0.62)",
+          }}
+        >
+          {args.description}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function RequirementCard({
   text,
+  resolvedTheme = "dark",
   onGenerateTestsAction,
   canGenerateTests = false,
   isGeneratingTests = false,
@@ -75,18 +144,28 @@ export default function RequirementCard({
     }
   }
 
+  const isDark = resolvedTheme === "dark";
+
   const showGenerateTestsAction = typeof onGenerateTestsAction === "function";
   const showRefineRequirementAction =
     typeof onRefineRequirementAction === "function";
+
+  const workflowHint =
+    showGenerateTestsAction || showRefineRequirementAction
+      ? "These actions use the persisted requirement artifact for downstream workflow steps."
+      : "No workflow actions are available on this requirement card.";
 
   return (
     <div
       style={{
         width: "100%",
-        border: "1px solid rgba(255,255,255,0.14)",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.12)",
         borderRadius: 16,
         padding: 16,
-        background: "rgba(255,255,255,0.05)",
+        background: isDark ? "rgba(255,255,255,0.05)" : "#ffffff",
+        color: isDark ? "#ffffff" : "#0f172a",
         display: "grid",
         gap: 12,
       }}
@@ -104,49 +183,89 @@ export default function RequirementCard({
 
         <div
           style={{
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            flexWrap: "wrap",
+            fontSize: 11,
+            fontWeight: 900,
+            padding: "4px 8px",
+            borderRadius: 999,
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.14)"
+              : "1px solid rgba(15,23,42,0.12)",
+            background: isDark
+              ? "rgba(255,255,255,0.04)"
+              : "rgba(15,23,42,0.04)",
+            color: isDark
+              ? "rgba(255,255,255,0.82)"
+              : "rgba(15,23,42,0.82)",
           }}
         >
-          {showRefineRequirementAction ? (
-            <SmallButton
-              onClick={() => {
-                onRefineRequirementAction?.();
-              }}
-              disabled={!canRefineRequirement || isRefiningRequirement}
-            >
-              {isRefiningRequirement ? "Refining…" : "Refine Requirement"}
-            </SmallButton>
-          ) : null}
+          Requirement artifact
+        </div>
+      </div>
 
-          {showGenerateTestsAction ? (
-            <SmallButton
-              onClick={() => {
-                onGenerateTestsAction?.();
-              }}
-              disabled={!canGenerateTests || isGeneratingTests}
-            >
-              {isGeneratingTests ? "Generating…" : "Generate Tests"}
-            </SmallButton>
-          ) : null}
+      <div style={{ display: "grid", gap: 10 }}>
+        <div>
+          <SectionLabel
+            title="Workflow actions"
+            description={workflowHint}
+            resolvedTheme={resolvedTheme}
+          />
 
-          <button
-            onClick={copy}
+          <div
             style={{
-              padding: "6px 10px",
-              borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.20)",
-              background: "rgba(255,255,255,0.06)",
-              color: "#fff",
-              fontSize: 12,
-              fontWeight: 900,
-              cursor: "pointer",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
             }}
           >
-            Copy
-          </button>
+            {showRefineRequirementAction ? (
+              <SmallButton
+                onClick={() => {
+                  onRefineRequirementAction?.();
+                }}
+                disabled={!canRefineRequirement || isRefiningRequirement}
+                resolvedTheme={resolvedTheme}
+              >
+                {isRefiningRequirement ? "Refining…" : "Refine Requirement"}
+              </SmallButton>
+            ) : null}
+
+            {showGenerateTestsAction ? (
+              <SmallButton
+                onClick={() => {
+                  onGenerateTestsAction?.();
+                }}
+                disabled={!canGenerateTests || isGeneratingTests}
+                resolvedTheme={resolvedTheme}
+              >
+                {isGeneratingTests ? "Generating…" : "Generate Tests"}
+              </SmallButton>
+            ) : null}
+          </div>
+        </div>
+
+        <div>
+          <SectionLabel
+            title="Local action"
+            description="Copy the current requirement text for external use."
+            resolvedTheme={resolvedTheme}
+          />
+
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <SmallButton
+              onClick={copy}
+              resolvedTheme={resolvedTheme}
+            >
+              Copy
+            </SmallButton>
+          </div>
         </div>
       </div>
 
@@ -155,7 +274,9 @@ export default function RequirementCard({
           style={{
             fontSize: 11,
             opacity: 0.8,
-            border: "1px solid rgba(255,255,255,0.12)",
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.12)"
+              : "1px solid rgba(15,23,42,0.10)",
             borderRadius: 999,
             padding: "4px 8px",
             display: "inline-block",
@@ -166,18 +287,34 @@ export default function RequirementCard({
         </div>
       ) : null}
 
-      <pre
-        style={{
-          margin: 0,
-          whiteSpace: "pre-wrap",
-          fontSize: 12,
-          lineHeight: 1.5,
-          fontFamily: "inherit",
-          color: "#fff",
-        }}
-      >
-        {text}
-      </pre>
+      <div>
+        <SectionLabel
+          title="Requirement content"
+          description="Current rendered requirement text for this workspace."
+          resolvedTheme={resolvedTheme}
+        />
+
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            fontSize: 12,
+            lineHeight: 1.5,
+            fontFamily: "inherit",
+            color: isDark ? "#ffffff" : "#0f172a",
+            background: isDark
+              ? "rgba(255,255,255,0.03)"
+              : "rgba(15,23,42,0.03)",
+            border: isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
+            borderRadius: 12,
+            padding: 12,
+          }}
+        >
+          {text}
+        </pre>
+      </div>
     </div>
   );
 }
