@@ -41,6 +41,12 @@
 // - wire Improve / Regenerate Suite props into CasesTextCard
 // - keep it distinct from Generate Next Batch
 // - keep parent-driven visibility/enablement
+//
+// M12.10 CHANGE:
+// - highlight the latest requirement, suite, and review in long sessions
+// - make older stacked suite outputs visually secondary
+// - keep latest-visibility state derived only from rendered item order
+// - avoid altering workflow logic or execution behavior
 
 "use client";
 
@@ -76,6 +82,63 @@ function looksLikeJson(s: string) {
 function looksLikePersistedTestSuiteText(s: string): boolean {
   const t = String(s ?? "").trim();
   return /^Test Suite v\d+\s*\nTotal test cases:\s*\d+/i.test(t);
+}
+
+/**
+ * M12.10 CHANGE:
+ * Keep requirement detection centralized so latest-artifact highlighting
+ * stays purely presentational and derived from rendered content.
+ */
+function looksLikeRequirementText(s: string): boolean {
+  return String(s ?? "")
+    .trimStart()
+    .startsWith("Refined Technical Requirement");
+}
+
+type LatestArtifactIndexes = {
+  latestRequirementIndex: number;
+  latestPersistedSuiteIndex: number;
+  latestReviewIndex: number;
+};
+
+/**
+ * M12.10 CHANGE:
+ * Identify the newest visible requirement / suite / review entries using
+ * message order only. No workflow logic is inferred here.
+ */
+function getLatestArtifactIndexes(items: ChatItem[]): LatestArtifactIndexes {
+  let latestRequirementIndex = -1;
+  let latestPersistedSuiteIndex = -1;
+  let latestReviewIndex = -1;
+
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+
+    if (
+      item.kind === "text" &&
+      item.role !== "user" &&
+      looksLikeRequirementText(item.text)
+    ) {
+      latestRequirementIndex = i;
+    }
+
+    if (
+      item.kind === "casesText" &&
+      looksLikePersistedTestSuiteText(item.text)
+    ) {
+      latestPersistedSuiteIndex = i;
+    }
+
+    if (item.kind === "review") {
+      latestReviewIndex = i;
+    }
+  }
+
+  return {
+    latestRequirementIndex,
+    latestPersistedSuiteIndex,
+    latestReviewIndex,
+  };
 }
 
 /**
@@ -256,6 +319,53 @@ function WorkflowGuidanceCard(args: {
   );
 }
 
+/**
+ * M12.10 CHANGE:
+ * Shared artifact status label used to distinguish latest vs older stacked
+ * results without changing card internals or message ordering.
+ */
+function ArtifactStatusPill(args: {
+  label: string;
+  resolvedTheme: "light" | "dark";
+  tone: "latest" | "previous";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const isLatest = args.tone === "latest";
+
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        width: "fit-content",
+        padding: "5px 10px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 900,
+        letterSpacing: 0.2,
+        border: isLatest
+          ? isDark
+            ? "1px solid rgba(74,222,128,0.40)"
+            : "1px solid rgba(22,163,74,0.28)"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.14)"
+            : "1px solid rgba(15,23,42,0.12)",
+        background: isLatest
+          ? isDark
+            ? "rgba(74,222,128,0.10)"
+            : "rgba(22,163,74,0.08)"
+          : isDark
+            ? "rgba(255,255,255,0.05)"
+            : "rgba(15,23,42,0.04)",
+        color: isDark ? "#ffffff" : "#0f172a",
+        opacity: isLatest ? 1 : 0.72,
+      }}
+    >
+      {args.label}
+    </div>
+  );
+}
+
 type Props = {
   items: ChatItem[];
   mode: Mode;
@@ -320,6 +430,12 @@ export default function ChatMessageList({
     ? "rgba(255,255,255,0.7)"
     : "rgba(15,23,42,0.7)";
 
+  const {
+    latestRequirementIndex,
+    latestPersistedSuiteIndex,
+    latestReviewIndex,
+  } = getLatestArtifactIndexes(items);
+
   if (items.length === 0) {
     return (
       <div style={{ color: emptyStateColor, fontSize: 13, lineHeight: 1.55 }}>
@@ -358,7 +474,10 @@ export default function ChatMessageList({
           const isRequirement =
             !isUser &&
             typeof textToShow === "string" &&
-            textToShow.startsWith("Refined Technical Requirement");
+            looksLikeRequirementText(textToShow);
+
+          const isLatestRequirement =
+            isRequirement && idx === latestRequirementIndex;
 
           const bubbleStyle: React.CSSProperties = {
             maxWidth: "78%",
@@ -382,6 +501,18 @@ export default function ChatMessageList({
 
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
+              {!isUser && isRequirement ? (
+                <ArtifactStatusPill
+                  label={
+                    isLatestRequirement
+                      ? "Latest refined requirement"
+                      : "Earlier refined requirement"
+                  }
+                  resolvedTheme={resolvedTheme}
+                  tone={isLatestRequirement ? "latest" : "previous"}
+                />
+              ) : null}
+
               <div
                 style={{
                   display: "flex",
@@ -435,8 +566,16 @@ export default function ChatMessageList({
         }
 
         if (it.kind === "review") {
+          const isLatestReview = idx === latestReviewIndex;
+
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
+              <ArtifactStatusPill
+                label={isLatestReview ? "Latest review result" : "Earlier review result"}
+                resolvedTheme={resolvedTheme}
+                tone={isLatestReview ? "latest" : "previous"}
+              />
+
               <ReviewCard
                 review={it.review as ReviewResult}
                 resolvedTheme={resolvedTheme}
@@ -448,19 +587,21 @@ export default function ChatMessageList({
         if (it.kind === "casesText") {
           const isPersistedSuite = looksLikePersistedTestSuiteText(it.text);
           const workflowGuidance = getWorkflowGuidance(it);
+          const isLatestPersistedSuite =
+            isPersistedSuite && idx === latestPersistedSuiteIndex;
 
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               {isPersistedSuite ? (
-                <div
-                  style={{
-                    fontSize: 11,
-                    opacity: 0.66,
-                    color: requestIdColor,
-                  }}
-                >
-                  Persistent suite workspace
-                </div>
+                <ArtifactStatusPill
+                  label={
+                    isLatestPersistedSuite
+                      ? "Latest persistent suite"
+                      : "Earlier suite snapshot"
+                  }
+                  resolvedTheme={resolvedTheme}
+                  tone={isLatestPersistedSuite ? "latest" : "previous"}
+                />
               ) : null}
 
               {workflowGuidance ? (
