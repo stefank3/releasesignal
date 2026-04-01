@@ -57,6 +57,12 @@
 // - thread Improve / Regenerate Suite action through panel-level message wiring
 // - keep it distinct from Generate Next Batch
 // - keep action visibility and execution hook-driven
+//
+// M12.10 CHANGE:
+// - visually separate artifact summary from workflow guidance
+// - reduce perceived duplication in the workspace overview area
+// - keep summary + banner both visible but easier to distinguish
+// - preserve existing workflow behavior and rendering order
 
 "use client";
 
@@ -115,6 +121,33 @@ function OnboardingHint(args: {
           Clarify the login flow with MFA, identify the main risks, then generate
           a structured test suite.
         </span>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceSectionLabel(args: {
+  title: string;
+  description: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 3,
+        marginBottom: 8,
+        paddingLeft: 2,
+        color: isDark ? "#ffffff" : "#0f172a",
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 950, opacity: 0.9, letterSpacing: 0.2 }}>
+        {args.title}
+      </div>
+      <div style={{ fontSize: 11, opacity: 0.65, lineHeight: 1.4 }}>
+        {args.description}
       </div>
     </div>
   );
@@ -302,7 +335,7 @@ export default function ChatPanel({
     background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
   };
 
-  const helperButtonStyle: React.CSSProperties = {
+   const helperButtonStyle: React.CSSProperties = {
     padding: "8px 12px",
     borderRadius: 12,
     border: isDark
@@ -316,12 +349,26 @@ export default function ChatPanel({
     whiteSpace: "nowrap",
   };
 
+  // M12.10 CHANGE:
+  // - separate the summary area from the workflow guidance area
+  // - keep both artifact-driven, but give each a distinct visual role
+  const workspaceOverviewWrapStyle: React.CSSProperties = {
+    display: "grid",
+    gap: 14,
+    marginBottom: 12,
+  };
+
   const showOnboardingHint = chat.items.length === 0 && !isBusy;
 
   const canUseRefinedRequirement =
     isTestDesignSession &&
     chat.hasPinnedRequirement &&
     !!buildRefinedRequirementInput(chat.sessionArtifact);
+
+  const hasWorkspaceArtifacts =
+    chat.hasPinnedRequirement ||
+    chat.hasPersistentTestSuite ||
+    chat.hasReviewArtifact;
 
   return (
     <div
@@ -340,15 +387,35 @@ export default function ChatPanel({
           />
         ) : null}
 
-        <FeatureWorkspaceSummary
-          chat={chat}
-          resolvedTheme={resolvedTheme}
-        />
+        <div style={workspaceOverviewWrapStyle}>
+          <div>
+            <WorkspaceSectionLabel
+              title="Artifact summary"
+              description={
+                hasWorkspaceArtifacts
+                  ? "Current persisted requirement, suite, and review state for this workspace."
+                  : "No persisted workspace artifacts yet."
+              }
+              resolvedTheme={resolvedTheme}
+            />
+            <FeatureWorkspaceSummary
+              chat={chat}
+              resolvedTheme={resolvedTheme}
+            />
+          </div>
 
-        <ChatWorkflowBanner
-          status={chat.workflowStatus}
-          resolvedTheme={resolvedTheme}
-        />
+          <div>
+            <WorkspaceSectionLabel
+              title="Workflow guidance"
+              description="Current stage and the next recommended workspace move."
+              resolvedTheme={resolvedTheme}
+            />
+            <ChatWorkflowBanner
+              status={chat.workflowStatus}
+              resolvedTheme={resolvedTheme}
+            />
+          </div>
+        </div>
 
         <div style={leftPanelStyle}>
           <div ref={chatBoxRef} style={chatBoxStyle}>
