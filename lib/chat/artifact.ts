@@ -413,6 +413,7 @@ export function isStructuredRequirementInput(message: string): boolean {
   const t = String(message ?? "").toLowerCase();
 
   return (
+    t.includes("context / constraints:") ||
     t.includes("functional scope:") ||
     t.includes("business rules:") ||
     t.includes("acceptance criteria:") ||
@@ -489,6 +490,7 @@ function normalizeRequirementSectionHeaders(message: string): string {
     "Scope:",
     "Success Criteria:",
     "Primary Risk Focus:",
+    "Context / Constraints:",
   ];
 
   let normalized = raw;
@@ -523,6 +525,7 @@ export function parseStructuredRequirementInput(
     ["minimal repro scenarios", "minimalReproScenarios"],
     ["open questions / clarifications", "openQuestionsClarifications"],
     ["open questions", "openQuestions"],
+    ["context / constraints", "context"],
 
     // Legacy labels mapped deterministically into current artifact shape.
     ["objective", "objective"],
@@ -543,7 +546,7 @@ export function parseStructuredRequirementInput(
     if (!line) continue;
 
     const sectionMatch = line.match(
-      /^(functional scope|business rules|acceptance criteria|edge cases \/ negative paths|edge cases|non-functional constraints|test strategy hooks|risk areas|coverage targets|minimal repro scenarios|open questions \/ clarifications|open questions|objective|primary risk|primary risk focus|context|context \/ assumptions|constraints|scope|success criteria)\s*:\s*(.*)$/i
+      /^(functional scope|business rules|acceptance criteria|edge cases \/ negative paths|edge cases|non-functional constraints|test strategy hooks|risk areas|coverage targets|minimal repro scenarios|open questions \/ clarifications|open questions|objective|primary risk|primary risk focus|context|context \/ assumptions|context \/ constraints|constraints|scope|success criteria)\s*:\s*(.*)$/i
     );
 
     if (sectionMatch) {
