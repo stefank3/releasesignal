@@ -37,6 +37,11 @@
 // - bridge legacy coach fields into locked requirement fields during merge
 // - keep legacy fields for compatibility, but do not allow unified fields to remain empty
 // - keep artifact context useful during transition even when older artifacts only contain legacy sections
+//
+// M12.12 CHANGE:
+// - extend requirement artifact contract with ingestion bridge fields
+// - preserve legacy + M12.8 compatibility
+// - keep merge/context logic deterministic during transition
 
 import { Prisma } from "@prisma/client";
 
@@ -66,17 +71,31 @@ export type RefinedRequirement = {
   integrations?: string[];
   riskFocus?: string[];
 
-  // Locked unified QA requirement fields for M12.8.
+  // Locked unified QA requirement fields for M12.8 / M12.12 bridge.
   functionalScope?: string[];
   businessRules?: string[];
   acceptanceCriteria?: string[];
+
+  // Transitional field retained for compatibility.
   edgeCases?: string[];
+
+  // M12.12 bridge field.
+  edgeCasesNegativePaths?: string[];
+
   nonFunctionalConstraints?: string[];
+
+  // Transitional flattened strategy field retained for compatibility.
   testStrategyHooks?: string[];
+
   riskAreas?: string[];
   coverageTargets?: string[];
   minimalReproScenarios?: string[];
+
+  // Transitional field retained for compatibility.
   openQuestions?: string[];
+
+  // M12.12 bridge field.
+  openQuestionsClarifications?: string[];
 };
 
 export type TestCase = {
@@ -495,14 +514,14 @@ export function parseStructuredRequirementInput(
     ["functional scope", "functionalScope"],
     ["business rules", "businessRules"],
     ["acceptance criteria", "acceptanceCriteria"],
-    ["edge cases / negative paths", "edgeCases"],
+    ["edge cases / negative paths", "edgeCasesNegativePaths"],
     ["edge cases", "edgeCases"],
     ["non-functional constraints", "nonFunctionalConstraints"],
     ["test strategy hooks", "testStrategyHooks"],
     ["risk areas", "riskAreas"],
     ["coverage targets", "coverageTargets"],
     ["minimal repro scenarios", "minimalReproScenarios"],
-    ["open questions / clarifications", "openQuestions"],
+    ["open questions / clarifications", "openQuestionsClarifications"],
     ["open questions", "openQuestions"],
 
     // Legacy labels mapped deterministically into current artifact shape.
@@ -579,10 +598,22 @@ export function parseStructuredRequirementInput(
   );
   if (acceptanceCriteria.length) partial.acceptanceCriteria = acceptanceCriteria;
 
+  const edgeCasesNegativePaths = splitStructuredRequirementList(
+    (sectionValues.get("edgeCasesNegativePaths") ?? []).join("\n")
+  );
+  if (edgeCasesNegativePaths.length) {
+    partial.edgeCasesNegativePaths = edgeCasesNegativePaths;
+    partial.edgeCases = edgeCasesNegativePaths;
+  }
+
   const edgeCases = splitStructuredRequirementList(
     (sectionValues.get("edgeCases") ?? []).join("\n")
   );
-  if (edgeCases.length) partial.edgeCases = edgeCases;
+  if (edgeCases.length) {
+    partial.edgeCases = Array.from(
+      new Set([...(partial.edgeCases ?? []), ...edgeCases])
+    );
+  }
 
   const nonFunctionalConstraints = splitStructuredRequirementList(
     (sectionValues.get("nonFunctionalConstraints") ?? []).join("\n")
@@ -613,10 +644,22 @@ export function parseStructuredRequirementInput(
     partial.minimalReproScenarios = minimalReproScenarios;
   }
 
+  const openQuestionsClarifications = splitStructuredRequirementList(
+    (sectionValues.get("openQuestionsClarifications") ?? []).join("\n")
+  );
+  if (openQuestionsClarifications.length) {
+    partial.openQuestionsClarifications = openQuestionsClarifications;
+    partial.openQuestions = openQuestionsClarifications;
+  }
+
   const openQuestions = splitStructuredRequirementList(
     (sectionValues.get("openQuestions") ?? []).join("\n")
   );
-  if (openQuestions.length) partial.openQuestions = openQuestions;
+  if (openQuestions.length) {
+    partial.openQuestions = Array.from(
+      new Set([...(partial.openQuestions ?? []), ...openQuestions])
+    );
+  }
 
   return Object.keys(partial).length ? partial : null;
 }
@@ -635,7 +678,7 @@ export function mergeArtifact(
   const dedupe = (arr: string[]) =>
     Array.from(new Set(arr.map((x) => x.trim()).filter(Boolean)));
 
-  // M12.8 bridge:
+  // M12.8 / M12.12 bridge:
   // legacy coach patches still populate inScope / riskFocus / integrations.
   // During transition, normalize them into the locked reviewable shape too.
   const normalizedFunctionalScope = dedupe([
@@ -651,6 +694,20 @@ export function mergeArtifact(
   const normalizedNonFunctionalConstraints = dedupe([
     ...(patch.nonFunctionalConstraints ?? []),
     ...(patch.integrations ?? []).map((x) => `Integration dependency: ${x}`),
+  ]);
+
+  const normalizedEdgeCasesNegativePaths = dedupe([
+    ...(patch.edgeCasesNegativePaths ?? []),
+    ...(patch.edgeCases ?? []),
+  ]);
+
+  const normalizedOpenQuestionsClarifications = dedupe([
+    ...(patch.openQuestionsClarifications ?? []),
+    ...(patch.openQuestions ?? []),
+  ]);
+
+  const normalizedTestStrategyHooks = dedupe([
+    ...(patch.testStrategyHooks ?? []),
   ]);
 
   const nextRR: RefinedRequirement = {
@@ -702,9 +759,13 @@ export function mergeArtifact(
           ]),
         }
       : {}),
-    ...(patch.edgeCases?.length
+    ...(normalizedEdgeCasesNegativePaths.length
       ? {
-          edgeCases: dedupe([...(prevRR.edgeCases ?? []), ...patch.edgeCases]),
+          edgeCases: dedupe([...(prevRR.edgeCases ?? []), ...normalizedEdgeCasesNegativePaths]),
+          edgeCasesNegativePaths: dedupe([
+            ...(prevRR.edgeCasesNegativePaths ?? []),
+            ...normalizedEdgeCasesNegativePaths,
+          ]),
         }
       : {}),
     ...(normalizedNonFunctionalConstraints.length
@@ -715,11 +776,11 @@ export function mergeArtifact(
           ]),
         }
       : {}),
-    ...(patch.testStrategyHooks?.length
+    ...(normalizedTestStrategyHooks.length
       ? {
           testStrategyHooks: dedupe([
             ...(prevRR.testStrategyHooks ?? []),
-            ...patch.testStrategyHooks,
+            ...normalizedTestStrategyHooks,
           ]),
         }
       : {}),
@@ -744,11 +805,15 @@ export function mergeArtifact(
           ]),
         }
       : {}),
-    ...(patch.openQuestions?.length
+    ...(normalizedOpenQuestionsClarifications.length
       ? {
           openQuestions: dedupe([
             ...(prevRR.openQuestions ?? []),
-            ...patch.openQuestions,
+            ...normalizedOpenQuestionsClarifications,
+          ]),
+          openQuestionsClarifications: dedupe([
+            ...(prevRR.openQuestionsClarifications ?? []),
+            ...normalizedOpenQuestionsClarifications,
           ]),
         }
       : {}),
@@ -804,9 +869,14 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     for (const s of rr.acceptanceCriteria.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
-  if (rr.edgeCases?.length) {
+  const edgeCasesNegativePaths =
+    rr.edgeCasesNegativePaths?.length
+      ? rr.edgeCasesNegativePaths
+      : rr.edgeCases ?? [];
+
+  if (edgeCasesNegativePaths.length) {
     lines.push("- Edge Cases / Negative Paths:");
-    for (const s of rr.edgeCases.slice(0, 12)) lines.push(`  - ${s}`);
+    for (const s of edgeCasesNegativePaths.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
   if (rr.nonFunctionalConstraints?.length) {
@@ -842,9 +912,16 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     }
   }
 
-  if (rr.openQuestions?.length) {
+  const openQuestionsClarifications =
+    rr.openQuestionsClarifications?.length
+      ? rr.openQuestionsClarifications
+      : rr.openQuestions ?? [];
+
+  if (openQuestionsClarifications.length) {
     lines.push("- Open Questions / Clarifications:");
-    for (const s of rr.openQuestions.slice(0, 12)) lines.push(`  - ${s}`);
+    for (const s of openQuestionsClarifications.slice(0, 12)) {
+      lines.push(`  - ${s}`);
+    }
   }
 
   const suite = getTestSuite(artifact);

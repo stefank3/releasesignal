@@ -52,12 +52,14 @@ function normalizedRequirementToArtifactPatch(
     businessRules: requirement.businessRules,
     acceptanceCriteria: requirement.acceptanceCriteria,
     edgeCases: requirement.edgeCasesNegativePaths,
+    edgeCasesNegativePaths: requirement.edgeCasesNegativePaths,
     nonFunctionalConstraints: requirement.nonFunctionalConstraints,
     testStrategyHooks,
     riskAreas: requirement.testStrategyHooks.riskAreas,
     coverageTargets: requirement.testStrategyHooks.coverageTargets,
     minimalReproScenarios: requirement.minimalReproScenarios,
     openQuestions: requirement.openQuestionsClarifications,
+    openQuestionsClarifications: requirement.openQuestionsClarifications,
   };
 }
 
@@ -108,7 +110,7 @@ export async function runCoachFlow(args: {
 
     if (normalizedRequirementPatch) {
       // M12.12:
-      // Persist the normalized requirement using the existing artifact contract.
+      // Persist the normalized requirement using the bridge artifact contract.
       const nextArtifact = mergeArtifact(
         sessionArtifact,
         normalizedRequirementPatch
