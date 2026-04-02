@@ -6,10 +6,11 @@
 // M12.12 CHANGE:
 // - preserve legacy coach parsing compatibility
 // - add locked requirement-ingestion persistence path
-// - prefer normalized refined requirement artifact when available
+// - map normalized requirement output into the current artifact contract
+// - prefer normalized refined requirement persistence when available
 // - fall back to legacy continuity patch only when ingestion normalization is unavailable
 
-import type { SessionArtifact } from "@/lib/chat/artifact";
+import type { RefinedRequirement, SessionArtifact } from "@/lib/chat/artifact";
 import { mergeArtifact } from "@/lib/chat/artifact";
 import type { CoachResult } from "@/lib/framework/reviewSchema";
 
@@ -25,26 +26,38 @@ import {
 } from "@/lib/server/chat/modelResponseParser";
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 
-function normalizedRequirementToArtifactPatch(requirement: Awaited<
-  ReturnType<typeof parseRefinedRequirementResponse>
->): Partial<SessionArtifact> | null {
+function normalizedRequirementToArtifactPatch(
+  requirement: Awaited<ReturnType<typeof parseRefinedRequirementResponse>>
+): Partial<RefinedRequirement> | null {
   if (!requirement) return null;
 
+  const testStrategyHooks = Array.from(
+    new Set(
+      [
+        ...requirement.testStrategyHooks.riskAreas.map(
+          (item) => `Risk area: ${item}`
+        ),
+        ...requirement.testStrategyHooks.coverageTargets.map(
+          (item) => `Coverage target: ${item}`
+        ),
+      ]
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+
   return {
-    refinedRequirement: {
-      objective: requirement.objective,
-      functionalScope: requirement.functionalScope,
-      businessRules: requirement.businessRules,
-      acceptanceCriteria: requirement.acceptanceCriteria,
-      edgeCasesNegativePaths: requirement.edgeCasesNegativePaths,
-      nonFunctionalConstraints: requirement.nonFunctionalConstraints,
-      testStrategyHooks: {
-        riskAreas: requirement.testStrategyHooks.riskAreas,
-        coverageTargets: requirement.testStrategyHooks.coverageTargets,
-      },
-      minimalReproScenarios: requirement.minimalReproScenarios,
-      openQuestionsClarifications: requirement.openQuestionsClarifications,
-    },
+    objective: requirement.objective,
+    functionalScope: requirement.functionalScope,
+    businessRules: requirement.businessRules,
+    acceptanceCriteria: requirement.acceptanceCriteria,
+    edgeCases: requirement.edgeCasesNegativePaths,
+    nonFunctionalConstraints: requirement.nonFunctionalConstraints,
+    testStrategyHooks,
+    riskAreas: requirement.testStrategyHooks.riskAreas,
+    coverageTargets: requirement.testStrategyHooks.coverageTargets,
+    minimalReproScenarios: requirement.minimalReproScenarios,
+    openQuestions: requirement.openQuestionsClarifications,
   };
 }
 
@@ -95,8 +108,11 @@ export async function runCoachFlow(args: {
 
     if (normalizedRequirementPatch) {
       // M12.12:
-      // Prefer the locked normalized requirement artifact when available.
-      const nextArtifact = mergeArtifact(sessionArtifact, normalizedRequirementPatch);
+      // Persist the normalized requirement using the existing artifact contract.
+      const nextArtifact = mergeArtifact(
+        sessionArtifact,
+        normalizedRequirementPatch
+      );
 
       const saved = await saveSessionArtifact({
         sessionId: args.sessionId,
@@ -106,8 +122,8 @@ export async function runCoachFlow(args: {
       sessionArtifact = saved.artifact;
       artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
     } else if (coachParsed) {
-      // Legacy continuity fallback:
-      // Keep existing strategy flow working when only coach-shaped output is available.
+      // Legacy fallback:
+      // Keep existing strategy flow behavior when only coach-shaped output exists.
       const continuityPatch = buildCoachContinuityArtifactPatch({
         existingArtifact: sessionArtifact,
         coach: coachParsed,
