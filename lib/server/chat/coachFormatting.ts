@@ -9,6 +9,10 @@
 // - prefer openQuestionsClarifications over legacy openQuestions
 // - expand meaningful artifact detection for requirement-ingestion fields
 // - keep continuity patch behavior compatible with existing coach flow
+//
+// M12.12 FIX:
+// - suppress duplicate Test Strategy Hooks when they only mirror Risk Areas
+// - keep renderer defensive against stale artifact data from earlier sessions
 
 import { parseGuidedAnswerToRefinedRequirement } from "@/lib/chat/artifact";
 import type { SessionArtifact } from "@/lib/chat/artifact";
@@ -263,12 +267,29 @@ export function coachToTechnicalRequirementText(
       ? rr.openQuestionsClarifications
       : rr?.openQuestions;
 
+  const normalizedRiskAreas = (riskAreas ?? [])
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .filter(Boolean);
+
+  const distinctTestStrategyHooks = (rr?.testStrategyHooks ?? []).filter((value) => {
+    const text = String(value ?? "").trim();
+    if (!text) return false;
+
+    const normalized = text.toLowerCase();
+    const dePrefixed = normalized.replace(/^risk area:\s*/i, "").trim();
+
+    return (
+      !normalizedRiskAreas.includes(normalized) &&
+      !normalizedRiskAreas.includes(dePrefixed)
+    );
+  });
+
   pushListSection(lines, "Functional Scope:", functionalScope);
   pushListSection(lines, "Business Rules:", rr?.businessRules);
   pushListSection(lines, "Acceptance Criteria:", rr?.acceptanceCriteria);
   pushListSection(lines, "Edge Cases / Negative Paths:", edgeCasesNegativePaths);
   pushListSection(lines, "Non-Functional Constraints:", rr?.nonFunctionalConstraints);
-  pushListSection(lines, "Test Strategy Hooks:", rr?.testStrategyHooks);
+  pushListSection(lines, "Test Strategy Hooks:", distinctTestStrategyHooks);
   pushListSection(lines, "Risk Areas:", riskAreas);
   pushListSection(lines, "Coverage Targets:", rr?.coverageTargets);
   pushListSection(lines, "Minimal Repro Scenarios:", rr?.minimalReproScenarios);
