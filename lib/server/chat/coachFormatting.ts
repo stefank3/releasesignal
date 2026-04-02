@@ -2,12 +2,22 @@
 // M10 extraction:
 // Coach-mode formatting and continuity helpers moved out of route.ts
 // so the API route stays focused on orchestration.
+//
+// M12.12 CHANGE:
+// - align visible requirement rendering with bridge artifact fields
+// - prefer edgeCasesNegativePaths over legacy edgeCases
+// - prefer openQuestionsClarifications over legacy openQuestions
+// - expand meaningful artifact detection for requirement-ingestion fields
+// - keep continuity patch behavior compatible with existing coach flow
 
 import { parseGuidedAnswerToRefinedRequirement } from "@/lib/chat/artifact";
 import type { SessionArtifact } from "@/lib/chat/artifact";
 import type { CoachResult } from "@/lib/framework/reviewSchema";
 
-function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): string[] {
+function uniqueNonEmpty(
+  values: Array<string | null | undefined>,
+  max = 24
+): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
 
@@ -27,7 +37,12 @@ function uniqueNonEmpty(values: Array<string | null | undefined>, max = 24): str
   return out;
 }
 
-function pushListSection(lines: string[], title: string, values?: string[], max = 12): void {
+function pushListSection(
+  lines: string[],
+  title: string,
+  values?: string[],
+  max = 12
+): void {
   if (!Array.isArray(values) || values.length === 0) return;
 
   const cleaned = values
@@ -115,6 +130,7 @@ export function buildCoachContinuityArtifactPatch(args: {
 
   const edgeCases = uniqueNonEmpty(
     [
+      ...(existing?.edgeCasesNegativePaths ?? []),
       ...(existing?.edgeCases ?? []),
       ...(args.coach.highSignalApproach.minimalRepro ?? []),
     ],
@@ -131,11 +147,12 @@ export function buildCoachContinuityArtifactPatch(args: {
     integrations: existing?.integrations ?? [],
     riskFocus: uniqueNonEmpty([...(existing?.riskFocus ?? []), ...riskAreas], 12),
 
-    // locked M12.8 fields
+    // locked / bridge fields
     functionalScope,
     businessRules: existing?.businessRules ?? [],
     acceptanceCriteria,
     edgeCases,
+    edgeCasesNegativePaths: edgeCases,
     riskAreas,
   };
 
@@ -150,6 +167,7 @@ export function buildCoachContinuityArtifactPatch(args: {
     patch.businessRules.length > 0 ||
     patch.acceptanceCriteria.length > 0 ||
     patch.edgeCases.length > 0 ||
+    patch.edgeCasesNegativePaths.length > 0 ||
     patch.riskAreas.length > 0;
 
   return hasMeaningfulPatch ? patch : null;
@@ -182,7 +200,9 @@ export function coachToText(coach: CoachResult): string {
 
   if (coach.highSignalApproach.minimalRepro?.length) {
     lines.push("Minimal repro (optional):");
-    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) lines.push(`- ${s}`);
+    for (const s of coach.highSignalApproach.minimalRepro.slice(0, 8)) {
+      lines.push(`- ${s}`);
+    }
   }
 
   if (coach.optionalClarifications?.length) {
@@ -234,15 +254,33 @@ export function coachToTechnicalRequirementText(
     rr?.functionalScope?.length ? rr.functionalScope : rr?.inScope;
   const riskAreas =
     rr?.riskAreas?.length ? rr.riskAreas : rr?.riskFocus;
+  const edgeCasesNegativePaths =
+    rr?.edgeCasesNegativePaths?.length
+      ? rr.edgeCasesNegativePaths
+      : rr?.edgeCases;
+  const openQuestionsClarifications =
+    rr?.openQuestionsClarifications?.length
+      ? rr.openQuestionsClarifications
+      : rr?.openQuestions;
 
   pushListSection(lines, "Functional Scope:", functionalScope);
   pushListSection(lines, "Business Rules:", rr?.businessRules);
   pushListSection(lines, "Acceptance Criteria:", rr?.acceptanceCriteria);
-  pushListSection(lines, "Edge Cases / Negative Paths:", rr?.edgeCases);
+  pushListSection(lines, "Edge Cases / Negative Paths:", edgeCasesNegativePaths);
+  pushListSection(lines, "Non-Functional Constraints:", rr?.nonFunctionalConstraints);
+  pushListSection(lines, "Test Strategy Hooks:", rr?.testStrategyHooks);
   pushListSection(lines, "Risk Areas:", riskAreas);
+  pushListSection(lines, "Coverage Targets:", rr?.coverageTargets);
+  pushListSection(lines, "Minimal Repro Scenarios:", rr?.minimalReproScenarios);
+  pushListSection(
+    lines,
+    "Open Questions / Clarifications:",
+    openQuestionsClarifications
+  );
 
   return lines.join("\n").trim();
 }
+
 /**
  * Artifact is meaningful only if at least one refinedRequirement field has content.
  */
@@ -263,7 +301,14 @@ export function hasMeaningfulRefinedRequirement(
     hasList(rr.businessRules) ||
     hasList(rr.acceptanceCriteria) ||
     hasList(rr.edgeCases) ||
+    hasList(rr.edgeCasesNegativePaths) ||
+    hasList(rr.nonFunctionalConstraints) ||
+    hasList(rr.testStrategyHooks) ||
     hasList(rr.riskAreas) ||
+    hasList(rr.coverageTargets) ||
+    hasList(rr.minimalReproScenarios) ||
+    hasList(rr.openQuestions) ||
+    hasList(rr.openQuestionsClarifications) ||
     hasList(rr.inScope) ||
     hasList(rr.outOfScope) ||
     hasList(rr.integrations) ||
