@@ -24,6 +24,11 @@
 // - make workspace action availability easier to scan
 // - keep action gating hook-driven and artifact-driven
 // - preserve existing action behavior and session lock behavior
+//
+// M12.11 CHANGE:
+// - improve first-run clarity for toolbar sections
+// - make session vs workspace intent easier to understand
+// - add lightweight onboarding copy only; no workflow logic changes
 
 "use client";
 
@@ -68,6 +73,39 @@ function SectionHint(args: {
       }}
     >
       {args.text}
+    </div>
+  );
+}
+
+function HelpCallout(args: {
+  title: string;
+  text: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        marginBottom: 10,
+        padding: "8px 10px",
+        borderRadius: 12,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
+        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
+        color: isDark ? "#ffffff" : "#0f172a",
+        display: "grid",
+        gap: 4,
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.82 }}>
+        {args.title}
+      </div>
+      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72 }}>
+        {args.text}
+      </div>
     </div>
   );
 }
@@ -207,6 +245,12 @@ export default function ChatToolbar({
         </HeaderButton>
       </Toolbar>
 
+      <HelpCallout
+        title="Demo shortcuts"
+        text="These examples preload sample inputs for each workflow. They help first-time users explore the product without changing how real workspace actions behave."
+        resolvedTheme={resolvedTheme}
+      />
+
       <div style={{ height: 10 }} />
 
       {/* Session actions toolbar */}
@@ -278,6 +322,12 @@ export default function ChatToolbar({
         resolvedTheme={resolvedTheme}
       />
 
+      <HelpCallout
+        title="What this section does"
+        text="Use these controls to retry the latest request, start a fresh workspace, or switch into a new Strategy, Test Design, or Test Review session."
+        resolvedTheme={resolvedTheme}
+      />
+
       {/* M12.9:
           Contextual workspace actions are artifact-driven.
           Visibility stays in UI; eligibility/execution stays in hook.
@@ -305,6 +355,14 @@ export default function ChatToolbar({
 
       <SectionHint text={workspaceActionHint} resolvedTheme={resolvedTheme} />
 
+      {!hasWorkspace ? (
+        <HelpCallout
+          title="Before workspace actions appear"
+          text="Create or open a workspace first. Once a session exists and the required artifacts are present, valid actions such as Generate Tests will appear here."
+          resolvedTheme={resolvedTheme}
+        />
+      ) : null}
+
       {/* Mode lock banner (null-safe) */}
       {chat.modeLockMsg &&
         (() => {
@@ -326,6 +384,7 @@ export default function ChatToolbar({
               </div>
 
               <button
+                type="button"
                 onClick={() => {
                   chat.startNewSessionInMode(lock.requestedMode);
                   onAfterUiAction?.();

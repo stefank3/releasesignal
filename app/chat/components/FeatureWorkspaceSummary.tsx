@@ -11,6 +11,11 @@
 // - emphasize the latest persisted artifact state over generic readiness
 // - surface immediate next-step guidance without moving workflow logic
 // - keep all summary state artifact-driven and parent-derived
+//
+// M12.11 CHANGE:
+// - improve first-run readability of workspace state
+// - clarify what each persisted artifact means in the workflow
+// - strengthen empty-state guidance without changing any workflow behavior
 
 "use client";
 
@@ -97,6 +102,7 @@ function SummaryCard(args: {
   description: string;
   meta?: string;
   emphasis?: string;
+  helpText?: string;
   resolvedTheme: "light" | "dark";
 }) {
   const isDark = args.resolvedTheme === "dark";
@@ -152,6 +158,15 @@ function SummaryCard(args: {
         {args.description}
       </div>
 
+      {/* M12.11 NOTE:
+          Lightweight onboarding/help copy for each artifact card.
+          Informational only; no logic ownership. */}
+      {args.helpText ? (
+        <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72 }}>
+          {args.helpText}
+        </div>
+      ) : null}
+
       {args.meta ? (
         <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
           {args.meta}
@@ -162,7 +177,9 @@ function SummaryCard(args: {
 }
 
 function normalizeStageTitle(title: string | undefined): string {
-  return String(title ?? "").replace(/^Workspace stage:\s*/i, "").trim() || "Unknown";
+  return (
+    String(title ?? "").replace(/^Workspace stage:\s*/i, "").trim() || "Unknown"
+  );
 }
 
 function toRelativeStrength(score: number | null | undefined): string | null {
@@ -192,6 +209,8 @@ export default function FeatureWorkspaceSummary({
   // - use existing parent-derived workflow status only
   const currentStage = normalizeStageTitle(chat.workflowStatus.title);
   const nextAction = chat.workflowStatus.nextAction;
+
+  const hasAnyArtifacts = requirementReady || suiteReady || reviewReady;
 
   const requirementEmphasis = requirementReady
     ? "Latest refined requirement is available"
@@ -237,6 +256,15 @@ export default function FeatureWorkspaceSummary({
           <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
             This session is tracked as a QA workspace backed by persisted artifacts.
           </div>
+
+          {/* M12.11 NOTE:
+              Make the empty workspace meaning explicit for first-time users,
+              while keeping summary state fully artifact-driven. */}
+          <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
+            {hasAnyArtifacts
+              ? "The cards below show the latest saved requirement, suite, and review state for this workspace."
+              : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
+          </div>
         </div>
       </div>
 
@@ -256,6 +284,11 @@ export default function FeatureWorkspaceSummary({
               ? "A refined requirement is present and can drive downstream workflow actions."
               : "The feature scope still needs refinement before downstream workflow steps."
           }
+          helpText={
+            requirementReady
+              ? "This is the saved requirement artifact used as the basis for test design."
+              : "Start here when the feature scope, rules, or risks still need to be clarified."
+          }
           meta={
             requirementReady
               ? "Strategy artifact present"
@@ -273,6 +306,11 @@ export default function FeatureWorkspaceSummary({
               ? "A generated test suite is available for this workspace."
               : "No persisted suite exists yet for this feature."
           }
+          helpText={
+            suiteReady
+              ? "This is the latest saved suite artifact for the current requirement."
+              : "Generate the suite after the requirement is clear and saved."
+          }
           meta={
             suiteReady
               ? `${suiteCount} case${suiteCount === 1 ? "" : "s"} in the current persisted suite`
@@ -289,6 +327,11 @@ export default function FeatureWorkspaceSummary({
             reviewReady
               ? "A persisted review result is available for the current suite."
               : "Coverage review has not yet been completed for this suite."
+          }
+          helpText={
+            reviewReady
+              ? "This reflects the latest saved review outcome for the current suite."
+              : "Run review after a suite exists to evaluate coverage, gaps, and improvement areas."
           }
           meta={
             reviewReady

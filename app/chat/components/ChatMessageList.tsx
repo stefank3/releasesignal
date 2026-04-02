@@ -47,6 +47,11 @@
 // - make older stacked suite outputs visually secondary
 // - keep latest-visibility state derived only from rendered item order
 // - avoid altering workflow logic or execution behavior
+//
+// M12.11 CHANGE:
+// - improve first-run empty-state clarity inside the message area
+// - add lightweight presentational onboarding labels for assistant artifacts
+// - keep all action visibility and workflow state parent-driven
 
 "use client";
 
@@ -366,6 +371,91 @@ function ArtifactStatusPill(args: {
   );
 }
 
+/**
+ * M12.11 CHANGE:
+ * Lightweight onboarding label for first-run readability inside long sessions.
+ * This stays descriptive only and does not control actions or visibility.
+ */
+function ContextLabel(args: {
+  label: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        width: "fit-content",
+        padding: "4px 9px",
+        borderRadius: 999,
+        fontSize: 10,
+        fontWeight: 900,
+        letterSpacing: 0.25,
+        textTransform: "uppercase",
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
+        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.035)",
+        color: isDark ? "#ffffff" : "#0f172a",
+        opacity: 0.82,
+      }}
+    >
+      {args.label}
+    </div>
+  );
+}
+
+function EmptyStateCard(args: {
+  mode: Mode;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  const title =
+    args.mode === "coach"
+      ? "Start with the requirement"
+      : args.mode === "review"
+        ? "Start with the suite to review"
+        : "Start with the feature or saved requirement";
+
+  const body =
+    args.mode === "coach"
+      ? "Describe the feature, release area, or system under test. The workspace will help clarify scope, risks, and the next step."
+      : args.mode === "review"
+        ? "Paste the current test suite or plan to review. The workspace will return a score, coverage breakdown, and prioritized improvements."
+        : "Describe the feature under test or use the saved refined requirement to generate a persistent test suite for this workspace.";
+
+  const footer =
+    args.mode === "coach"
+      ? "Once the requirement is clear and saved, continue into test design."
+      : args.mode === "review"
+        ? "Use review after a suite exists and is ready for evaluation."
+        : "Generated suites can then be reviewed and improved as the session evolves.";
+
+  return (
+    <div
+      style={{
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 14,
+        padding: 14,
+        background: isDark ? "rgba(255,255,255,0.03)" : "rgba(15,23,42,0.025)",
+        color: isDark ? "#ffffff" : "#0f172a",
+        display: "grid",
+        gap: 8,
+      }}
+    >
+      <ContextLabel label="Empty state" resolvedTheme={args.resolvedTheme} />
+      <div style={{ fontSize: 13, fontWeight: 950 }}>{title}</div>
+      <div style={{ fontSize: 12, lineHeight: 1.5, opacity: 0.8 }}>{body}</div>
+      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>{footer}</div>
+    </div>
+  );
+}
+
 type Props = {
   items: ChatItem[];
   mode: Mode;
@@ -422,9 +512,6 @@ export default function ChatMessageList({
 }: Props) {
   const isDark = resolvedTheme === "dark";
 
-  const emptyStateColor = isDark
-    ? "rgba(255,255,255,0.78)"
-    : "rgba(15,23,42,0.78)";
   const requestIdColor = isDark ? "#ffffff" : "#0f172a";
   const unknownColor = isDark
     ? "rgba(255,255,255,0.7)"
@@ -437,15 +524,7 @@ export default function ChatMessageList({
   } = getLatestArtifactIndexes(items);
 
   if (items.length === 0) {
-    return (
-      <div style={{ color: emptyStateColor, fontSize: 13, lineHeight: 1.55 }}>
-        {mode === "coach"
-          ? "Describe a feature. I’ll draft a risk-based approach + test ideas immediately, then refine the requirement as the session evolves."
-          : mode === "review"
-            ? "Paste test cases or a test plan. I’ll return a score, breakdown, and prioritized improvements."
-            : "Describe the feature or use the Refined Requirement. I’ll generate a persistent plain-text test suite that can evolve across this session."}
-      </div>
-    );
+    return <EmptyStateCard mode={mode} resolvedTheme={resolvedTheme} />;
   }
 
   return (
@@ -502,15 +581,21 @@ export default function ChatMessageList({
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               {!isUser && isRequirement ? (
-                <ArtifactStatusPill
-                  label={
-                    isLatestRequirement
-                      ? "Latest refined requirement"
-                      : "Earlier refined requirement"
-                  }
-                  resolvedTheme={resolvedTheme}
-                  tone={isLatestRequirement ? "latest" : "previous"}
-                />
+                <>
+                  <ContextLabel
+                    label="Requirement artifact"
+                    resolvedTheme={resolvedTheme}
+                  />
+                  <ArtifactStatusPill
+                    label={
+                      isLatestRequirement
+                        ? "Latest refined requirement"
+                        : "Earlier refined requirement"
+                    }
+                    resolvedTheme={resolvedTheme}
+                    tone={isLatestRequirement ? "latest" : "previous"}
+                  />
+                </>
               ) : null}
 
               <div
@@ -530,7 +615,7 @@ export default function ChatMessageList({
                       onRefineRequirementAction={onRefineRequirementAction}
                       canRefineRequirement={canRefineRequirement}
                       isRefiningRequirement={isRefiningRequirement}
-                        />
+                    />
                   </div>
                 ) : (
                   <div style={bubbleStyle}>
@@ -571,6 +656,7 @@ export default function ChatMessageList({
 
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
+              <ContextLabel label="Review artifact" resolvedTheme={resolvedTheme} />
               <ArtifactStatusPill
                 label={isLatestReview ? "Latest review result" : "Earlier review result"}
                 resolvedTheme={resolvedTheme}
@@ -594,15 +680,21 @@ export default function ChatMessageList({
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
               {isPersistedSuite ? (
-                <ArtifactStatusPill
-                  label={
-                    isLatestPersistedSuite
-                      ? "Latest persistent suite"
-                      : "Earlier suite snapshot"
-                  }
-                  resolvedTheme={resolvedTheme}
-                  tone={isLatestPersistedSuite ? "latest" : "previous"}
-                />
+                <>
+                  <ContextLabel
+                    label="Test suite artifact"
+                    resolvedTheme={resolvedTheme}
+                  />
+                  <ArtifactStatusPill
+                    label={
+                      isLatestPersistedSuite
+                        ? "Latest persistent suite"
+                        : "Earlier suite snapshot"
+                    }
+                    resolvedTheme={resolvedTheme}
+                    tone={isLatestPersistedSuite ? "latest" : "previous"}
+                  />
+                </>
               ) : null}
 
               {workflowGuidance ? (

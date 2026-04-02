@@ -24,6 +24,12 @@
 // CHANGE (M10 Remaining Work - Assistant Tone Alignment):
 // - shift helper copy from chatbot-style interaction to workflow-assistant guidance
 // - keep the panel focused on requirement refinement as part of the QA workflow
+//
+// M12.11 CHANGE:
+// - improve first-run clarity for the Strategy panel
+// - make the paste-and-run flow easier to understand
+// - add lightweight onboarding/help copy only
+// - keep all workflow behavior unchanged
 
 "use client";
 
@@ -103,6 +109,7 @@ function SmallButton({
 
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       title={title}
@@ -228,6 +235,56 @@ function Surface({
   );
 }
 
+function HelpBox({
+  title,
+  text,
+  resolvedTheme = "dark",
+}: {
+  title: string;
+  text: string;
+  resolvedTheme?: ResolvedTheme;
+}) {
+  const isDark = resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        padding: "8px 10px",
+        borderRadius: 12,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.08)"
+          : "1px solid rgba(15,23,42,0.08)",
+        background: isDark
+          ? "rgba(255,255,255,0.03)"
+          : "rgba(255,255,255,0.72)",
+        display: "grid",
+        gap: 4,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 900,
+          opacity: 0.82,
+          color: isDark ? "#fff" : "#0f172a",
+        }}
+      >
+        {title}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          lineHeight: 1.45,
+          opacity: 0.72,
+          color: isDark ? "#fff" : "#0f172a",
+        }}
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
 function focusChatInputBestEffort() {
   const el = document.querySelector("input:not([disabled]), textarea:not([disabled])") as
     | HTMLInputElement
@@ -321,6 +378,12 @@ export default function StrategyPanel({
         </Pill>
       </div>
 
+      <HelpBox
+        title="How to use this panel"
+        text="Fill in the structure below, paste it into the main input, then run Strategy. This panel helps prepare requirement content, but it does not save or run the workflow by itself."
+        resolvedTheme={resolvedTheme}
+      />
+
       <Surface resolvedTheme={resolvedTheme}>
         <SectionTitle resolvedTheme={resolvedTheme}>
           Refine requirement
@@ -335,8 +398,8 @@ export default function StrategyPanel({
             color: isDark ? "#fff" : "#0f172a",
           }}
         >
-          Refine the requirement structure below, then paste it into the main
-          workflow input.
+          Capture the main objective, risks, scope, and success criteria here.
+          Then paste the structured result into the main workflow input.
         </div>
 
         <div style={{ display: "grid", gap: 9 }}>
@@ -452,6 +515,12 @@ export default function StrategyPanel({
           {generatedStructuredText}
         </div>
       </Surface>
+
+      <HelpBox
+        title="What happens after paste"
+        text="After pasting into the main input, run the Strategy step there. The resulting refined requirement will appear in the conversation area and can then be reused by Test Design."
+        resolvedTheme={resolvedTheme}
+      />
 
       {hasPinned ? (
         <div
