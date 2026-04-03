@@ -2,8 +2,20 @@
 // M10 Pass 8
 // Extract coach-mode orchestration from route.ts so the API route
 // acts as a controller instead of owning workflow logic.
+//
+// M12.12 CHANGE:
+// - preserve legacy coach parsing compatibility
+// - add locked requirement-ingestion persistence path
+// - map normalized requirement output into the current artifact contract
+// - prefer normalized refined requirement persistence when available
+// - fall back to legacy continuity patch only when ingestion normalization is unavailable
+//
+// M12.12 FIX:
+// - keep Risk Areas separate from Test Strategy Hooks
+// - do not synthesize hooks from risk areas or coverage targets
+// - persist the normalized requirement without reintroducing duplicate semantic sections
 
-import type { SessionArtifact } from "@/lib/chat/artifact";
+import type { RefinedRequirement, SessionArtifact } from "@/lib/chat/artifact";
 import { mergeArtifact } from "@/lib/chat/artifact";
 import type { CoachResult } from "@/lib/framework/reviewSchema";
 
@@ -13,8 +25,37 @@ import {
   shouldReturnTechnicalRequirement,
 } from "@/lib/server/chat/coachFormatting";
 
-import { parseCoachResponse } from "@/lib/server/chat/modelResponseParser";
+import {
+  parseCoachResponse,
+  parseRefinedRequirementResponse,
+} from "@/lib/server/chat/modelResponseParser";
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
+
+function normalizedRequirementToArtifactPatch(
+  requirement: Awaited<ReturnType<typeof parseRefinedRequirementResponse>>
+): Partial<RefinedRequirement> | null {
+  if (!requirement) return null;
+
+  return {
+    objective: requirement.objective,
+    functionalScope: requirement.functionalScope,
+    businessRules: requirement.businessRules,
+    acceptanceCriteria: requirement.acceptanceCriteria,
+    edgeCases: requirement.edgeCasesNegativePaths,
+    edgeCasesNegativePaths: requirement.edgeCasesNegativePaths,
+    nonFunctionalConstraints: requirement.nonFunctionalConstraints,
+
+    // Keep hooks distinct.
+    // Do not mirror Risk Areas or Coverage Targets into this field.
+    testStrategyHooks: [],
+
+    riskAreas: requirement.testStrategyHooks.riskAreas,
+    coverageTargets: requirement.testStrategyHooks.coverageTargets,
+    minimalReproScenarios: requirement.minimalReproScenarios,
+    openQuestions: requirement.openQuestionsClarifications,
+    openQuestionsClarifications: requirement.openQuestionsClarifications,
+  };
+}
 
 export async function runCoachFlow(args: {
   rawReply: string;
@@ -31,11 +72,23 @@ export async function runCoachFlow(args: {
   sessionArtifact: SessionArtifact | null;
   artifactUpdatedAtIso: string | null;
 }> {
-  const coachParsed = await parseCoachResponse(args.rawReply);
+  const [coachParsedRaw, normalizedRequirement] = await Promise.all([
+    parseCoachResponse(args.rawReply),
+    parseRefinedRequirementResponse(args.rawReply),
+  ]);
+
+  const coachParsed = coachParsedRaw
+    ? {
+        ...coachParsedRaw,
+        optionalClarifications:
+          coachParsedRaw.optionalClarifications?.slice(0, 3) ?? [],
+      }
+    : null;
+
   let sessionArtifact = args.sessionArtifact;
   let artifactUpdatedAtIso = args.artifactUpdatedAtIso;
 
-  if (!coachParsed) {
+  if (!coachParsed && !normalizedRequirement) {
     return {
       coachParsed: null,
       replyTextForUser:
@@ -45,20 +98,15 @@ export async function runCoachFlow(args: {
     };
   }
 
-  coachParsed.optionalClarifications =
-    coachParsed.optionalClarifications?.slice(0, 3) ?? [];
-
   if (!args.explicitRegenerationRequest) {
-    const continuityPatch = buildCoachContinuityArtifactPatch({
-      existingArtifact: sessionArtifact,
-      coach: coachParsed,
-      latestUserMessage: args.message,
-      guidedAnswer: args.guidedAnswer,
-      weakInput: args.weakInput,
-    });
+    const normalizedRequirementPatch =
+      normalizedRequirementToArtifactPatch(normalizedRequirement);
 
-    if (continuityPatch) {
-      const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
+    if (normalizedRequirementPatch) {
+      const nextArtifact = mergeArtifact(
+        sessionArtifact,
+        normalizedRequirementPatch
+      );
 
       const saved = await saveSessionArtifact({
         sessionId: args.sessionId,
@@ -67,6 +115,26 @@ export async function runCoachFlow(args: {
 
       sessionArtifact = saved.artifact;
       artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
+    } else if (coachParsed) {
+      const continuityPatch = buildCoachContinuityArtifactPatch({
+        existingArtifact: sessionArtifact,
+        coach: coachParsed,
+        latestUserMessage: args.message,
+        guidedAnswer: args.guidedAnswer,
+        weakInput: args.weakInput,
+      });
+
+      if (continuityPatch) {
+        const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
+
+        const saved = await saveSessionArtifact({
+          sessionId: args.sessionId,
+          artifact: nextArtifact,
+        });
+
+        sessionArtifact = saved.artifact;
+        artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
+      }
     }
   }
 
@@ -74,15 +142,13 @@ export async function runCoachFlow(args: {
     ? null
     : sessionArtifact;
 
-const replyTextForUser = shouldReturnTechnicalRequirement({
-  guidedAnswer: args.guidedAnswer,
-  artifact: effectiveArtifactForReply,
-})
-  ? coachToTechnicalRequirementText(
-      coachParsed,
-      effectiveArtifactForReply
-    )
-  : "I couldn't build a refined requirement from that input. Please retry.";
+  const replyTextForUser =
+    shouldReturnTechnicalRequirement({
+      guidedAnswer: args.guidedAnswer,
+      artifact: effectiveArtifactForReply,
+    }) && coachParsed
+      ? coachToTechnicalRequirementText(coachParsed, effectiveArtifactForReply)
+      : "I couldn't build a refined requirement from that input. Please retry.";
 
   return {
     coachParsed,
