@@ -24,6 +24,12 @@
 // - expand partial requirement payloads into the locked section shape
 // - derive missing sections deterministically from available requirement content
 // - avoid persisting short under-filled refined requirements when enough signals exist
+//
+// M12.12 CLEANUP PASS:
+// - improve deterministic wording quality for derived requirement sections
+// - make business rules read like rules instead of transformed acceptance bullets
+// - make edge cases and repro scenarios read like concrete scenarios
+// - keep behavior deterministic and artifact-driven
 
 import { extractJsonObject } from "@/lib/chat/json";
 import { repairJsonOnce } from "@/lib/chat/repair";
@@ -100,15 +106,54 @@ function toOptionalText(value: unknown): string | null {
   return text ? text : null;
 }
 
+function normalizeSentence(value: string): string {
+  const text = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+
+  if (!text) return "";
+
+  const withoutTrailing = text.replace(/[.]+$/, "").trim();
+  if (!withoutTrailing) return "";
+
+  return `${withoutTrailing}.`;
+}
+
+function normalizePhrase(value: string): string {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/[.]+$/, "")
+    .trim();
+}
+
 function appendUnique(target: string[], value: string | null, max: number): void {
   if (!value) return;
   if (target.length >= max) return;
 
-  const key = value.toLowerCase();
+  const cleaned = normalizeSentence(value);
+  if (!cleaned) return;
+
+  const key = cleaned.toLowerCase();
   const seen = new Set(target.map((item) => item.toLowerCase()));
   if (seen.has(key)) return;
 
-  target.push(value);
+  target.push(cleaned);
+}
+
+function appendUniqueRaw(target: string[], value: string | null, max: number): void {
+  if (!value) return;
+  if (target.length >= max) return;
+
+  const cleaned = normalizePhrase(value);
+  if (!cleaned) return;
+
+  const key = cleaned.toLowerCase();
+  const seen = new Set(target.map((item) => item.toLowerCase()));
+  if (seen.has(key)) return;
+
+  target.push(cleaned);
 }
 
 function mergeUnique(values: Array<string[]>, max: number): string[] {
@@ -278,52 +323,81 @@ function buildBusinessRules(args: {
   acceptanceCriteria: string[];
   riskAreas: string[];
 }): string[] {
-  const explicitRules = toTrimmedStringArray(args.requirement.businessRules, 12);
-  if (explicitRules.length) return explicitRules;
+  const explicitRules = toTrimmedStringArray(args.requirement.businessRules, 12)
+    .map((item) => normalizeSentence(item))
+    .filter(Boolean);
+
+  if (explicitRules.length) {
+    return Array.from(new Set(explicitRules.map((item) => item.trim()))).slice(0, 12);
+  }
 
   const out: string[] = [];
 
   for (const criterion of args.acceptanceCriteria) {
-    const text = criterion.replace(/\.$/, "").trim();
+    const text = normalizePhrase(criterion);
     if (!text) continue;
 
-    if (/must|only|shall|cannot|should not|do not|does not|prevent/i.test(text)) {
+    if (/must|only|shall|cannot|should not|do not|does not/i.test(text)) {
       appendUnique(out, text, 12);
       continue;
     }
 
     if (/retry/i.test(text)) {
-      appendUnique(out, "Retry behavior must remain bounded and respect configured retry limits.", 12);
+      appendUnique(
+        out,
+        "Retry behavior must remain bounded and respect configured retry limits",
+        12
+      );
     }
 
     if (/duplicate|idempot/i.test(text)) {
-      appendUnique(out, "Duplicate or repeated processing must not create duplicate downstream side effects.", 12);
+      appendUnique(
+        out,
+        "Duplicate or repeated processing must not create duplicate downstream side effects",
+        12
+      );
     }
 
     if (/fulfillment/i.test(text) && /payment|email/i.test(text)) {
       appendUnique(
         out,
-        "Fulfillment updates must occur only after successful upstream payment and email steps.",
+        "Fulfillment updates must occur only after successful payment validation and email confirmation",
         12
       );
     }
 
     if (/log/i.test(text)) {
-      appendUnique(out, "Failures, retries, and final outcomes must be logged accurately.", 12);
+      appendUnique(
+        out,
+        "Failures, retries, and final outcomes must be logged accurately",
+        12
+      );
+    }
+
+    if (/partial failures?/i.test(text) || /inconsistent/i.test(text)) {
+      appendUnique(
+        out,
+        "Partial failures after payment validation must not leave fulfillment status in an inconsistent state",
+        12
+      );
     }
   }
 
   for (const scopeItem of args.functionalScope) {
     if (/payment/i.test(scopeItem)) {
-      appendUnique(out, "Order processing must halt when payment validation fails.", 12);
+      appendUnique(out, "Order processing must halt when payment validation fails", 12);
     }
     if (/email/i.test(scopeItem)) {
-      appendUnique(out, "Confirmation email must be sent only once per successful order.", 12);
-    }
-    if (/fulfillment/i.test(scopeItem)) {
       appendUnique(
         out,
-        "Fulfillment status must reflect the final validated order state across systems.",
+        "Confirmation email must be sent only once per successful order",
+        12
+      );
+    }
+    if (/fulfillment|warehouse/i.test(scopeItem)) {
+      appendUnique(
+        out,
+        "Fulfillment status must reflect the final validated order state across systems",
         12
       );
     }
@@ -336,7 +410,7 @@ function buildBusinessRules(args: {
   ) {
     appendUnique(
       out,
-      "Cross-system state must remain consistent across retries, duplicates, and partial failures.",
+      "Cross-system state must remain consistent across retries, duplicates, and partial failures",
       12
     );
   }
@@ -344,7 +418,7 @@ function buildBusinessRules(args: {
   if (!out.length && args.objective) {
     appendUnique(
       out,
-      `System behavior must satisfy the stated objective: ${args.objective.replace(/\.$/, "")}.`,
+      `System behavior must satisfy the stated objective: ${normalizePhrase(args.objective)}`,
       12
     );
   }
@@ -364,54 +438,93 @@ function buildEdgeCasesNegativePaths(args: {
       toTrimmedStringArray(args.requirement.negativePaths, 12),
     ],
     12
-  );
+  )
+    .map((item) => normalizeSentence(item))
+    .filter(Boolean);
+
   if (explicit.length) return explicit;
 
   const out: string[] = [];
 
   for (const risk of args.riskAreas) {
-    const text = risk.replace(/\.$/, "").trim();
+    const text = normalizePhrase(risk);
     if (!text) continue;
 
     if (/duplicate/i.test(text)) {
-      appendUnique(out, "Duplicate request or duplicate side-effect attempt is received.", 12);
+      appendUnique(
+        out,
+        "A duplicate request or duplicate side-effect attempt is received during processing",
+        12
+      );
     } else if (/retry|transient/i.test(text)) {
-      appendUnique(out, "Transient integration failure triggers retry behavior.", 12);
+      appendUnique(
+        out,
+        "A transient integration failure occurs and triggers the retry path",
+        12
+      );
     } else if (/fulfillment|partial|inconsistent/i.test(text)) {
-      appendUnique(out, "Partial downstream failure occurs after an upstream step succeeds.", 12);
+      appendUnique(
+        out,
+        "A downstream step fails after an upstream step has already succeeded",
+        12
+      );
     } else if (/resource exhaustion|infinite retry/i.test(text)) {
-      appendUnique(out, "Retry path exceeds safe limits and must stop without entering an infinite loop.", 12);
+      appendUnique(
+        out,
+        "Retries approach the configured limit and must stop without entering an infinite loop",
+        12
+      );
     } else {
       appendUnique(out, text, 12);
     }
   }
 
   for (const criterion of args.acceptanceCriteria) {
-    if (/transient/i.test(criterion)) {
-      appendUnique(out, "Transient payment validation failure occurs during order processing.", 12);
+    if (/transient/i.test(criterion) && /payment/i.test(criterion)) {
+      appendUnique(
+        out,
+        "Payment validation experiences a transient failure during order processing",
+        12
+      );
     }
     if (/duplicate email/i.test(criterion) || /multiple emails/i.test(criterion)) {
-      appendUnique(out, "Duplicate email send attempt is made during retry or replay.", 12);
+      appendUnique(
+        out,
+        "An email send is retried and must not produce a duplicate confirmation",
+        12
+      );
     }
     if (/fulfillment/i.test(criterion) && /payment|email/i.test(criterion)) {
       appendUnique(
         out,
-        "Fulfillment update is attempted before payment or email completion.",
+        "A fulfillment update is attempted before payment or email completion",
         12
       );
     }
   }
 
   if (args.functionalScope.some((item) => /payment/i.test(item))) {
-    appendUnique(out, "External payment provider is unavailable or returns transient failure.", 12);
+    appendUnique(
+      out,
+      "The external payment provider is unavailable or returns a transient failure",
+      12
+    );
   }
 
   if (args.functionalScope.some((item) => /email/i.test(item))) {
-    appendUnique(out, "Confirmation email service fails or retries unexpectedly.", 12);
+    appendUnique(
+      out,
+      "The confirmation email service fails or retries unexpectedly",
+      12
+    );
   }
 
   if (args.functionalScope.some((item) => /fulfillment|warehouse/i.test(item))) {
-    appendUnique(out, "Warehouse service returns delayed or out-of-order fulfillment update.", 12);
+    appendUnique(
+      out,
+      "The warehouse service returns a delayed or out-of-order fulfillment update",
+      12
+    );
   }
 
   return out.slice(0, 12);
@@ -429,32 +542,59 @@ function buildNonFunctionalConstraints(args: {
       toTrimmedStringArray(args.requirement.constraints, 12),
     ],
     12
-  );
+  )
+    .map((item) => normalizeSentence(item))
+    .filter(Boolean);
+
   if (explicit.length) return explicit;
 
   const out: string[] = [];
 
   if (args.context && /consistent state|cross-system|across systems/i.test(args.context)) {
-    appendUnique(out, "Cross-system state transitions must remain consistent across payment, email, and fulfillment flows.", 12);
+    appendUnique(
+      out,
+      "Cross-system state transitions must remain consistent across payment, email, and fulfillment flows",
+      12
+    );
   }
 
   if (args.integrations.length) {
-    appendUnique(out, "External integration failures must be observable through reliable logging and failure tracking.", 12);
+    appendUnique(
+      out,
+      "External integration failures must be observable through reliable logging and failure tracking",
+      12
+    );
   }
 
   if (args.riskAreas.some((risk) => /resource exhaustion|retry/i.test(risk))) {
-    appendUnique(out, "Retry behavior must remain bounded to avoid retry storms and resource exhaustion.", 12);
+    appendUnique(
+      out,
+      "Retry behavior must remain bounded to avoid retry storms and resource exhaustion",
+      12
+    );
   }
 
   if (args.riskAreas.some((risk) => /inconsistent|partial|data inconsistenc/i.test(risk))) {
-    appendUnique(out, "Asynchronous processing must preserve data integrity and final state consistency.", 12);
+    appendUnique(
+      out,
+      "Asynchronous processing must preserve data integrity and final state consistency",
+      12
+    );
   }
 
   if (args.riskAreas.some((risk) => /duplicate|idempot/i.test(risk))) {
-    appendUnique(out, "Idempotency controls must prevent duplicate downstream side effects.", 12);
+    appendUnique(
+      out,
+      "Idempotency controls must prevent duplicate downstream side effects",
+      12
+    );
   }
 
-  appendUnique(out, "System logs must accurately capture failures, retries, and final outcomes.", 12);
+  appendUnique(
+    out,
+    "System logs must accurately capture failures, retries, and final outcomes",
+    12
+  );
 
   return out.slice(0, 12);
 }
@@ -472,39 +612,39 @@ function buildCoverageTargets(args: {
     if (!text) continue;
 
     if (/payment/i.test(text) && /retry|transient/i.test(text)) {
-      appendUnique(out, "Transient payment failure and recovery path", 8);
+      appendUniqueRaw(out, "Transient payment failure and recovery path", 8);
     } else if (/duplicate email|multiple emails|email/i.test(text) && /duplicate|idempot/i.test(text)) {
-      appendUnique(out, "Duplicate email suppression and idempotency path", 8);
+      appendUniqueRaw(out, "Duplicate email suppression and idempotency path", 8);
     } else if (/fulfillment/i.test(text)) {
-      appendUnique(out, "Fulfillment sequencing and final state consistency", 8);
+      appendUniqueRaw(out, "Fulfillment sequencing and final state consistency", 8);
     } else if (/log/i.test(text)) {
-      appendUnique(out, "Logging and retry outcome traceability", 8);
+      appendUniqueRaw(out, "Logging and retry outcome traceability", 8);
     } else if (/retry limit|infinite retry/i.test(text)) {
-      appendUnique(out, "Retry limit enforcement path", 8);
+      appendUniqueRaw(out, "Retry limit enforcement path", 8);
     }
   }
 
   for (const risk of args.riskAreas) {
     if (/resource exhaustion|infinite retry/i.test(risk)) {
-      appendUnique(out, "Retry storm and bounded-retry protection", 8);
+      appendUniqueRaw(out, "Retry storm and bounded-retry protection", 8);
     }
     if (/inconsistent|partial|data inconsistenc/i.test(risk)) {
-      appendUnique(out, "Partial-failure consistency checks", 8);
+      appendUniqueRaw(out, "Partial-failure consistency checks", 8);
     }
   }
 
   if (!out.length) {
     for (const scopeItem of args.functionalScope) {
-      if (/payment/i.test(scopeItem)) appendUnique(out, "Payment validation flow", 8);
-      if (/email/i.test(scopeItem)) appendUnique(out, "Email confirmation flow", 8);
+      if (/payment/i.test(scopeItem)) appendUniqueRaw(out, "Payment validation flow", 8);
+      if (/email/i.test(scopeItem)) appendUniqueRaw(out, "Email confirmation flow", 8);
       if (/fulfillment|warehouse/i.test(scopeItem)) {
-        appendUnique(out, "Fulfillment update flow", 8);
+        appendUniqueRaw(out, "Fulfillment update flow", 8);
       }
     }
   }
 
   if (!out.length && args.edgeCasesNegativePaths.length) {
-    appendUnique(out, "Negative-path and failure-handling coverage", 8);
+    appendUniqueRaw(out, "Negative-path and failure-handling coverage", 8);
   }
 
   return out.slice(0, 8);
@@ -515,21 +655,42 @@ function buildMinimalReproScenarios(args: {
   edgeCasesNegativePaths: string[];
   acceptanceCriteria: string[];
 }): string[] {
-  const explicit = buildMinimalRepro(args.requirement);
+  const explicit = buildMinimalRepro(args.requirement)
+    .map((item) => normalizeSentence(item))
+    .filter(Boolean);
+
   if (explicit.length) return explicit;
 
   const out: string[] = [];
 
   for (const item of args.edgeCasesNegativePaths) {
-    const text = item.replace(/\.$/, "").trim();
+    const text = normalizePhrase(item);
     if (!text) continue;
 
     if (/payment/i.test(text) && /transient|retry|failure|timeout/i.test(text)) {
-      appendUnique(out, "Force transient payment validation failure and verify bounded retry then success or stop.", 8);
+      appendUnique(
+        out,
+        "Force a transient payment validation failure and verify bounded retry followed by success or graceful stop",
+        8
+      );
     } else if (/duplicate email|email/i.test(text) && /duplicate|retry/i.test(text)) {
-      appendUnique(out, "Force duplicate email send attempt and verify suppression of duplicate email output.", 8);
+      appendUnique(
+        out,
+        "Trigger a duplicate email send attempt and verify that only one confirmation is emitted",
+        8
+      );
     } else if (/fulfillment|partial|inconsistent/i.test(text)) {
-      appendUnique(out, "Force partial downstream failure and verify final fulfillment state remains consistent.", 8);
+      appendUnique(
+        out,
+        "Force a downstream partial failure and verify that fulfillment state remains consistent",
+        8
+      );
+    } else if (/duplicate request/i.test(text)) {
+      appendUnique(
+        out,
+        "Submit the same logical request twice and verify that duplicate downstream effects are prevented",
+        8
+      );
     } else {
       appendUnique(out, text, 8);
     }
@@ -537,7 +698,11 @@ function buildMinimalReproScenarios(args: {
 
   for (const criterion of args.acceptanceCriteria) {
     if (/retry limit|infinite retry/i.test(criterion)) {
-      appendUnique(out, "Exhaust retry limit and verify loop terminates with logged final outcome.", 8);
+      appendUnique(
+        out,
+        "Exhaust the retry limit and verify that processing terminates with a logged final outcome",
+        8
+      );
     }
   }
 
@@ -556,25 +721,44 @@ function buildOpenQuestionsClarifications(args: {
       toTrimmedStringArray(args.requirement.clarifications, 8),
     ],
     8
-  );
+  )
+    .map((item) => normalizeSentence(item))
+    .filter(Boolean);
+
   if (explicit.length) return explicit;
 
   const out: string[] = [];
 
   if (args.integrations.length) {
-    appendUnique(out, "Which integration failures are classified as transient versus non-transient?", 8);
+    appendUnique(
+      out,
+      "Which integration failures are classified as transient versus non-transient",
+      8
+    );
   }
 
   if (args.riskAreas.some((risk) => /retry|resource exhaustion/i.test(risk))) {
-    appendUnique(out, "What are the configured retry limits and backoff policy for each integration?", 8);
+    appendUnique(
+      out,
+      "What are the configured retry limits and backoff policy for each integration",
+      8
+    );
   }
 
   if (args.riskAreas.some((risk) => /duplicate|idempot/i.test(risk))) {
-    appendUnique(out, "What idempotency or deduplication mechanism is used for payment, email, and fulfillment steps?", 8);
+    appendUnique(
+      out,
+      "What idempotency or deduplication mechanism is used for payment, email, and fulfillment steps",
+      8
+    );
   }
 
   if (args.coverageTargets.some((target) => /consistency|partial-failure/i.test(target.toLowerCase()))) {
-    appendUnique(out, "What final order state is expected when downstream failure occurs after payment succeeds?", 8);
+    appendUnique(
+      out,
+      "What final order state is expected when downstream failure occurs after payment succeeds",
+      8
+    );
   }
 
   return out.slice(0, 8);
@@ -597,7 +781,7 @@ function normalizeRequirementLike(
   const acceptanceCriteria = toTrimmedStringArray(
     requirement.acceptanceCriteria,
     12
-  );
+  ).map((item) => normalizeSentence(item)).filter(Boolean);
 
   const rawHooks =
     requirement.testStrategyHooks &&
@@ -612,7 +796,7 @@ function normalizeRequirementLike(
       toTrimmedStringArray(requirement.riskFocus, 8),
     ],
     8
-  );
+  ).map((item) => normalizePhrase(item)).filter(Boolean);
 
   const integrations = toTrimmedStringArray(requirement.integrations, 8);
 
@@ -650,7 +834,7 @@ function normalizeRequirementLike(
       }),
     ],
     8
-  );
+  ).map((item) => normalizePhrase(item)).filter(Boolean);
 
   const minimalReproScenarios = buildMinimalReproScenarios({
     requirement,
@@ -676,14 +860,12 @@ function normalizeRequirementLike(
     (coverageTargets.length > 0 ? 1 : 0) +
     (minimalReproScenarios.length > 0 ? 1 : 0);
 
-  // M12.12 guard:
-  // reject weak payloads so malformed ingestion does not silently persist.
   if (!objective || signalCount < 5) {
     return null;
   }
 
   return {
-    objective,
+    objective: normalizeSentence(objective).replace(/\.$/, ""),
     functionalScope,
     businessRules,
     acceptanceCriteria,
