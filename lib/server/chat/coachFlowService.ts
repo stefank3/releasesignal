@@ -9,6 +9,11 @@
 // - map normalized requirement output into the current artifact contract
 // - prefer normalized refined requirement persistence when available
 // - fall back to legacy continuity patch only when ingestion normalization is unavailable
+//
+// M12.12 FIX:
+// - keep Risk Areas separate from Test Strategy Hooks
+// - do not synthesize hooks from risk areas or coverage targets
+// - persist the normalized requirement without reintroducing duplicate semantic sections
 
 import type { RefinedRequirement, SessionArtifact } from "@/lib/chat/artifact";
 import { mergeArtifact } from "@/lib/chat/artifact";
@@ -31,21 +36,6 @@ function normalizedRequirementToArtifactPatch(
 ): Partial<RefinedRequirement> | null {
   if (!requirement) return null;
 
-  const testStrategyHooks = Array.from(
-    new Set(
-      [
-        ...requirement.testStrategyHooks.riskAreas.map(
-          (item) => `Risk area: ${item}`
-        ),
-        ...requirement.testStrategyHooks.coverageTargets.map(
-          (item) => `Coverage target: ${item}`
-        ),
-      ]
-        .map((item) => item.trim())
-        .filter(Boolean)
-    )
-  );
-
   return {
     objective: requirement.objective,
     functionalScope: requirement.functionalScope,
@@ -54,7 +44,11 @@ function normalizedRequirementToArtifactPatch(
     edgeCases: requirement.edgeCasesNegativePaths,
     edgeCasesNegativePaths: requirement.edgeCasesNegativePaths,
     nonFunctionalConstraints: requirement.nonFunctionalConstraints,
-    testStrategyHooks,
+
+    // Keep hooks distinct.
+    // Do not mirror Risk Areas or Coverage Targets into this field.
+    testStrategyHooks: [],
+
     riskAreas: requirement.testStrategyHooks.riskAreas,
     coverageTargets: requirement.testStrategyHooks.coverageTargets,
     minimalReproScenarios: requirement.minimalReproScenarios,
@@ -109,8 +103,6 @@ export async function runCoachFlow(args: {
       normalizedRequirementToArtifactPatch(normalizedRequirement);
 
     if (normalizedRequirementPatch) {
-      // M12.12:
-      // Persist the normalized requirement using the bridge artifact contract.
       const nextArtifact = mergeArtifact(
         sessionArtifact,
         normalizedRequirementPatch
@@ -124,8 +116,6 @@ export async function runCoachFlow(args: {
       sessionArtifact = saved.artifact;
       artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
     } else if (coachParsed) {
-      // Legacy fallback:
-      // Keep existing strategy flow behavior when only coach-shaped output exists.
       const continuityPatch = buildCoachContinuityArtifactPatch({
         existingArtifact: sessionArtifact,
         coach: coachParsed,
