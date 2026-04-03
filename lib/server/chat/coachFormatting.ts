@@ -11,7 +11,8 @@
 // - keep continuity patch behavior compatible with existing coach flow
 //
 // M12.12 FIX:
-// - suppress duplicate Test Strategy Hooks when they only mirror Risk Areas
+// - suppress duplicate Test Strategy Hooks when they mirror Risk Areas
+// - suppress duplicate Test Strategy Hooks when they mirror Coverage Targets
 // - keep renderer defensive against stale artifact data from earlier sessions
 
 import { parseGuidedAnswerToRefinedRequirement } from "@/lib/chat/artifact";
@@ -266,8 +267,13 @@ export function coachToTechnicalRequirementText(
     rr?.openQuestionsClarifications?.length
       ? rr.openQuestionsClarifications
       : rr?.openQuestions;
+  const coverageTargets = rr?.coverageTargets ?? [];
 
   const normalizedRiskAreas = (riskAreas ?? [])
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .filter(Boolean);
+
+  const normalizedCoverageTargets = coverageTargets
     .map((value) => String(value ?? "").trim().toLowerCase())
     .filter(Boolean);
 
@@ -276,11 +282,16 @@ export function coachToTechnicalRequirementText(
     if (!text) return false;
 
     const normalized = text.toLowerCase();
-    const dePrefixed = normalized.replace(/^risk area:\s*/i, "").trim();
+    const deRiskPrefixed = normalized.replace(/^risk area:\s*/i, "").trim();
+    const deCoveragePrefixed = normalized
+      .replace(/^coverage target:\s*/i, "")
+      .trim();
 
     return (
       !normalizedRiskAreas.includes(normalized) &&
-      !normalizedRiskAreas.includes(dePrefixed)
+      !normalizedRiskAreas.includes(deRiskPrefixed) &&
+      !normalizedCoverageTargets.includes(normalized) &&
+      !normalizedCoverageTargets.includes(deCoveragePrefixed)
     );
   });
 
@@ -291,7 +302,7 @@ export function coachToTechnicalRequirementText(
   pushListSection(lines, "Non-Functional Constraints:", rr?.nonFunctionalConstraints);
   pushListSection(lines, "Test Strategy Hooks:", distinctTestStrategyHooks);
   pushListSection(lines, "Risk Areas:", riskAreas);
-  pushListSection(lines, "Coverage Targets:", rr?.coverageTargets);
+  pushListSection(lines, "Coverage Targets:", coverageTargets);
   pushListSection(lines, "Minimal Repro Scenarios:", rr?.minimalReproScenarios);
   pushListSection(
     lines,
