@@ -37,6 +37,12 @@
 // - bridge legacy coach fields into locked requirement fields during merge
 // - keep legacy fields for compatibility, but do not allow unified fields to remain empty
 // - keep artifact context useful during transition even when older artifacts only contain legacy sections
+//
+// M12.13 CHANGE:
+// - add structured execution intelligence artifact support
+// - keep execution data deterministic and artifact-owned
+// - support suite-level + case-level execution state without adding workflow logic here
+// - preserve existing requirement/test/review behavior and backward compatibility
 
 import { Prisma } from "@prisma/client";
 
@@ -79,6 +85,61 @@ export type RefinedRequirement = {
   openQuestions?: string[];
 };
 
+export type ExecutionSource =
+  | "playwright"
+  | "selenium"
+  | "postman"
+  | "ci"
+  | "unknown";
+
+export type ExecutionCaseStatus =
+  | "passed"
+  | "failed"
+  | "skipped"
+  | "blocked"
+  | "timed_out"
+  | "unknown";
+
+export type ExecutionSuiteStatus =
+  | "passed"
+  | "failed"
+  | "partial"
+  | "blocked"
+  | "unknown";
+
+export type ExecutionCaseResult = {
+  caseId: string;
+  status: ExecutionCaseStatus;
+  observedAt: string;
+  source: ExecutionSource;
+  externalCaseRef?: string;
+  externalCaseName?: string;
+  durationMs?: number;
+  errorMessage?: string;
+  rawOutcome?: string;
+};
+
+export type ExecutionSummary = {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  blocked: number;
+  timedOut: number;
+  unknown: number;
+};
+
+export type ExecutionIntelligenceArtifact = {
+  source: ExecutionSource;
+  suiteVersion: number | null;
+  runId?: string;
+  runLabel?: string;
+  observedAt: string;
+  suiteStatus: ExecutionSuiteStatus;
+  summary: ExecutionSummary;
+  caseResults: ExecutionCaseResult[];
+};
+
 export type TestCase = {
   id: string;
   title: string;
@@ -110,6 +171,7 @@ export type FeatureWorkspaceArtifact = {
   refinedRequirement?: RefinedRequirement;
   testSuite?: TestSuiteArtifact;
   reviewResult?: PersistedReviewResult;
+  executionIntelligence?: ExecutionIntelligenceArtifact;
   lastUpdatedAt?: string;
 };
 
@@ -117,6 +179,7 @@ export type SessionArtifact = {
   refinedRequirement?: RefinedRequirement;
   testSuite?: TestSuiteArtifact;
   reviewResult?: PersistedReviewResult;
+  executionIntelligence?: ExecutionIntelligenceArtifact;
   featureWorkspace?: FeatureWorkspaceArtifact;
 };
 
@@ -291,6 +354,177 @@ export function validateTestSuite(
     totalCases: cases.length,
     malformedCaseIds,
     hasMalformedCases: malformedCaseIds.length > 0,
+  };
+}
+
+export function normalizeExecutionSource(value: string): ExecutionSource {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+
+  if (normalized === "playwright") return "playwright";
+  if (normalized === "selenium") return "selenium";
+  if (normalized === "postman") return "postman";
+  if (normalized === "ci") return "ci";
+
+  return "unknown";
+}
+
+export function normalizeExecutionCaseStatus(value: string): ExecutionCaseStatus {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+
+  if (["passed", "pass", "ok", "success"].includes(normalized)) return "passed";
+  if (["failed", "fail", "error"].includes(normalized)) return "failed";
+  if (["skipped", "skip"].includes(normalized)) return "skipped";
+  if (["blocked", "block"].includes(normalized)) return "blocked";
+  if (["timed_out", "timeout", "timed out"].includes(normalized)) {
+    return "timed_out";
+  }
+
+  return "unknown";
+}
+
+export function normalizeExecutionSuiteStatus(value: string): ExecutionSuiteStatus {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+
+  if (["passed", "pass", "ok", "success"].includes(normalized)) return "passed";
+  if (["failed", "fail", "error"].includes(normalized)) return "failed";
+  if (["partial", "mixed"].includes(normalized)) return "partial";
+  if (["blocked", "block"].includes(normalized)) return "blocked";
+
+  return "unknown";
+}
+
+export function buildExecutionSummary(
+  caseResults: ExecutionCaseResult[]
+): ExecutionSummary {
+  const summary: ExecutionSummary = {
+    total: caseResults.length,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    blocked: 0,
+    timedOut: 0,
+    unknown: 0,
+  };
+
+  for (const result of caseResults) {
+    switch (result.status) {
+      case "passed":
+        summary.passed += 1;
+        break;
+      case "failed":
+        summary.failed += 1;
+        break;
+      case "skipped":
+        summary.skipped += 1;
+        break;
+      case "blocked":
+        summary.blocked += 1;
+        break;
+      case "timed_out":
+        summary.timedOut += 1;
+        break;
+      default:
+        summary.unknown += 1;
+        break;
+    }
+  }
+
+  return summary;
+}
+
+export function normalizeExecutionCaseResult(
+  result: ExecutionCaseResult
+): ExecutionCaseResult {
+  return {
+    caseId: normalizeWhitespace(result.caseId).toUpperCase(),
+    status: normalizeExecutionCaseStatus(result.status),
+    observedAt: normalizeWhitespace(result.observedAt),
+    source: normalizeExecutionSource(result.source),
+    ...(result.externalCaseRef
+      ? { externalCaseRef: normalizeWhitespace(result.externalCaseRef) }
+      : {}),
+    ...(result.externalCaseName
+      ? { externalCaseName: normalizeWhitespace(result.externalCaseName) }
+      : {}),
+    ...(typeof result.durationMs === "number" && Number.isFinite(result.durationMs)
+      ? { durationMs: Math.max(0, Math.round(result.durationMs)) }
+      : {}),
+    ...(result.errorMessage
+      ? { errorMessage: normalizeMultilineText(result.errorMessage) }
+      : {}),
+    ...(result.rawOutcome ? { rawOutcome: normalizeWhitespace(result.rawOutcome) } : {}),
+  };
+}
+
+export function normalizeExecutionIntelligenceArtifact(
+  artifact: ExecutionIntelligenceArtifact
+): ExecutionIntelligenceArtifact {
+  const caseResults = Array.isArray(artifact.caseResults)
+    ? artifact.caseResults
+        .map((result) => normalizeExecutionCaseResult(result))
+        .filter((result) => !!result.caseId && !!result.observedAt)
+    : [];
+
+  return {
+    source: normalizeExecutionSource(artifact.source),
+    suiteVersion:
+      typeof artifact.suiteVersion === "number" && Number.isFinite(artifact.suiteVersion)
+        ? artifact.suiteVersion
+        : null,
+    ...(artifact.runId ? { runId: normalizeWhitespace(artifact.runId) } : {}),
+    ...(artifact.runLabel ? { runLabel: normalizeWhitespace(artifact.runLabel) } : {}),
+    observedAt: normalizeWhitespace(artifact.observedAt),
+    suiteStatus: normalizeExecutionSuiteStatus(artifact.suiteStatus),
+    summary: buildExecutionSummary(caseResults),
+    caseResults,
+  };
+}
+
+export function getExecutionIntelligence(
+  artifact: SessionArtifact | null | undefined
+): ExecutionIntelligenceArtifact | null {
+  const execution = artifact?.executionIntelligence;
+
+  if (!execution || typeof execution !== "object") return null;
+  if (!Array.isArray(execution.caseResults)) return null;
+  if (typeof execution.observedAt !== "string") return null;
+  if (typeof execution.source !== "string") return null;
+  if (typeof execution.suiteStatus !== "string") return null;
+  if (!execution.summary || typeof execution.summary !== "object") return null;
+
+  return normalizeExecutionIntelligenceArtifact(
+    execution as ExecutionIntelligenceArtifact
+  );
+}
+
+export function withUpdatedExecutionIntelligenceArtifact(
+  existingArtifact: SessionArtifact | null,
+  executionIntelligence: ExecutionIntelligenceArtifact
+): SessionArtifact {
+  const prev: SessionArtifact =
+    existingArtifact && typeof existingArtifact === "object"
+      ? existingArtifact
+      : {};
+
+  const normalizedExecution = normalizeExecutionIntelligenceArtifact(
+    executionIntelligence
+  );
+
+  return {
+    ...(prev.refinedRequirement
+      ? { refinedRequirement: prev.refinedRequirement }
+      : {}),
+    ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
+    ...(prev.reviewResult ? { reviewResult: prev.reviewResult } : {}),
+    executionIntelligence: normalizedExecution,
+    ...(prev.featureWorkspace
+      ? {
+          featureWorkspace: {
+            ...prev.featureWorkspace,
+            executionIntelligence: normalizedExecution,
+          },
+        }
+      : {}),
   };
 }
 
@@ -758,6 +992,9 @@ export function mergeArtifact(
     refinedRequirement: nextRR,
     ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
     ...(prev.reviewResult ? { reviewResult: prev.reviewResult } : {}),
+    ...(prev.executionIntelligence
+      ? { executionIntelligence: prev.executionIntelligence }
+      : {}),
     ...(prev.featureWorkspace ? { featureWorkspace: prev.featureWorkspace } : {}),
   };
 }
@@ -783,9 +1020,6 @@ export function artifactToContextText(artifact: SessionArtifact): string {
   if (rr.objective) lines.push(`- Objective: ${rr.objective}`);
   if (rr.context) lines.push(`- Context: ${rr.context}`);
 
-  // Transitional fallback:
-  // if unified scope is still empty on an older artifact, surface legacy inScope
-  // so downstream prompt context does not silently lose scope information.
   const functionalScope =
     rr.functionalScope?.length ? rr.functionalScope : rr.inScope ?? [];
 
@@ -821,8 +1055,6 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     for (const s of rr.testStrategyHooks.slice(0, 12)) lines.push(`  - ${s}`);
   }
 
-  // Transitional fallback:
-  // surface legacy riskFocus if unified riskAreas is not yet populated.
   const riskAreas = rr.riskAreas?.length ? rr.riskAreas : rr.riskFocus ?? [];
 
   if (riskAreas.length) {
@@ -865,6 +1097,20 @@ export function artifactToContextText(artifact: SessionArtifact): string {
       for (const c of suite.cases.slice(0, 50)) {
         lines.push(`  - ${c.id}: ${c.title}`);
       }
+    }
+  }
+
+  const execution = getExecutionIntelligence(artifact);
+  if (execution) {
+    lines.push("");
+    lines.push(
+      `LATEST EXECUTION (pinned): ${execution.source}, status ${execution.suiteStatus}`
+    );
+    lines.push(
+      `- Summary: total ${execution.summary.total}, passed ${execution.summary.passed}, failed ${execution.summary.failed}, skipped ${execution.summary.skipped}, blocked ${execution.summary.blocked}, timed out ${execution.summary.timedOut}, unknown ${execution.summary.unknown}`
+    );
+    if (typeof execution.suiteVersion === "number") {
+      lines.push(`- Suite version: v${execution.suiteVersion}`);
     }
   }
 
