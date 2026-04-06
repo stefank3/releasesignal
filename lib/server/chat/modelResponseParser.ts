@@ -13,9 +13,24 @@
 // During migration, parser must remain deterministic and compatible.
 // This adapter lets upstream prompt/output evolve without breaking
 // downstream flow that still expects CoachResult.
+//
+// M12.13 execution intelligence:
+// - add deterministic execution-shaped payload parsing
+// - normalize execution input into structured execution artifact shape
+// - reject malformed/incomplete execution input explicitly
+// - keep parser responsibility limited to extraction/validation only
 
 import { extractJsonObject } from "@/lib/chat/json";
 import { repairJsonOnce } from "@/lib/chat/repair";
+import {
+  normalizeExecutionCaseResult,
+  normalizeExecutionCaseStatus,
+  normalizeExecutionIntelligenceArtifact,
+  normalizeExecutionSource,
+  normalizeExecutionSuiteStatus,
+  type ExecutionCaseResult,
+  type ExecutionIntelligenceArtifact,
+} from "@/lib/chat/artifact";
 import {
   isCoachResult,
   isReviewResult,
@@ -38,6 +53,42 @@ type RequirementLike = {
   riskFocus?: unknown;
   openQuestions?: unknown;
   clarifications?: unknown;
+};
+
+type ExecutionCaseLike = {
+  caseId?: unknown;
+  id?: unknown;
+  testCaseId?: unknown;
+  title?: unknown;
+  name?: unknown;
+  status?: unknown;
+  outcome?: unknown;
+  result?: unknown;
+  observedAt?: unknown;
+  timestamp?: unknown;
+  source?: unknown;
+  durationMs?: unknown;
+  duration?: unknown;
+  errorMessage?: unknown;
+  error?: unknown;
+  rawOutcome?: unknown;
+  externalCaseRef?: unknown;
+  externalCaseName?: unknown;
+};
+
+type ExecutionPayloadLike = {
+  source?: unknown;
+  provider?: unknown;
+  framework?: unknown;
+  suiteVersion?: unknown;
+  runId?: unknown;
+  runLabel?: unknown;
+  observedAt?: unknown;
+  timestamp?: unknown;
+  suiteStatus?: unknown;
+  status?: unknown;
+  caseResults?: unknown;
+  results?: unknown;
 };
 
 function toTrimmedStringArray(value: unknown, max = 12): string[] {
@@ -67,6 +118,19 @@ function toOptionalText(value: unknown): string | null {
   return text ? text : null;
 }
 
+function toOptionalFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
 function isRequirementLike(value: unknown): value is RequirementLike {
   if (!value || typeof value !== "object") return false;
 
@@ -82,6 +146,25 @@ function isRequirementLike(value: unknown): value is RequirementLike {
       obj.outOfScope ||
       obj.integrations ||
       obj.riskFocus
+  );
+}
+
+function isExecutionPayloadLike(value: unknown): value is ExecutionPayloadLike {
+  if (!value || typeof value !== "object") return false;
+
+  const obj = value as Record<string, unknown>;
+
+  return Boolean(
+    obj.caseResults ||
+      obj.results ||
+      obj.suiteStatus ||
+      obj.status ||
+      obj.runId ||
+      obj.runLabel ||
+      obj.source ||
+      obj.provider ||
+      obj.framework ||
+      obj.suiteVersion
   );
 }
 
@@ -196,6 +279,123 @@ function parseCoachPayload(txt: string): CoachResult | null {
   }
 }
 
+function buildExecutionCaseResult(raw: ExecutionCaseLike): ExecutionCaseResult | null {
+  const caseId = toOptionalText(raw.caseId ?? raw.id ?? raw.testCaseId);
+  const status = toOptionalText(raw.status ?? raw.outcome ?? raw.result);
+  const observedAt = toOptionalText(raw.observedAt ?? raw.timestamp);
+  const source = toOptionalText(raw.source);
+
+  if (!caseId || !status || !observedAt) {
+    return null;
+  }
+
+  return normalizeExecutionCaseResult({
+  caseId,
+  status: normalizeExecutionCaseStatus(status),
+  observedAt,
+  source: normalizeExecutionSource(source ?? "unknown"),
+    ...(toOptionalText(raw.externalCaseRef)
+      ? { externalCaseRef: String(raw.externalCaseRef).trim() }
+      : {}),
+    ...(toOptionalText(raw.externalCaseName ?? raw.title ?? raw.name)
+      ? {
+          externalCaseName: String(
+            raw.externalCaseName ?? raw.title ?? raw.name
+          ).trim(),
+        }
+      : {}),
+    ...(toOptionalFiniteNumber(raw.durationMs ?? raw.duration) != null
+      ? { durationMs: Number(toOptionalFiniteNumber(raw.durationMs ?? raw.duration)) }
+      : {}),
+    ...(toOptionalText(raw.errorMessage ?? raw.error)
+      ? { errorMessage: String(raw.errorMessage ?? raw.error).trim() }
+      : {}),
+    ...(toOptionalText(raw.rawOutcome ?? raw.outcome ?? raw.result)
+      ? { rawOutcome: String(raw.rawOutcome ?? raw.outcome ?? raw.result).trim() }
+      : {}),
+  });
+}
+
+function parseExecutionPayload(txt: string): ExecutionIntelligenceArtifact | null {
+  try {
+    const parsed = JSON.parse(extractJsonObject(txt)) as unknown;
+    if (!isExecutionPayloadLike(parsed)) return null;
+
+    const payload = parsed as ExecutionPayloadLike;
+    const rawResults = Array.isArray(payload.caseResults)
+      ? payload.caseResults
+      : Array.isArray(payload.results)
+        ? payload.results
+        : null;
+
+    if (!rawResults || rawResults.length === 0) {
+      return null;
+    }
+
+    const normalizedResults = rawResults
+      .map((item) =>
+        item && typeof item === "object"
+          ? buildExecutionCaseResult(item as ExecutionCaseLike)
+          : null
+      )
+      .filter((item): item is ExecutionCaseResult => item !== null);
+
+    if (normalizedResults.length === 0) {
+      return null;
+    }
+
+    if (normalizedResults.length !== rawResults.length) {
+      return null;
+    }
+
+    const observedAt =
+      toOptionalText(payload.observedAt ?? payload.timestamp) ??
+      normalizedResults[0]?.observedAt ??
+      null;
+
+    if (!observedAt) {
+      return null;
+    }
+
+    const suiteVersion = toOptionalFiniteNumber(payload.suiteVersion);
+    const source = normalizeExecutionSource(
+      String(payload.source ?? payload.provider ?? payload.framework ?? "unknown")
+    );
+    const suiteStatus = normalizeExecutionSuiteStatus(
+      String(payload.suiteStatus ?? payload.status ?? "unknown")
+    );
+
+    const artifact: ExecutionIntelligenceArtifact = normalizeExecutionIntelligenceArtifact({
+      source,
+      suiteVersion: suiteVersion != null ? suiteVersion : null,
+      ...(toOptionalText(payload.runId) ? { runId: String(payload.runId).trim() } : {}),
+      ...(toOptionalText(payload.runLabel)
+        ? { runLabel: String(payload.runLabel).trim() }
+        : {}),
+      observedAt,
+      suiteStatus,
+      caseResults: normalizedResults,
+      summary: {
+        total: 0,
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        blocked: 0,
+        timedOut: 0,
+        unknown: 0,
+      },
+    });
+
+    if (!artifact.caseResults.length) {
+      return null;
+    }
+
+    return artifact;
+  } catch {
+    return null;
+  }
+}
+
 export async function parseReviewResponse(rawReply: string): Promise<{
   reviewObj: ReviewResult | null;
   reviewStoredJson: string | null;
@@ -234,4 +434,25 @@ export async function parseCoachResponse(rawReply: string): Promise<CoachResult 
   coachObj = parseCoachPayload(repairedRaw);
 
   return coachObj;
+}
+
+export async function parseExecutionResponse(rawReply: string): Promise<{
+  executionObj: ExecutionIntelligenceArtifact | null;
+  executionStoredJson: string | null;
+  repaired: boolean;
+}> {
+  let executionObj = parseExecutionPayload(rawReply);
+  let repaired = false;
+
+  if (!executionObj) {
+    const repairedRaw = await repairJsonOnce({ mode: "coach", raw: rawReply });
+    executionObj = parseExecutionPayload(repairedRaw);
+    repaired = !!executionObj;
+  }
+
+  return {
+    executionObj,
+    executionStoredJson: executionObj ? JSON.stringify(executionObj) : null,
+    repaired,
+  };
 }
