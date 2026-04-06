@@ -12,6 +12,8 @@ import { type RateMeta } from "@/lib/chat/chatTypes";
 import { emitTelemetryEvent } from "@/lib/server/telemetry/telemetryService";
 import type { CasesFlowTelemetry } from "@/lib/server/chat/casesFlowService";
 
+import { parseExecutionResponse } from "@/lib/server/chat/modelResponseParser";
+
 import {
   type ExecutionIntelligenceArtifact,
   type SessionArtifact,
@@ -668,7 +670,128 @@ export async function POST(req: Request) {
         });
       }
 
+            if (workflowAction === "ingest_execution_results") {
+        const executionParse = await parseExecutionResponse(message);
+
+        const executionObj: ExecutionIntelligenceArtifact | null =
+          executionParse.executionObj;
+        const executionRepaired = executionParse.repaired;
+
+        const replyTextForUser = executionObj
+          ? [
+              `Execution results recorded from ${executionObj.source}.`,
+              `Suite status: ${executionObj.suiteStatus}.`,
+              `Observed cases: ${executionObj.summary.total}.`,
+              `Passed: ${executionObj.summary.passed}, Failed: ${executionObj.summary.failed}, Skipped: ${executionObj.summary.skipped}, Blocked: ${executionObj.summary.blocked}, Timed out: ${executionObj.summary.timedOut}, Unknown: ${executionObj.summary.unknown}.`,
+              typeof executionObj.suiteVersion === "number"
+                ? `Linked suite version: v${executionObj.suiteVersion}.`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : "Execution input could not be normalized into a valid execution artifact.";
+
+        let creditsRemaining: number | null = null;
+
+        try {
+          creditsRemaining = await persistAssistantWithBillingTx({
+            sessionId,
+            auth0Sub,
+            requestId,
+            creditsCharged: 1,
+            assistantContentToStore: replyTextForUser,
+            promptTokens: 0,
+            completionTokens: 0,
+          });
+        } catch (e) {
+          if (e instanceof InsufficientCreditsError) {
+            await recordChatMetric({
+              nowMs: Date.now(),
+              mode: "coach",
+              status: 402,
+              latencyMs: Date.now() - startTime,
+            });
+
+            return buildInsufficientCreditsBillingResponse({
+              requestId,
+              clientMode: "coach",
+              sessionId,
+              creditsCharged: 1,
+              creditsRemaining: orgState.wallet?.balance ?? 0,
+              usage: {
+                promptTokens: 0,
+                completionTokens: 0,
+                totalTokens: 0,
+              },
+              rateMeta,
+              artifact: sessionArtifact,
+              artifactUpdatedAt: artifactUpdatedAtIso,
+            });
+          }
+
+          throw e;
+        }
+
+        const executionPersistResult = await persistExecutionArtifact({
+          sessionId,
+          sessionArtifact,
+          artifactUpdatedAtIso,
+          executionIntelligence: executionObj,
+        });
+
+        sessionArtifact = executionPersistResult.sessionArtifact;
+        artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
+
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: "coach",
+          status: 200,
+          latencyMs: Date.now() - startTime,
+        });
+
+        log("info", {
+          event: "chat_completed",
+          requestId,
+          auth0Sub,
+          orgId,
+          sessionId,
+          mode: clientMode,
+          durationMs: Date.now() - startTime,
+          retryCount,
+          meta: {
+            workflowAction,
+            creditsCharged: 1,
+            creditsRemaining,
+            hasExecutionIntelligence: !!executionObj,
+            executionRepaired,
+            executionSource: executionObj?.source,
+            executionSuiteStatus: executionObj?.suiteStatus,
+            executionObservedCases: executionObj?.summary.total ?? 0,
+          },
+        });
+
+        return buildChatSuccessResponse({
+          requestId,
+          clientMode: "coach",
+          reply: replyTextForUser,
+          coach: null,
+          sessionId,
+          creditsCharged: 1,
+          creditsRemaining,
+          usage: {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+          },
+          rateMeta,
+          executionIntelligence: executionObj,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        });
+      }
+
       const actionExecutionMode: "coach" | "review" =
+      
         workflowAction === "review_test_suite" ? "review" : "coach";
 
       const actionWantCases =
