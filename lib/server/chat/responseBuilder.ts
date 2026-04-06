@@ -1,11 +1,19 @@
 // lib/server/chat/responseBuilder.ts
 // M10 extraction:
 // Centralize API response shaping so route.ts focuses on orchestration only.
+//
+// M12.13 CHANGE:
+// - add optional execution intelligence payload support to success responses
+// - keep response shaping generic and backward compatible
+// - do not introduce execution logic in the response layer
 
 import { NextResponse } from "next/server";
 import { responseHeaders } from "@/lib/chat/http";
 import type { RateMeta, ClientMode } from "@/lib/chat/chatTypes";
-import type { SessionArtifact } from "@/lib/chat/artifact";
+import type {
+  ExecutionIntelligenceArtifact,
+  SessionArtifact,
+} from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
 import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 
@@ -18,6 +26,10 @@ type UsagePayload = {
 type SharedArtifactPayload = {
   artifact: SessionArtifact | null;
   artifactUpdatedAt: string | null;
+};
+
+type SharedExecutionPayload = {
+  executionIntelligence?: ExecutionIntelligenceArtifact | null;
 };
 
 export function buildUnauthorizedResponse(requestId: string) {
@@ -176,7 +188,7 @@ export function buildReviewSuccessResponse(args: {
   usage: UsagePayload;
   rateMeta: RateMeta | null;
   repaired?: boolean;
-} & SharedArtifactPayload) {
+} & SharedArtifactPayload & SharedExecutionPayload) {
   return NextResponse.json(
     {
       ok: true,
@@ -188,6 +200,7 @@ export function buildReviewSuccessResponse(args: {
       usage: args.usage,
       rate: args.rateMeta,
       repaired: args.repaired || undefined,
+      executionIntelligence: args.executionIntelligence ?? undefined,
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
     },
@@ -206,7 +219,7 @@ export function buildChatSuccessResponse(args: {
   usage: UsagePayload;
   rateMeta: RateMeta | null;
   workflowGuidance?: WorkflowGuidance | null;
-} & SharedArtifactPayload) {
+} & SharedArtifactPayload & SharedExecutionPayload) {
   return NextResponse.json(
     {
       ok: true,
@@ -219,6 +232,7 @@ export function buildChatSuccessResponse(args: {
       usage: args.usage,
       rate: args.rateMeta,
       workflowGuidance: args.workflowGuidance ?? undefined,
+      executionIntelligence: args.executionIntelligence ?? undefined,
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
     },
