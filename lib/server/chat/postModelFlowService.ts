@@ -36,8 +36,18 @@
 // - thread workflow action context into cases flow
 // - allow next-batch execution to diverge from generic generate-tests flow
 // - keep branching explicit and artifact-driven
+//
+// M12.13 CHANGE:
+// - add explicit execution-intelligence post-model branch
+// - parse execution-shaped input only when workflow action requests it
+// - return structured execution result upward for persistence/response shaping
+// - keep execution flow separate from coach/review/cases behavior
 
-import type { RefinedRequirement, SessionArtifact, TestSuiteArtifact } from "@/lib/chat/artifact";
+import type {
+  ExecutionIntelligenceArtifact,
+  SessionArtifact,
+  TestSuiteArtifact,
+} from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
 
 import { runCoachFlow } from "@/lib/server/chat/coachFlowService";
@@ -45,6 +55,7 @@ import {
   runCasesFlow,
   type CasesFlowTelemetry,
 } from "@/lib/server/chat/casesFlowService";
+import { parseExecutionResponse } from "@/lib/server/chat/modelResponseParser";
 import type { SuiteAnalysis } from "@/lib/server/chat/suiteAnalysisService";
 import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 import {
@@ -59,7 +70,26 @@ type PostModelWorkflowAction =
   | "review_test_suite"
   | "refine_requirement"
   | "regenerate_suite"
-  |null;
+  | "ingest_execution_results"
+  | null;
+
+function buildExecutionReplyText(
+  execution: ExecutionIntelligenceArtifact
+): string {
+  const summary = execution.summary;
+
+  return [
+    `Execution results recorded from ${execution.source}.`,
+    `Suite status: ${execution.suiteStatus}.`,
+    `Observed cases: ${summary.total}.`,
+    `Passed: ${summary.passed}, Failed: ${summary.failed}, Skipped: ${summary.skipped}, Blocked: ${summary.blocked}, Timed out: ${summary.timedOut}, Unknown: ${summary.unknown}.`,
+    typeof execution.suiteVersion === "number"
+      ? `Linked suite version: v${execution.suiteVersion}.`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
 export async function runPostModelFlow(args: {
   rawReply: string;
@@ -78,24 +108,15 @@ export async function runPostModelFlow(args: {
   replyTextForUser: string | null;
   reviewObj: ReviewResult | null;
   reviewRepaired: boolean;
+  executionObj: ExecutionIntelligenceArtifact | null;
+  executionRepaired: boolean;
   assistantContentToStore: string;
   sessionArtifact: SessionArtifact | null;
   artifactUpdatedAtIso: string | null;
   nextTestSuiteArtifact: TestSuiteArtifact | null;
   testSuiteAddedCount: number;
-
-  // M11:
-  // Structured cases telemetry classification returned to the route,
-  // where full operational context is available for persistence.
   casesFlowTelemetry: CasesFlowTelemetry | null;
-
-  // M11:
-  // Structured review telemetry classification returned to the route,
-  // where full operational context is available for persistence.
   reviewFlowTelemetry: ReviewFlowTelemetry | null;
-
-  // M12 Step 6:
-  // Deterministic suite analysis + workflow recommendation from cases flow.
   suiteAnalysis: SuiteAnalysis | null;
   workflowGuidance: WorkflowGuidance | null;
 }> {
@@ -104,6 +125,10 @@ export async function runPostModelFlow(args: {
 
   let reviewObj: ReviewResult | null = null;
   let reviewRepaired = false;
+
+  let executionObj: ExecutionIntelligenceArtifact | null = null;
+  let executionRepaired = false;
+
   let assistantContentToStore: string | null = null;
 
   let sessionArtifact = args.sessionArtifact;
@@ -112,18 +137,14 @@ export async function runPostModelFlow(args: {
   let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
   let testSuiteAddedCount = 0;
 
-  // M11:
-  // Default to null unless the cases flow produces a structured telemetry result.
   let casesFlowTelemetry: CasesFlowTelemetry | null = null;
-
-  // M11:
-  // Default to null unless the review flow produces a structured telemetry result.
   let reviewFlowTelemetry: ReviewFlowTelemetry | null = null;
 
-  // M12 Step 6:
-  // Default to null unless cases flow produces structured suite intelligence.
   let suiteAnalysis: SuiteAnalysis | null = null;
   let workflowGuidance: WorkflowGuidance | null = null;
+
+  const wantsExecutionIntelligence =
+    args.workflowAction === "ingest_execution_results";
 
   if (args.executionMode === "review") {
     const standaloneReviewPatch = await applyStandaloneReviewArtifactPatch({
@@ -145,13 +166,34 @@ export async function runPostModelFlow(args: {
     reviewObj = reviewFlow.reviewObj;
     reviewRepaired = reviewFlow.reviewRepaired;
     assistantContentToStore = reviewFlow.assistantContentToStore;
-
-    // M11:
-    // Forward structured review telemetry classification to the route.
     reviewFlowTelemetry = reviewFlow.reviewTelemetry;
   }
 
-  if (args.executionMode === "coach" && !args.wantCases) {
+  if (
+    args.executionMode === "coach" &&
+    !args.wantCases &&
+    wantsExecutionIntelligence
+  ) {
+    const executionParse = await parseExecutionResponse(args.rawReply);
+
+    executionObj = executionParse.executionObj;
+    executionRepaired = executionParse.repaired;
+
+    if (executionObj) {
+      replyTextForUser = buildExecutionReplyText(executionObj);
+      assistantContentToStore = replyTextForUser;
+    } else {
+      replyTextForUser =
+        "Execution input could not be normalized into a valid execution artifact.";
+      assistantContentToStore = replyTextForUser;
+    }
+  }
+
+  if (
+    args.executionMode === "coach" &&
+    !args.wantCases &&
+    !wantsExecutionIntelligence
+  ) {
     const coachFlow = await runCoachFlow({
       rawReply: args.rawReply,
       sessionId: args.sessionId,
@@ -170,13 +212,13 @@ export async function runPostModelFlow(args: {
   }
 
   if (args.wantCases) {
-const casesWorkflowAction =
-  args.workflowAction === "generate_tests_from_requirement" ||
-  args.workflowAction === "generate_next_batch_of_tests" ||
-  args.workflowAction === "regenerate_suite"
-    ? args.workflowAction
-    : null;
-    
+    const casesWorkflowAction =
+      args.workflowAction === "generate_tests_from_requirement" ||
+      args.workflowAction === "generate_next_batch_of_tests" ||
+      args.workflowAction === "regenerate_suite"
+        ? args.workflowAction
+        : null;
+
     const casesFlow = await runCasesFlow({
       rawReply: args.rawReply,
       sessionArtifact,
@@ -187,22 +229,10 @@ const casesWorkflowAction =
     replyTextForUser = casesFlow.replyTextForUser;
     nextTestSuiteArtifact = casesFlow.nextTestSuiteArtifact;
     testSuiteAddedCount = casesFlow.testSuiteAddedCount;
-
-    // M12 Step 5:
-    // Preserve the exact structured outcome from the cases flow so the route
-    // can decide whether this was a real suite evolution or an unchanged result.
     casesFlowTelemetry = casesFlow.telemetry;
-
-    // M12 Step 6:
-    // Forward deterministic suite intelligence to the route.
     suiteAnalysis = casesFlow.analysis;
     workflowGuidance = casesFlow.guidance;
-
-    // Cases mode should not return coach-parsed output.
     coachParsed = null;
-
-    // Cases mode storage must remain aligned with the deterministic suite-flow
-    // output, including unchanged / duplicate-aware messaging.
     assistantContentToStore = casesFlow.replyTextForUser;
   }
 
@@ -211,6 +241,8 @@ const casesWorkflowAction =
     replyTextForUser,
     reviewObj,
     reviewRepaired,
+    executionObj,
+    executionRepaired,
     assistantContentToStore:
       assistantContentToStore ?? replyTextForUser ?? "No reply returned",
     sessionArtifact,

@@ -14,6 +14,11 @@
 // - remove legacy mode-locked session behavior
 // - allow the same workspace session to be reused across coach / cases / review
 // - treat persisted mode as last active mode, not as a hard session lock
+//
+// M12.13 FIX:
+// - honor caller-provided sessionId for manual/external workflow action testing
+// - if a provided sessionId does not exist for this user, create that exact id
+// - do not silently replace caller sessionId with a generated DB id
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -50,10 +55,6 @@ export async function loadOrCreateSession(args: {
       sessionId: string;
       sessionArtifact: SessionArtifact | null;
       artifactUpdatedAtIso: string | null;
-
-      // M11:
-      // Indicates whether the session was newly created or an existing
-      // session was reopened/reused.
       sessionLifecycle: SessionLifecycle;
     }
   | {
@@ -63,7 +64,10 @@ export async function loadOrCreateSession(args: {
 > {
   const { auth0Sub, requestId, body, clientMode } = args;
 
-  let sessionId = body?.sessionId;
+  const requestedSessionId =
+    typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
+
+  let sessionId = requestedSessionId || undefined;
   let sessionArtifact: SessionArtifact | null = null;
   let artifactUpdatedAtIso: string | null = null;
 
@@ -78,11 +82,7 @@ export async function loadOrCreateSession(args: {
       select: { id: true, mode: true, artifactJson: true, artifactUpdatedAt: true },
     });
 
-    if (!existing) {
-      // If the provided session id does not exist for this user,
-      // fall through into the create/upsert path below.
-      sessionId = undefined;
-    } else {
+    if (existing) {
       // M12 Step 7A:
       // Persisted mode is now treated as the last active mode for this
       // workspace session, not as a hard lock.
@@ -105,6 +105,37 @@ export async function loadOrCreateSession(args: {
       // M11:
       // Existing session was found and accepted.
       sessionLifecycle = "session_reopened";
+    } else {
+      // M12.13 FIX:
+      // Caller explicitly provided a session id that does not yet exist.
+      // Create that exact session id instead of silently replacing it.
+      const rawClientId =
+        typeof body?.sessionClientId === "string"
+          ? body.sessionClientId.trim()
+          : "";
+
+      const clientSessionId = rawClientId.length > 0 ? rawClientId : sessionId;
+
+      const created = await prisma.chatSession.create({
+        data: {
+          id: sessionId,
+          auth0Sub,
+          mode: clientMode,
+          title: body?.title ?? null,
+          clientSessionId,
+          artifactJson: Prisma.DbNull,
+          artifactUpdatedAt: null,
+        },
+        select: { id: true, artifactJson: true, artifactUpdatedAt: true },
+      });
+
+      sessionId = created.id;
+      sessionArtifact = readArtifact(created.artifactJson);
+      artifactUpdatedAtIso = created.artifactUpdatedAt
+        ? created.artifactUpdatedAt.toISOString()
+        : null;
+
+      sessionLifecycle = "session_started";
     }
   }
 

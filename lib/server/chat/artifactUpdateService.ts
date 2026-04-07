@@ -32,13 +32,20 @@
 // - parse explicit structured requirement input via artifact-layer parser
 // - parse pasted suite text via deterministic test suite parser
 // - persist once, using artifact state as the only review input source
+//
+// M12.13 CHANGE:
+// - add persisted execution intelligence artifact writes
+// - keep execution persistence artifact-driven and deterministic
+// - mirror execution state into featureWorkspace only when that wrapper already exists
 
 import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
 import {
+  type ExecutionIntelligenceArtifact,
   type SessionArtifact,
   type TestSuiteArtifact,
   mergeArtifact,
+  normalizeExecutionIntelligenceArtifact,
   normalizeTestCase,
   parseGuidedAnswerToRefinedRequirement,
   parseStructuredRequirementInput,
@@ -103,6 +110,35 @@ function withUpdatedReviewArtifact(
   return next as SessionArtifact;
 }
 
+function withUpdatedExecutionArtifact(
+  artifact: SessionArtifact | null,
+  executionIntelligence: ExecutionIntelligenceArtifact
+): SessionArtifact {
+  const base = isRecord(artifact) ? { ...artifact } : {};
+  const normalizedExecution =
+    normalizeExecutionIntelligenceArtifact(executionIntelligence);
+
+  const next = {
+    ...base,
+    executionIntelligence: normalizedExecution,
+  } as SessionArtifact & Record<string, unknown>;
+
+  if (isRecord(base.featureWorkspace)) {
+    next.featureWorkspace = {
+      ...base.featureWorkspace,
+      ...(base.refinedRequirement
+        ? { refinedRequirement: base.refinedRequirement }
+        : {}),
+      ...(base.testSuite ? { testSuite: base.testSuite } : {}),
+      ...(base.reviewResult ? { reviewResult: base.reviewResult } : {}),
+      executionIntelligence: normalizedExecution,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+
+  return next as SessionArtifact;
+}
+
 function withFeatureWorkspaceSuiteMirror(
   artifact: SessionArtifact,
   testSuite: TestSuiteArtifact
@@ -118,6 +154,9 @@ function withFeatureWorkspaceSuiteMirror(
       testSuite,
       ...(artifact.refinedRequirement
         ? { refinedRequirement: artifact.refinedRequirement }
+        : {}),
+      ...(artifact.executionIntelligence
+        ? { executionIntelligence: artifact.executionIntelligence }
         : {}),
       lastUpdatedAt: new Date().toISOString(),
     },
@@ -139,6 +178,9 @@ function withFeatureWorkspaceRequirementMirror(
         ? { refinedRequirement: artifact.refinedRequirement }
         : {}),
       ...(artifact.testSuite ? { testSuite: artifact.testSuite } : {}),
+      ...(artifact.executionIntelligence
+        ? { executionIntelligence: artifact.executionIntelligence }
+        : {}),
       lastUpdatedAt: new Date().toISOString(),
     },
   };
@@ -261,11 +303,11 @@ export async function applyStandaloneReviewArtifactPatch(args: {
   }
 
   let nextArtifact: SessionArtifact =
-  args.sessionArtifact && typeof args.sessionArtifact === "object"
-    ? args.sessionArtifact
-    : {};
-    
-    if (requirementPatch) {
+    args.sessionArtifact && typeof args.sessionArtifact === "object"
+      ? args.sessionArtifact
+      : {};
+
+  if (requirementPatch) {
     nextArtifact = mergeArtifact(nextArtifact, requirementPatch);
     nextArtifact = withFeatureWorkspaceRequirementMirror(nextArtifact);
   }
@@ -358,6 +400,38 @@ export async function persistReviewArtifact(args: {
   const nextArtifact = withUpdatedReviewArtifact(
     args.sessionArtifact,
     args.reviewResult
+  );
+
+  const saved = await saveSessionArtifact({
+    sessionId: args.sessionId,
+    artifact: nextArtifact,
+  });
+
+  return {
+    sessionArtifact: saved.artifact,
+    artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
+  };
+}
+
+export async function persistExecutionArtifact(args: {
+  sessionId: string;
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+  executionIntelligence: ExecutionIntelligenceArtifact | null;
+}): Promise<{
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+}> {
+  if (!args.executionIntelligence) {
+    return {
+      sessionArtifact: args.sessionArtifact,
+      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+    };
+  }
+
+  const nextArtifact = withUpdatedExecutionArtifact(
+    args.sessionArtifact,
+    args.executionIntelligence
   );
 
   const saved = await saveSessionArtifact({

@@ -12,7 +12,10 @@ import { type RateMeta } from "@/lib/chat/chatTypes";
 import { emitTelemetryEvent } from "@/lib/server/telemetry/telemetryService";
 import type { CasesFlowTelemetry } from "@/lib/server/chat/casesFlowService";
 
+import { parseExecutionResponse } from "@/lib/server/chat/modelResponseParser";
+
 import {
+  type ExecutionIntelligenceArtifact,
   type SessionArtifact,
   type TestSuiteArtifact,
   getTestSuite,
@@ -51,6 +54,7 @@ import { getOpenAITraceFromError } from "@/lib/openai";
 
 import {
   applyGuidedArtifactPatch,
+  persistExecutionArtifact,
   persistGeneratedSuiteArtifact,
   persistReviewArtifact,
   type RequirementRefinedTelemetry,
@@ -83,7 +87,7 @@ function isExplicitRegenerationRequest(message: string): boolean {
 
 /*
 ---------------------------------------------------------
-M12.9 WORKFLOW ACTIONS
+M12.9 / M12.13 WORKFLOW ACTIONS
 ---------------------------------------------------------
 Artifact-driven workspace actions are explicit request contracts.
 */
@@ -92,7 +96,8 @@ type WorkflowAction =
   | "generate_next_batch_of_tests"
   | "review_test_suite"
   | "refine_requirement"
-  | "regenerate_suite";
+  | "regenerate_suite"
+  | "ingest_execution_results";
 
 function getWorkflowAction(body: unknown): WorkflowAction | null {
   if (!body || typeof body !== "object") return null;
@@ -104,7 +109,8 @@ function getWorkflowAction(body: unknown): WorkflowAction | null {
     candidate === "generate_next_batch_of_tests" ||
     candidate === "review_test_suite" ||
     candidate === "refine_requirement" ||
-    candidate === "regenerate_suite"
+    candidate === "regenerate_suite" ||
+    candidate === "ingest_execution_results"
   ) {
     return candidate;
   }
@@ -222,7 +228,7 @@ function buildWorkflowActionMessage(args: {
     ].join("\n");
   }
 
-    if (args.workflowAction === "regenerate_suite") {
+  if (args.workflowAction === "regenerate_suite") {
     const prerequisite = validateNextBatchPrerequisites({
       requirementText: getRefinedRequirementText(args.sessionArtifact),
       existingSuite: args.sessionArtifact?.testSuite ?? null,
@@ -264,6 +270,46 @@ function buildWorkflowActionMessage(args: {
       `EXISTING SUITE COUNT: ${baseline.existingCount}`,
       "EXISTING TEST CASE HEADERS:",
       existingSuiteSummary,
+    ].join("\n");
+  }
+
+  if (args.workflowAction === "ingest_execution_results") {
+    const suiteVersion = args.sessionArtifact?.testSuite?.version ?? null;
+
+    return [
+      "Normalize the provided execution-shaped input into a structured execution artifact for this session.",
+      "",
+      "Use ONLY explicit execution-oriented data from the provided input.",
+      "Do NOT infer hidden pass/fail outcomes.",
+      "Do NOT classify failure categories.",
+      "Do NOT score release health.",
+      "Return STRICT JSON only.",
+      "",
+      "Required top-level fields:",
+      '- "source"',
+      '- "suiteVersion"',
+      '- "runId" (optional)',
+      '- "runLabel" (optional)',
+      '- "observedAt"',
+      '- "suiteStatus"',
+      '- "caseResults"',
+      "",
+      "Each caseResults item must include:",
+      '- "caseId"',
+      '- "status"',
+      '- "observedAt"',
+      '- "source"',
+      "",
+      "Optional per-case fields:",
+      '- "externalCaseRef"',
+      '- "externalCaseName"',
+      '- "durationMs"',
+      '- "errorMessage"',
+      '- "rawOutcome"',
+      "",
+      `PERSISTED SUITE VERSION: ${
+        typeof suiteVersion === "number" ? `v${suiteVersion}` : "none"
+      }`,
     ].join("\n");
   }
 
@@ -375,6 +421,7 @@ export async function POST(req: Request) {
     } = parsedRequest;
 
     const workflowAction = getWorkflowAction(body);
+    const shouldBypassReplay = !!workflowAction;
 
     modeForMetric = clientMode;
 
@@ -491,6 +538,7 @@ export async function POST(req: Request) {
         hasArtifact: !!sessionArtifact,
         hasTestSuite: !!getTestSuite(sessionArtifact),
         workflowAction,
+        replayBypassed: shouldBypassReplay,
       },
     });
 
@@ -506,6 +554,7 @@ export async function POST(req: Request) {
         hasArtifact: !!sessionArtifact,
         hasTestSuite: !!getTestSuite(sessionArtifact),
         workflowAction,
+        replayBypassed: shouldBypassReplay,
       },
     });
 
@@ -513,35 +562,40 @@ export async function POST(req: Request) {
     ---------------------------------------------------------
     REPLAY
     ---------------------------------------------------------
+    Explicit workflow actions must bypass replay so persisted-action requests
+    execute against current artifact state instead of returning cached assistant
+    text from a previous turn.
     */
-    const replay = await tryReplayExistingAssistant({
-      auth0Sub,
-      sessionId,
-      requestId,
-      clientMode,
-      executionMode,
-      rateMeta,
-      sessionArtifact,
-      artifactUpdatedAtIso,
-    });
-
-    sessionArtifact = replay.sessionArtifact;
-    artifactUpdatedAtIso = replay.artifactUpdatedAtIso;
-
-    if (replay.hit) {
-      await recordChatMetric({
-        nowMs: Date.now(),
-        mode: modeForMetric,
-        status: 200,
-        latencyMs: Date.now() - startTime,
+    if (!shouldBypassReplay) {
+      const replay = await tryReplayExistingAssistant({
+        auth0Sub,
+        sessionId,
+        requestId,
+        clientMode,
+        executionMode,
+        rateMeta,
+        sessionArtifact,
+        artifactUpdatedAtIso,
       });
 
-      return replay.response;
+      sessionArtifact = replay.sessionArtifact;
+      artifactUpdatedAtIso = replay.artifactUpdatedAtIso;
+
+      if (replay.hit) {
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: modeForMetric,
+          status: 200,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return replay.response;
+      }
     }
 
     /*
     ---------------------------------------------------------
-    M12.9 WORKFLOW ACTIONS
+    M12.9 / M12.13 WORKFLOW ACTIONS
     ---------------------------------------------------------
     Artifact-driven workspace actions bypass freeform prompt handling.
     They resolve from persisted artifact state only.
@@ -616,10 +670,131 @@ export async function POST(req: Request) {
         });
       }
 
+            if (workflowAction === "ingest_execution_results") {
+        const executionParse = await parseExecutionResponse(message);
+
+        const executionObj: ExecutionIntelligenceArtifact | null =
+          executionParse.executionObj;
+        const executionRepaired = executionParse.repaired;
+
+        const replyTextForUser = executionObj
+          ? [
+              `Execution results recorded from ${executionObj.source}.`,
+              `Suite status: ${executionObj.suiteStatus}.`,
+              `Observed cases: ${executionObj.summary.total}.`,
+              `Passed: ${executionObj.summary.passed}, Failed: ${executionObj.summary.failed}, Skipped: ${executionObj.summary.skipped}, Blocked: ${executionObj.summary.blocked}, Timed out: ${executionObj.summary.timedOut}, Unknown: ${executionObj.summary.unknown}.`,
+              typeof executionObj.suiteVersion === "number"
+                ? `Linked suite version: v${executionObj.suiteVersion}.`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : "Execution input could not be normalized into a valid execution artifact.";
+
+        let creditsRemaining: number | null = null;
+
+        try {
+          creditsRemaining = await persistAssistantWithBillingTx({
+            sessionId,
+            auth0Sub,
+            requestId,
+            creditsCharged: 1,
+            assistantContentToStore: replyTextForUser,
+            promptTokens: 0,
+            completionTokens: 0,
+          });
+        } catch (e) {
+          if (e instanceof InsufficientCreditsError) {
+            await recordChatMetric({
+              nowMs: Date.now(),
+              mode: "coach",
+              status: 402,
+              latencyMs: Date.now() - startTime,
+            });
+
+            return buildInsufficientCreditsBillingResponse({
+              requestId,
+              clientMode: "coach",
+              sessionId,
+              creditsCharged: 1,
+              creditsRemaining: orgState.wallet?.balance ?? 0,
+              usage: {
+                promptTokens: 0,
+                completionTokens: 0,
+                totalTokens: 0,
+              },
+              rateMeta,
+              artifact: sessionArtifact,
+              artifactUpdatedAt: artifactUpdatedAtIso,
+            });
+          }
+
+          throw e;
+        }
+
+        const executionPersistResult = await persistExecutionArtifact({
+          sessionId,
+          sessionArtifact,
+          artifactUpdatedAtIso,
+          executionIntelligence: executionObj,
+        });
+
+        sessionArtifact = executionPersistResult.sessionArtifact;
+        artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
+
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: "coach",
+          status: 200,
+          latencyMs: Date.now() - startTime,
+        });
+
+        log("info", {
+          event: "chat_completed",
+          requestId,
+          auth0Sub,
+          orgId,
+          sessionId,
+          mode: clientMode,
+          durationMs: Date.now() - startTime,
+          retryCount,
+          meta: {
+            workflowAction,
+            creditsCharged: 1,
+            creditsRemaining,
+            hasExecutionIntelligence: !!executionObj,
+            executionRepaired,
+            executionSource: executionObj?.source,
+            executionSuiteStatus: executionObj?.suiteStatus,
+            executionObservedCases: executionObj?.summary.total ?? 0,
+          },
+        });
+
+        return buildChatSuccessResponse({
+          requestId,
+          clientMode: "coach",
+          reply: replyTextForUser,
+          coach: null,
+          sessionId,
+          creditsCharged: 1,
+          creditsRemaining,
+          usage: {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+          },
+          rateMeta,
+          executionIntelligence: executionObj,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        });
+      }
+
       const actionExecutionMode: "coach" | "review" =
+      
         workflowAction === "review_test_suite" ? "review" : "coach";
 
-       const actionWantCases =
+      const actionWantCases =
         workflowAction === "generate_tests_from_requirement" ||
         workflowAction === "generate_next_batch_of_tests" ||
         workflowAction === "regenerate_suite";
@@ -683,6 +858,10 @@ export async function POST(req: Request) {
 
       const reviewObj: ReviewResult | null = postModel.reviewObj;
       const reviewRepaired = postModel.reviewRepaired;
+
+      const executionObj: ExecutionIntelligenceArtifact | null =
+        postModel.executionObj;
+      const executionRepaired = postModel.executionRepaired;
 
       const assistantContentToStore = postModel.assistantContentToStore;
 
@@ -761,6 +940,16 @@ export async function POST(req: Request) {
 
       sessionArtifact = reviewPersistResult.sessionArtifact;
       artifactUpdatedAtIso = reviewPersistResult.artifactUpdatedAtIso;
+
+      const executionPersistResult = await persistExecutionArtifact({
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        executionIntelligence: executionObj,
+      });
+
+      sessionArtifact = executionPersistResult.sessionArtifact;
+      artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
 
       if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
         await emitTelemetryEvent({
@@ -854,6 +1043,11 @@ export async function POST(req: Request) {
           testSuiteAddedCount,
           hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
           hasTestSuite: !!getTestSuite(sessionArtifact),
+          hasExecutionIntelligence: !!executionObj,
+          executionRepaired,
+          executionSource: executionObj?.source,
+          executionSuiteStatus: executionObj?.suiteStatus,
+          executionObservedCases: executionObj?.summary.total ?? 0,
           suiteTelemetrySuppressed:
             !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
           suiteDuplicateGroups: casesFlowTelemetry?.metadata.duplicateGroups ?? 0,
@@ -877,6 +1071,7 @@ export async function POST(req: Request) {
         usage,
         rateMeta,
         workflowGuidance,
+        executionIntelligence: executionObj,
         artifact: sessionArtifact,
         artifactUpdatedAt: artifactUpdatedAtIso,
       });
@@ -997,6 +1192,10 @@ export async function POST(req: Request) {
     const reviewObj: ReviewResult | null = postModel.reviewObj;
     const reviewRepaired = postModel.reviewRepaired;
 
+    const executionObj: ExecutionIntelligenceArtifact | null =
+      postModel.executionObj;
+    const executionRepaired = postModel.executionRepaired;
+
     const assistantContentToStore = postModel.assistantContentToStore;
 
     const nextTestSuiteArtifact: TestSuiteArtifact | null =
@@ -1089,6 +1288,21 @@ export async function POST(req: Request) {
 
     sessionArtifact = reviewPersistResult.sessionArtifact;
     artifactUpdatedAtIso = reviewPersistResult.artifactUpdatedAtIso;
+
+    /*
+    ---------------------------------------------------------
+    EXECUTION ARTIFACT PERSIST
+    ---------------------------------------------------------
+    */
+    const executionPersistResult = await persistExecutionArtifact({
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      executionIntelligence: executionObj,
+    });
+
+    sessionArtifact = executionPersistResult.sessionArtifact;
+    artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
 
     if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
       await emitTelemetryEvent({
@@ -1187,6 +1401,11 @@ export async function POST(req: Request) {
         testSuiteAddedCount,
         hasArtifact: hasMeaningfulRefinedRequirement(sessionArtifact),
         hasTestSuite: !!getTestSuite(sessionArtifact),
+        hasExecutionIntelligence: !!executionObj,
+        executionRepaired,
+        executionSource: executionObj?.source,
+        executionSuiteStatus: executionObj?.suiteStatus,
+        executionObservedCases: executionObj?.summary.total ?? 0,
         suiteTelemetrySuppressed:
           !!casesFlowTelemetry && !shouldEmitCasesTelemetry,
         suiteDuplicateGroups: casesFlowTelemetry?.metadata.duplicateGroups ?? 0,
@@ -1210,6 +1429,7 @@ export async function POST(req: Request) {
       usage,
       rateMeta,
       workflowGuidance,
+      executionIntelligence: executionObj,
       artifact: sessionArtifact,
       artifactUpdatedAt: artifactUpdatedAtIso,
     });
