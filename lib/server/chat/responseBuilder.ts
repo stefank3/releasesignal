@@ -6,6 +6,11 @@
 // - add optional execution intelligence payload support to success responses
 // - keep response shaping generic and backward compatible
 // - do not introduce execution logic in the response layer
+//
+// M12.14 CHANGE:
+// - continue surfacing normalized execution intelligence payloads
+// - allow deterministic failure classification data to flow to the client
+// - keep responseBuilder transport-only with no classification logic
 
 import { NextResponse } from "next/server";
 import { responseHeaders } from "@/lib/chat/http";
@@ -200,7 +205,12 @@ export function buildReviewSuccessResponse(args: {
       usage: args.usage,
       rate: args.rateMeta,
       repaired: args.repaired || undefined,
+
+      // M12.13 / M12.14:
+      // Surface the full normalized execution artifact as-is.
+      // This now includes deterministic failureSummary when available.
       executionIntelligence: args.executionIntelligence ?? undefined,
+
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
     },
@@ -232,7 +242,13 @@ export function buildChatSuccessResponse(args: {
       usage: args.usage,
       rate: args.rateMeta,
       workflowGuidance: args.workflowGuidance ?? undefined,
+
+      // M12.13 / M12.14:
+      // Keep responseBuilder generic and transport-only.
+      // Client receives classification-aware execution payload without
+      // this layer knowing any classification rules.
       executionIntelligence: args.executionIntelligence ?? undefined,
+
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
     },
