@@ -37,6 +37,11 @@
 // - add persisted execution intelligence artifact writes
 // - keep execution persistence artifact-driven and deterministic
 // - mirror execution state into featureWorkspace only when that wrapper already exists
+//
+// M12.14 CHANGE:
+// - persist classification-aware execution artifacts without adding service-side rules
+// - keep failure classification fully artifact-owned
+// - preserve backward compatibility when execution classification is absent
 
 import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
@@ -110,6 +115,12 @@ function withUpdatedReviewArtifact(
   return next as SessionArtifact;
 }
 
+/**
+ * M12.13 / M12.14:
+ * Persist normalized execution state as the single source of truth.
+ * Classification, when present, is already normalized upstream in the
+ * artifact/parser layers. This service only mirrors persisted artifact state.
+ */
 function withUpdatedExecutionArtifact(
   artifact: SessionArtifact | null,
   executionIntelligence: ExecutionIntelligenceArtifact
@@ -429,6 +440,9 @@ export async function persistExecutionArtifact(args: {
     };
   }
 
+  // M12.14:
+  // Normalize again at persistence boundary so saved execution state,
+  // including optional failure classification summary, cannot drift.
   const nextArtifact = withUpdatedExecutionArtifact(
     args.sessionArtifact,
     args.executionIntelligence

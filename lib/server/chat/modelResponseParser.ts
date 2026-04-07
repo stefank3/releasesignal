@@ -30,11 +30,18 @@
 // - make business rules read like rules instead of transformed acceptance bullets
 // - make edge cases and repro scenarios read like concrete scenarios
 // - keep behavior deterministic and artifact-driven
+//
 // M12.13 execution intelligence:
 // - add deterministic execution-shaped payload parsing
 // - normalize execution input into structured execution artifact shape
 // - reject malformed/incomplete execution input explicitly
 // - keep parser responsibility limited to extraction/validation only
+//
+// M12.14 failure classification:
+// - accept explicit deterministic failure classification fields from execution input
+// - normalize classification into artifact-owned values
+// - reject malformed classification values by collapsing them to "unknown"
+// - do not infer classifications here; parser only extracts and normalizes
 
 import { extractJsonObject } from "@/lib/chat/json";
 import { repairJsonOnce } from "@/lib/chat/repair";
@@ -44,6 +51,8 @@ import {
   normalizeExecutionIntelligenceArtifact,
   normalizeExecutionSource,
   normalizeExecutionSuiteStatus,
+  normalizeFailureClassification,
+  normalizeFailureClassificationRule,
   type ExecutionCaseResult,
   type ExecutionIntelligenceArtifact,
 } from "@/lib/chat/artifact";
@@ -112,6 +121,18 @@ type ExecutionCaseLike = {
   rawOutcome?: unknown;
   externalCaseRef?: unknown;
   externalCaseName?: unknown;
+
+  // M12.14:
+  // Accept explicit deterministic classification keys only.
+  failureClassification?: unknown;
+  classification?: unknown;
+  failureType?: unknown;
+  category?: unknown;
+
+  failureClassificationRule?: unknown;
+  classificationRule?: unknown;
+  rule?: unknown;
+  reasonCode?: unknown;
 };
 
 type ExecutionPayloadLike = {
@@ -227,6 +248,7 @@ function mergeUnique(values: Array<string[]>, max: number): string[] {
 
   return out;
 }
+
 function toOptionalFiniteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -862,7 +884,9 @@ function normalizeRequirementLike(
   const acceptanceCriteria = toTrimmedStringArray(
     requirement.acceptanceCriteria,
     12
-  ).map((item) => normalizeSentence(item)).filter(Boolean);
+  )
+    .map((item) => normalizeSentence(item))
+    .filter(Boolean);
 
   const rawHooks =
     requirement.testStrategyHooks &&
@@ -877,7 +901,9 @@ function normalizeRequirementLike(
       toTrimmedStringArray(requirement.riskFocus, 8),
     ],
     8
-  ).map((item) => normalizePhrase(item)).filter(Boolean);
+  )
+    .map((item) => normalizePhrase(item))
+    .filter(Boolean);
 
   const integrations = toTrimmedStringArray(requirement.integrations, 8);
 
@@ -915,7 +941,9 @@ function normalizeRequirementLike(
       }),
     ],
     8
-  ).map((item) => normalizePhrase(item)).filter(Boolean);
+  )
+    .map((item) => normalizePhrase(item))
+    .filter(Boolean);
 
   const minimalReproScenarios = buildMinimalReproScenarios({
     requirement,
@@ -1004,6 +1032,24 @@ function buildExecutionCaseResult(
     return null;
   }
 
+  const failureClassification = normalizeFailureClassification(
+    toOptionalText(
+      raw.failureClassification ??
+        raw.classification ??
+        raw.failureType ??
+        raw.category
+    )
+  );
+
+  const failureClassificationRule = normalizeFailureClassificationRule(
+    toOptionalText(
+      raw.failureClassificationRule ??
+        raw.classificationRule ??
+        raw.rule ??
+        raw.reasonCode
+    )
+  );
+
   return normalizeExecutionCaseResult({
     caseId,
     status: normalizeExecutionCaseStatus(status),
@@ -1031,6 +1077,26 @@ function buildExecutionCaseResult(
       : {}),
     ...(toOptionalText(raw.rawOutcome ?? raw.outcome ?? raw.result)
       ? { rawOutcome: String(raw.rawOutcome ?? raw.outcome ?? raw.result).trim() }
+      : {}),
+
+    // M12.14:
+    // Keep classification optional for backward compatibility with M12.13 payloads.
+    // Persist explicit values when present; unsupported values normalize to "unknown".
+    ...(toOptionalText(
+      raw.failureClassification ??
+        raw.classification ??
+        raw.failureType ??
+        raw.category
+    )
+      ? { failureClassification }
+      : {}),
+    ...(toOptionalText(
+      raw.failureClassificationRule ??
+        raw.classificationRule ??
+        raw.rule ??
+        raw.reasonCode
+    )
+      ? { failureClassificationRule }
       : {}),
   });
 }
@@ -1065,6 +1131,8 @@ function parseExecutionPayload(
       return null;
     }
 
+    // Keep M12.13 strictness:
+    // every input result must normalize successfully or the payload is rejected.
     if (normalizedResults.length !== rawResults.length) {
       return null;
     }
@@ -1110,9 +1178,10 @@ function parseExecutionPayload(
         },
       });
 
-        if (!artifact.caseResults.length) {
+    if (!artifact.caseResults.length) {
       return null;
     }
+
     return artifact;
   } catch {
     return null;

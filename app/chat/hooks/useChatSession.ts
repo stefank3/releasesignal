@@ -35,6 +35,11 @@
 // - keep PATCH response as authoritative after editable suite save
 // - guard reset-time rehydration using artifactUpdatedAt
 // - avoid immediate post-save full history reset reload that can re-pin stale suite state
+//
+// M12.14 CHANGE:
+// - keep classification-aware execution artifact rehydration flowing through the existing artifact path
+// - do not introduce client-owned failure-classification logic
+// - preserve execution/classification state whenever artifact payloads are accepted
 
 "use client";
 
@@ -454,6 +459,9 @@ export function useChatSession(): UseChatSessionReturn {
           : historyArtifactUpdatedAt;
 
       if (reset) {
+        // M12.14:
+        // Classification-aware execution state stays inside the artifact.
+        // Rehydration remains timestamp-guarded and artifact-owned.
         setSessionArtifact(effectiveHistoryArtifact);
         setArtifactUpdatedAt(effectiveHistoryArtifactUpdatedAt);
         setWorkflowActionError(null);
@@ -468,7 +476,7 @@ export function useChatSession(): UseChatSessionReturn {
         }
       }
 
-      const { mapped, effectiveSessionMode } = mapHistoryItems({
+      const { mapped } = mapHistoryItems({
         items: data.items,
         sessionMode: nextSessionMode,
         sessionArtifact: effectiveHistoryArtifact,
@@ -668,6 +676,8 @@ export function useChatSession(): UseChatSessionReturn {
         },
       };
 
+      // M12.14:
+      // Keep existing execution/classification state intact when suite edits are saved.
       setSessionArtifact(nextArtifact);
       setArtifactUpdatedAt(nowIso);
 
@@ -831,6 +841,9 @@ export function useChatSession(): UseChatSessionReturn {
       const nextArtifact = artifactPayload?.artifact ?? null;
 
       if (artifactPayload) {
+        // M12.14:
+        // Classification-aware execution data enters client state through the
+        // same authoritative artifact response path as all other persisted state.
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
       }
@@ -1236,6 +1249,9 @@ export function useChatSession(): UseChatSessionReturn {
       const nextArtifact = artifactPayload?.artifact ?? null;
 
       if (artifactPayload) {
+        // M12.14:
+        // Reuse the existing authoritative artifact response path so execution
+        // classification state rehydrates exactly like requirement/suite/review state.
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
       }
