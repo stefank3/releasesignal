@@ -12,6 +12,11 @@
 // CHANGE (M12 Step 6 / 7A):
 // - add workflow guidance contract to API + casesText UI items
 // - keep shared-session rendering type-safe across workflow modes
+//
+// M12.14 CHANGE:
+// - add execution intelligence client contract
+// - add deterministic failure classification client types
+// - keep response typing aligned with classification-aware execution artifacts
 
 /**
  * Chat modes:
@@ -94,6 +99,19 @@ export type RefinedRequirement = {
   integrations?: string[];
   riskFocus?: string[];
   acceptanceCriteria?: string[];
+
+  // M12 bridge / compatibility fields
+  functionalScope?: string[];
+  businessRules?: string[];
+  edgeCases?: string[];
+  edgeCasesNegativePaths?: string[];
+  nonFunctionalConstraints?: string[];
+  testStrategyHooks?: string[];
+  riskAreas?: string[];
+  coverageTargets?: string[];
+  minimalReproScenarios?: string[];
+  openQuestions?: string[];
+  openQuestionsClarifications?: string[];
 };
 
 // ==============================
@@ -119,6 +137,98 @@ export type WorkflowGuidance = {
     | "ready_for_execution";
   message: string;
   rationale: string;
+};
+
+// ==============================
+// M12.14: Execution intelligence types
+// ==============================
+export type ExecutionSource =
+  | "playwright"
+  | "selenium"
+  | "postman"
+  | "ci"
+  | "unknown";
+
+export type ExecutionCaseStatus =
+  | "passed"
+  | "failed"
+  | "skipped"
+  | "blocked"
+  | "timed_out"
+  | "unknown";
+
+export type ExecutionSuiteStatus =
+  | "passed"
+  | "failed"
+  | "partial"
+  | "blocked"
+  | "unknown";
+
+export type FailureClassification =
+  | "locator_issue"
+  | "flaky_behavior"
+  | "environment_issue"
+  | "real_defect"
+  | "unknown";
+
+export type FailureClassificationRule =
+  | "locator_not_found"
+  | "stale_element_reference"
+  | "detached_element"
+  | "ambiguous_selector"
+  | "assertion_mismatch"
+  | "unexpected_response"
+  | "environment_unavailable"
+  | "network_failure"
+  | "dependency_failure"
+  | "test_timeout"
+  | "intermittent_pass_after_retry"
+  | "inconclusive"
+  | "unknown";
+
+export type FailureClassificationSummary = {
+  totalClassified: number;
+  locatorIssue: number;
+  flakyBehavior: number;
+  environmentIssue: number;
+  realDefect: number;
+  unknown: number;
+};
+
+export type ExecutionCaseResult = {
+  caseId: string;
+  status: ExecutionCaseStatus;
+  observedAt: string;
+  source: ExecutionSource;
+  externalCaseRef?: string;
+  externalCaseName?: string;
+  durationMs?: number;
+  errorMessage?: string;
+  rawOutcome?: string;
+  failureClassification?: FailureClassification;
+  failureClassificationRule?: FailureClassificationRule;
+};
+
+export type ExecutionSummary = {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  blocked: number;
+  timedOut: number;
+  unknown: number;
+};
+
+export type ExecutionIntelligenceArtifact = {
+  source: ExecutionSource;
+  suiteVersion: number | null;
+  runId?: string;
+  runLabel?: string;
+  observedAt: string;
+  suiteStatus: ExecutionSuiteStatus;
+  summary: ExecutionSummary;
+  caseResults: ExecutionCaseResult[];
+  failureSummary?: FailureClassificationSummary;
 };
 
 // ==============================
@@ -168,6 +278,7 @@ export type FeatureWorkspaceArtifact = {
   refinedRequirement?: RefinedRequirement;
   testSuite?: TestSuiteArtifact;
   reviewResult?: ReviewResult;
+  executionIntelligence?: ExecutionIntelligenceArtifact;
   lastUpdatedAt?: string;
 };
 
@@ -190,6 +301,10 @@ export type SessionArtifact = {
 
   // M12: optional persisted review artifact for stronger suite/review alignment.
   reviewResult?: ReviewResult;
+
+  // M12.13 / M12.14:
+  // optional persisted execution artifact with classification-aware state
+  executionIntelligence?: ExecutionIntelligenceArtifact;
 
   // M12: optional workspace grouping model. Not required yet by existing UI.
   featureWorkspace?: FeatureWorkspaceArtifact;
@@ -274,6 +389,10 @@ export type ChatApiResponse = {
   // M12 Step 6:
   // deterministic workflow guidance returned for cases flow when applicable
   workflowGuidance?: WorkflowGuidance;
+
+  // M12.13 / M12.14:
+  // normalized execution payload returned when available
+  executionIntelligence?: ExecutionIntelligenceArtifact | null;
 
   // CHANGE (M7.7): session artifact returned on every /api/chat response (and replay)
   artifact?: SessionArtifact | null;
