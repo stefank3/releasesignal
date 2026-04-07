@@ -42,11 +42,18 @@
 // - extend requirement artifact contract with ingestion bridge fields
 // - preserve legacy + M12.8 compatibility
 // - keep merge/context logic deterministic during transition
+//
 // M12.13 CHANGE:
 // - add structured execution intelligence artifact support
 // - keep execution data deterministic and artifact-owned
 // - support suite-level + case-level execution state without adding workflow logic here
 // - preserve existing requirement/test/review behavior and backward compatibility
+//
+// M12.14 CHANGE:
+// - add deterministic failure-classification contract support
+// - keep classification artifact-owned and parser/service-consumable
+// - support case-level classification + suite-level summary without adding workflow logic here
+// - preserve existing execution ingestion behavior when classification is absent
 
 import { Prisma } from "@prisma/client";
 
@@ -125,6 +132,44 @@ export type ExecutionSuiteStatus =
   | "blocked"
   | "unknown";
 
+// M12.14:
+// Stable deterministic failure buckets.
+// "unknown" is retained so malformed/insufficient classification input does not
+// force a false positive category.
+export type FailureClassification =
+  | "locator_issue"
+  | "flaky_behavior"
+  | "environment_issue"
+  | "real_defect"
+  | "unknown";
+
+// M12.14:
+// Optional rule code surface for parser/service layers.
+// This remains deterministic and explicit; UI should only consume it.
+export type FailureClassificationRule =
+  | "locator_not_found"
+  | "stale_element_reference"
+  | "detached_element"
+  | "ambiguous_selector"
+  | "assertion_mismatch"
+  | "unexpected_response"
+  | "environment_unavailable"
+  | "network_failure"
+  | "dependency_failure"
+  | "test_timeout"
+  | "intermittent_pass_after_retry"
+  | "inconclusive"
+  | "unknown";
+
+export type FailureClassificationSummary = {
+  totalClassified: number;
+  locatorIssue: number;
+  flakyBehavior: number;
+  environmentIssue: number;
+  realDefect: number;
+  unknown: number;
+};
+
 export type ExecutionCaseResult = {
   caseId: string;
   status: ExecutionCaseStatus;
@@ -135,6 +180,11 @@ export type ExecutionCaseResult = {
   durationMs?: number;
   errorMessage?: string;
   rawOutcome?: string;
+
+  // M12.14:
+  // Optional because M12.13 execution artifacts may exist without classification.
+  failureClassification?: FailureClassification;
+  failureClassificationRule?: FailureClassificationRule;
 };
 
 export type ExecutionSummary = {
@@ -156,6 +206,10 @@ export type ExecutionIntelligenceArtifact = {
   suiteStatus: ExecutionSuiteStatus;
   summary: ExecutionSummary;
   caseResults: ExecutionCaseResult[];
+
+  // M12.14:
+  // Built deterministically from normalized case results.
+  failureSummary?: FailureClassificationSummary;
 };
 
 export type TestCase = {
@@ -411,6 +465,59 @@ export function normalizeExecutionSuiteStatus(value: string): ExecutionSuiteStat
   return "unknown";
 }
 
+// M12.14:
+// Normalize explicit deterministic failure category values only.
+// Unknown/unsupported values collapse to "unknown" instead of forcing a category.
+export function normalizeFailureClassification(
+  value: string | null | undefined
+): FailureClassification {
+  const normalized = normalizeWhitespace(String(value ?? "")).toLowerCase();
+
+  if (normalized === "locator_issue" || normalized === "locator issue") {
+    return "locator_issue";
+  }
+
+  if (normalized === "flaky_behavior" || normalized === "flaky behavior") {
+    return "flaky_behavior";
+  }
+
+  if (normalized === "environment_issue" || normalized === "environment issue") {
+    return "environment_issue";
+  }
+
+  if (normalized === "real_defect" || normalized === "real defect") {
+    return "real_defect";
+  }
+
+  return "unknown";
+}
+
+// M12.14:
+// Normalize explicit deterministic rule codes only.
+// This keeps parser/service outputs stable across refresh and persistence.
+export function normalizeFailureClassificationRule(
+  value: string | null | undefined
+): FailureClassificationRule {
+  const normalized = normalizeWhitespace(String(value ?? "")).toLowerCase();
+
+  if (normalized === "locator_not_found") return "locator_not_found";
+  if (normalized === "stale_element_reference") return "stale_element_reference";
+  if (normalized === "detached_element") return "detached_element";
+  if (normalized === "ambiguous_selector") return "ambiguous_selector";
+  if (normalized === "assertion_mismatch") return "assertion_mismatch";
+  if (normalized === "unexpected_response") return "unexpected_response";
+  if (normalized === "environment_unavailable") return "environment_unavailable";
+  if (normalized === "network_failure") return "network_failure";
+  if (normalized === "dependency_failure") return "dependency_failure";
+  if (normalized === "test_timeout") return "test_timeout";
+  if (normalized === "intermittent_pass_after_retry") {
+    return "intermittent_pass_after_retry";
+  }
+  if (normalized === "inconclusive") return "inconclusive";
+
+  return "unknown";
+}
+
 export function buildExecutionSummary(
   caseResults: ExecutionCaseResult[]
 ): ExecutionSummary {
@@ -450,6 +557,54 @@ export function buildExecutionSummary(
   return summary;
 }
 
+// M12.14:
+// Build suite-level failure summary from normalized case classifications only.
+// Passed/skipped/etc do not contribute to classification totals.
+export function buildFailureClassificationSummary(
+  caseResults: ExecutionCaseResult[]
+): FailureClassificationSummary {
+  const summary: FailureClassificationSummary = {
+    totalClassified: 0,
+    locatorIssue: 0,
+    flakyBehavior: 0,
+    environmentIssue: 0,
+    realDefect: 0,
+    unknown: 0,
+  };
+
+  for (const result of caseResults) {
+    if (result.status !== "failed" && result.status !== "timed_out") {
+      continue;
+    }
+
+    const classification = normalizeFailureClassification(
+      result.failureClassification
+    );
+
+    summary.totalClassified += 1;
+
+    switch (classification) {
+      case "locator_issue":
+        summary.locatorIssue += 1;
+        break;
+      case "flaky_behavior":
+        summary.flakyBehavior += 1;
+        break;
+      case "environment_issue":
+        summary.environmentIssue += 1;
+        break;
+      case "real_defect":
+        summary.realDefect += 1;
+        break;
+      default:
+        summary.unknown += 1;
+        break;
+    }
+  }
+
+  return summary;
+}
+
 export function normalizeExecutionCaseResult(
   result: ExecutionCaseResult
 ): ExecutionCaseResult {
@@ -471,6 +626,23 @@ export function normalizeExecutionCaseResult(
       ? { errorMessage: normalizeMultilineText(result.errorMessage) }
       : {}),
     ...(result.rawOutcome ? { rawOutcome: normalizeWhitespace(result.rawOutcome) } : {}),
+
+    // M12.14:
+    // Preserve classification only when explicitly provided.
+    ...(result.failureClassification
+      ? {
+          failureClassification: normalizeFailureClassification(
+            result.failureClassification
+          ),
+        }
+      : {}),
+    ...(result.failureClassificationRule
+      ? {
+          failureClassificationRule: normalizeFailureClassificationRule(
+            result.failureClassificationRule
+          ),
+        }
+      : {}),
   };
 }
 
@@ -495,6 +667,10 @@ export function normalizeExecutionIntelligenceArtifact(
     suiteStatus: normalizeExecutionSuiteStatus(artifact.suiteStatus),
     summary: buildExecutionSummary(caseResults),
     caseResults,
+
+    // M12.14:
+    // Always rebuild from normalized case results so persisted summary cannot drift.
+    failureSummary: buildFailureClassificationSummary(caseResults),
   };
 }
 
@@ -1188,6 +1364,16 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     lines.push(
       `- Summary: total ${execution.summary.total}, passed ${execution.summary.passed}, failed ${execution.summary.failed}, skipped ${execution.summary.skipped}, blocked ${execution.summary.blocked}, timed out ${execution.summary.timedOut}, unknown ${execution.summary.unknown}`
     );
+
+    // M12.14:
+    // Surface deterministic classification totals in context without turning
+    // rendered text into a workflow dependency.
+    if (execution.failureSummary) {
+      lines.push(
+        `- Failure classification: total classified ${execution.failureSummary.totalClassified}, locator issues ${execution.failureSummary.locatorIssue}, flaky behavior ${execution.failureSummary.flakyBehavior}, environment issues ${execution.failureSummary.environmentIssue}, real defects ${execution.failureSummary.realDefect}, unknown ${execution.failureSummary.unknown}`
+      );
+    }
+
     if (typeof execution.suiteVersion === "number") {
       lines.push(`- Suite version: v${execution.suiteVersion}`);
     }
