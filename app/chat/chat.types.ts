@@ -17,6 +17,11 @@
 // - add execution intelligence client contract
 // - add deterministic failure classification client types
 // - keep response typing aligned with classification-aware execution artifacts
+//
+// M12.15 CHANGE:
+// - add release health client contract
+// - keep response typing aligned with deterministic release-health artifacts
+// - keep existing UI contracts backward compatible
 
 /**
  * Chat modes:
@@ -232,6 +237,62 @@ export type ExecutionIntelligenceArtifact = {
 };
 
 // ==============================
+// M12.15: Release health types
+// ==============================
+export type ReleaseHealthCoverageStatus =
+  | "missing_requirement"
+  | "requirement_only"
+  | "suite_ready"
+  | "review_ready";
+
+export type ReleaseHealthExecutionStatus =
+  | "not_started"
+  | "passed"
+  | "failed"
+  | "partial"
+  | "blocked"
+  | "unknown";
+
+export type ReleaseHealthFailureBurden =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "unknown";
+
+export type ReleaseHealthOverallStatus =
+  | "not_ready"
+  | "needs_review"
+  | "ready_for_execution"
+  | "healthy"
+  | "degraded"
+  | "blocked"
+  | "unknown";
+
+export type ReleaseHealthArtifact = {
+  computedAt: string;
+  coverageStatus: ReleaseHealthCoverageStatus;
+  executionStatus: ReleaseHealthExecutionStatus;
+  failureBurden: ReleaseHealthFailureBurden;
+  overallStatus: ReleaseHealthOverallStatus;
+
+  requirementPresent: boolean;
+  suitePresent: boolean;
+  reviewPresent: boolean;
+  executionPresent: boolean;
+  failureClassificationPresent: boolean;
+
+  suiteVersion: number | null;
+  reviewScore: number | null;
+  executionTotal: number;
+  executionFailed: number;
+  executionTimedOut: number;
+  totalClassifiedFailures: number;
+
+  reasons: string[];
+};
+
+// ==============================
 // M9 / M12: Persistent suite types
 // ==============================
 
@@ -279,6 +340,7 @@ export type FeatureWorkspaceArtifact = {
   testSuite?: TestSuiteArtifact;
   reviewResult?: ReviewResult;
   executionIntelligence?: ExecutionIntelligenceArtifact;
+  releaseHealth?: ReleaseHealthArtifact;
   lastUpdatedAt?: string;
 };
 
@@ -305,6 +367,10 @@ export type SessionArtifact = {
   // M12.13 / M12.14:
   // optional persisted execution artifact with classification-aware state
   executionIntelligence?: ExecutionIntelligenceArtifact;
+
+  // M12.15:
+  // optional persisted release-health artifact
+  releaseHealth?: ReleaseHealthArtifact;
 
   // M12: optional workspace grouping model. Not required yet by existing UI.
   featureWorkspace?: FeatureWorkspaceArtifact;
@@ -393,6 +459,10 @@ export type ChatApiResponse = {
   // M12.13 / M12.14:
   // normalized execution payload returned when available
   executionIntelligence?: ExecutionIntelligenceArtifact | null;
+
+  // M12.15:
+  // normalized release-health payload returned when available
+  releaseHealth?: ReleaseHealthArtifact | null;
 
   // CHANGE (M7.7): session artifact returned on every /api/chat response (and replay)
   artifact?: SessionArtifact | null;
