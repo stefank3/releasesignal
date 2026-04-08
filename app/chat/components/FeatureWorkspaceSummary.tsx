@@ -16,6 +16,12 @@
 // - improve first-run readability of workspace state
 // - clarify what each persisted artifact means in the workflow
 // - strengthen empty-state guidance without changing any workflow behavior
+//
+// M12.15 CHANGE:
+// - add first visible release-health summary card
+// - keep all health display artifact-driven and read-only
+// - do not compute release health in UI
+// - surface explicit partial-state degradation from persisted artifact only
 
 "use client";
 
@@ -158,9 +164,6 @@ function SummaryCard(args: {
         {args.description}
       </div>
 
-      {/* M12.11 NOTE:
-          Lightweight onboarding/help copy for each artifact card.
-          Informational only; no logic ownership. */}
       {args.helpText ? (
         <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72 }}>
           {args.helpText}
@@ -190,6 +193,15 @@ function toRelativeStrength(score: number | null | undefined): string | null {
   return "Weak review result";
 }
 
+function toReleaseHealthLabel(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "Unknown";
+
+  return normalized
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 export default function FeatureWorkspaceSummary({
   chat,
   resolvedTheme = "dark",
@@ -204,13 +216,26 @@ export default function FeatureWorkspaceSummary({
   const suiteCount = chat.sessionArtifact?.testSuite?.cases?.length ?? 0;
   const reviewScore = chat.sessionArtifact?.reviewResult?.score;
 
-  // M12.10 CHANGE:
-  // - keep stage text readable and stable at the summary level
-  // - use existing parent-derived workflow status only
+  const releaseHealth = chat.sessionArtifact?.releaseHealth ?? null;
+  const releaseHealthReady = !!releaseHealth;
+  const releaseHealthOverall = releaseHealth
+    ? toReleaseHealthLabel(releaseHealth.overallStatus)
+    : null;
+  const releaseHealthCoverage = releaseHealth
+    ? toReleaseHealthLabel(releaseHealth.coverageStatus)
+    : null;
+  const releaseHealthExecution = releaseHealth
+    ? toReleaseHealthLabel(releaseHealth.executionStatus)
+    : null;
+  const releaseHealthFailureBurden = releaseHealth
+    ? toReleaseHealthLabel(releaseHealth.failureBurden)
+    : null;
+
   const currentStage = normalizeStageTitle(chat.workflowStatus.title);
   const nextAction = chat.workflowStatus.nextAction;
 
-  const hasAnyArtifacts = requirementReady || suiteReady || reviewReady;
+  const hasAnyArtifacts =
+    requirementReady || suiteReady || reviewReady || releaseHealthReady;
 
   const requirementEmphasis = requirementReady
     ? "Latest refined requirement is available"
@@ -226,6 +251,22 @@ export default function FeatureWorkspaceSummary({
       ? `${reviewStrength}${typeof reviewScore === "number" ? ` (${reviewScore}/100)` : ""}`
       : "Latest review result is available"
     : "No persisted review yet";
+
+  const releaseHealthEmphasis = releaseHealthReady
+    ? `Overall status: ${releaseHealthOverall}`
+    : "No release health computed yet";
+
+  const releaseHealthMeta = releaseHealthReady
+    ? [
+        releaseHealthCoverage ? `Coverage: ${releaseHealthCoverage}` : null,
+        releaseHealthExecution ? `Execution: ${releaseHealthExecution}` : null,
+        releaseHealthFailureBurden
+          ? `Failure burden: ${releaseHealthFailureBurden}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "Release health will appear once the dashboard signal is available";
 
   return (
     <div
@@ -257,12 +298,9 @@ export default function FeatureWorkspaceSummary({
             This session is tracked as a QA workspace backed by persisted artifacts.
           </div>
 
-          {/* M12.11 NOTE:
-              Make the empty workspace meaning explicit for first-time users,
-              while keeping summary state fully artifact-driven. */}
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, and review state for this workspace."
+              ? "The cards below show the latest saved requirement, suite, review, and release-health state for this workspace."
               : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
           </div>
         </div>
@@ -340,6 +378,24 @@ export default function FeatureWorkspaceSummary({
                 }`
               : "Run Test Review against the current suite"
           }
+          resolvedTheme={resolvedTheme}
+        />
+
+        <SummaryCard
+          title="Release Health"
+          ready={releaseHealthReady}
+          emphasis={releaseHealthEmphasis}
+          description={
+            releaseHealthReady
+              ? "A deterministic release-health artifact is available from the latest persisted workspace state."
+              : "Release health has not yet been surfaced for this workspace."
+          }
+          helpText={
+            releaseHealthReady
+              ? "This view is read-only and reflects the latest saved health rollup from requirement, suite, review, and execution artifacts."
+              : "This will become visible once release-health data is computed and persisted by the backend."
+          }
+          meta={releaseHealthMeta}
           resolvedTheme={resolvedTheme}
         />
       </div>
