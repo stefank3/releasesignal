@@ -11,12 +11,18 @@
 // - continue surfacing normalized execution intelligence payloads
 // - allow deterministic failure classification data to flow to the client
 // - keep responseBuilder transport-only with no classification logic
+//
+// M12.15 CHANGE:
+// - add optional release health payload support to success responses
+// - keep response shaping transport-only and backward compatible
+// - do not introduce release health computation in the response layer
 
 import { NextResponse } from "next/server";
 import { responseHeaders } from "@/lib/chat/http";
 import type { RateMeta, ClientMode } from "@/lib/chat/chatTypes";
 import type {
   ExecutionIntelligenceArtifact,
+  ReleaseHealthArtifact,
   SessionArtifact,
 } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
@@ -35,6 +41,10 @@ type SharedArtifactPayload = {
 
 type SharedExecutionPayload = {
   executionIntelligence?: ExecutionIntelligenceArtifact | null;
+};
+
+type SharedReleaseHealthPayload = {
+  releaseHealth?: ReleaseHealthArtifact | null;
 };
 
 export function buildUnauthorizedResponse(requestId: string) {
@@ -193,7 +203,9 @@ export function buildReviewSuccessResponse(args: {
   usage: UsagePayload;
   rateMeta: RateMeta | null;
   repaired?: boolean;
-} & SharedArtifactPayload & SharedExecutionPayload) {
+} & SharedArtifactPayload &
+  SharedExecutionPayload &
+  SharedReleaseHealthPayload) {
   return NextResponse.json(
     {
       ok: true,
@@ -210,6 +222,11 @@ export function buildReviewSuccessResponse(args: {
       // Surface the full normalized execution artifact as-is.
       // This now includes deterministic failureSummary when available.
       executionIntelligence: args.executionIntelligence ?? undefined,
+
+      // M12.15:
+      // Surface the normalized release health artifact as-is.
+      // This layer remains transport-only and does not interpret health rules.
+      releaseHealth: args.releaseHealth ?? undefined,
 
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
@@ -229,7 +246,9 @@ export function buildChatSuccessResponse(args: {
   usage: UsagePayload;
   rateMeta: RateMeta | null;
   workflowGuidance?: WorkflowGuidance | null;
-} & SharedArtifactPayload & SharedExecutionPayload) {
+} & SharedArtifactPayload &
+  SharedExecutionPayload &
+  SharedReleaseHealthPayload) {
   return NextResponse.json(
     {
       ok: true,
@@ -248,6 +267,11 @@ export function buildChatSuccessResponse(args: {
       // Client receives classification-aware execution payload without
       // this layer knowing any classification rules.
       executionIntelligence: args.executionIntelligence ?? undefined,
+
+      // M12.15:
+      // Client receives deterministic release health payload without
+      // this layer owning any release health computation logic.
+      releaseHealth: args.releaseHealth ?? undefined,
 
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
