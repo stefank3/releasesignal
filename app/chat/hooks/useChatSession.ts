@@ -40,6 +40,11 @@
 // - keep classification-aware execution artifact rehydration flowing through the existing artifact path
 // - do not introduce client-owned failure-classification logic
 // - preserve execution/classification state whenever artifact payloads are accepted
+//
+// M12.15 CHANGE:
+// - keep release-health artifact rehydration flowing through the existing artifact path
+// - do not introduce client-owned release-health logic
+// - preserve release-health state whenever artifact payloads are accepted
 
 "use client";
 
@@ -459,9 +464,10 @@ export function useChatSession(): UseChatSessionReturn {
           : historyArtifactUpdatedAt;
 
       if (reset) {
-        // M12.14:
-        // Classification-aware execution state stays inside the artifact.
-        // Rehydration remains timestamp-guarded and artifact-owned.
+        // M12.14 / M12.15:
+        // Classification-aware execution state and release-health state stay
+        // inside the artifact. Rehydration remains timestamp-guarded and
+        // artifact-owned.
         setSessionArtifact(effectiveHistoryArtifact);
         setArtifactUpdatedAt(effectiveHistoryArtifactUpdatedAt);
         setWorkflowActionError(null);
@@ -676,8 +682,9 @@ export function useChatSession(): UseChatSessionReturn {
         },
       };
 
-      // M12.14:
-      // Keep existing execution/classification state intact when suite edits are saved.
+      // M12.14 / M12.15:
+      // Keep existing execution/classification state and release-health state
+      // intact when suite edits are saved.
       setSessionArtifact(nextArtifact);
       setArtifactUpdatedAt(nowIso);
 
@@ -841,9 +848,10 @@ export function useChatSession(): UseChatSessionReturn {
       const nextArtifact = artifactPayload?.artifact ?? null;
 
       if (artifactPayload) {
-        // M12.14:
-        // Classification-aware execution data enters client state through the
-        // same authoritative artifact response path as all other persisted state.
+        // M12.14 / M12.15:
+        // Classification-aware execution data and release-health data enter
+        // client state through the same authoritative artifact response path
+        // as all other persisted state.
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
       }
@@ -1249,9 +1257,10 @@ export function useChatSession(): UseChatSessionReturn {
       const nextArtifact = artifactPayload?.artifact ?? null;
 
       if (artifactPayload) {
-        // M12.14:
+        // M12.14 / M12.15:
         // Reuse the existing authoritative artifact response path so execution
-        // classification state rehydrates exactly like requirement/suite/review state.
+        // classification state and release-health state rehydrate exactly like
+        // requirement/suite/review state.
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
       }
