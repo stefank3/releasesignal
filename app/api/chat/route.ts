@@ -968,6 +968,16 @@ export async function POST(req: Request) {
       sessionArtifact = executionPersistResult.sessionArtifact;
       artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
 
+   const releaseHealthPersistResult = await persistReleaseHealthArtifact({
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        releaseHealth: buildReleaseHealthArtifact(sessionArtifact),
+      });
+
+      sessionArtifact = releaseHealthPersistResult.sessionArtifact;
+      artifactUpdatedAtIso = releaseHealthPersistResult.artifactUpdatedAtIso;
+
       if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
         await emitTelemetryEvent({
           eventType: casesFlowTelemetry.eventType,
@@ -1122,6 +1132,15 @@ export async function POST(req: Request) {
     sessionArtifact = guidedArtifactResult.sessionArtifact;
     artifactUpdatedAtIso = guidedArtifactResult.artifactUpdatedAtIso;
 
+  const guidedReleaseHealthPersistResult = await persistReleaseHealthArtifact({
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      releaseHealth: buildReleaseHealthArtifact(sessionArtifact),
+    });
+
+    sessionArtifact = guidedReleaseHealthPersistResult.sessionArtifact;
+    artifactUpdatedAtIso = guidedReleaseHealthPersistResult.artifactUpdatedAtIso;
     const requirementTelemetry: RequirementRefinedTelemetry | null =
       guidedArtifactResult.requirementTelemetry;
 
@@ -1316,7 +1335,17 @@ export async function POST(req: Request) {
       sessionArtifact,
       artifactUpdatedAtIso,
       executionIntelligence: executionObj,
+    });   
+
+    const releaseHealthPersistResult = await persistReleaseHealthArtifact({
+      sessionId,
+      sessionArtifact,
+      artifactUpdatedAtIso,
+      releaseHealth: buildReleaseHealthArtifact(sessionArtifact),
     });
+
+    sessionArtifact = releaseHealthPersistResult.sessionArtifact;
+    artifactUpdatedAtIso = releaseHealthPersistResult.artifactUpdatedAtIso;
 
     sessionArtifact = executionPersistResult.sessionArtifact;
     artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
