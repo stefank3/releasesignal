@@ -42,15 +42,23 @@
 // - persist classification-aware execution artifacts without adding service-side rules
 // - keep failure classification fully artifact-owned
 // - preserve backward compatibility when execution classification is absent
+//
+// M12.15 CHANGE:
+// - add persisted release-health artifact writes
+// - keep release-health computation outside this service
+// - mirror release-health state into featureWorkspace only when that wrapper already exists
+// - preserve existing requirement/suite/review/execution behavior
 
 import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
 import {
   type ExecutionIntelligenceArtifact,
+  type ReleaseHealthArtifact,
   type SessionArtifact,
   type TestSuiteArtifact,
   mergeArtifact,
   normalizeExecutionIntelligenceArtifact,
+  normalizeReleaseHealthArtifact,
   normalizeTestCase,
   parseGuidedAnswerToRefinedRequirement,
   parseStructuredRequirementInput,
@@ -150,6 +158,43 @@ function withUpdatedExecutionArtifact(
   return next as SessionArtifact;
 }
 
+/**
+ * M12.15:
+ * Persist normalized release health as the single source of truth.
+ * Release health must already be computed deterministically upstream.
+ * This service only normalizes and mirrors persisted artifact state.
+ */
+function withUpdatedReleaseHealthState(
+  artifact: SessionArtifact | null,
+  releaseHealth: ReleaseHealthArtifact
+): SessionArtifact {
+  const base = isRecord(artifact) ? { ...artifact } : {};
+  const normalizedReleaseHealth = normalizeReleaseHealthArtifact(releaseHealth);
+
+  const next = {
+    ...base,
+    releaseHealth: normalizedReleaseHealth,
+  } as SessionArtifact & Record<string, unknown>;
+
+  if (isRecord(base.featureWorkspace)) {
+    next.featureWorkspace = {
+      ...base.featureWorkspace,
+      ...(base.refinedRequirement
+        ? { refinedRequirement: base.refinedRequirement }
+        : {}),
+      ...(base.testSuite ? { testSuite: base.testSuite } : {}),
+      ...(base.reviewResult ? { reviewResult: base.reviewResult } : {}),
+      ...(base.executionIntelligence
+        ? { executionIntelligence: base.executionIntelligence }
+        : {}),
+      releaseHealth: normalizedReleaseHealth,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+
+  return next as SessionArtifact;
+}
+
 function withFeatureWorkspaceSuiteMirror(
   artifact: SessionArtifact,
   testSuite: TestSuiteArtifact
@@ -169,6 +214,7 @@ function withFeatureWorkspaceSuiteMirror(
       ...(artifact.executionIntelligence
         ? { executionIntelligence: artifact.executionIntelligence }
         : {}),
+      ...(artifact.releaseHealth ? { releaseHealth: artifact.releaseHealth } : {}),
       lastUpdatedAt: new Date().toISOString(),
     },
   };
@@ -192,6 +238,7 @@ function withFeatureWorkspaceRequirementMirror(
       ...(artifact.executionIntelligence
         ? { executionIntelligence: artifact.executionIntelligence }
         : {}),
+      ...(artifact.releaseHealth ? { releaseHealth: artifact.releaseHealth } : {}),
       lastUpdatedAt: new Date().toISOString(),
     },
   };
@@ -446,6 +493,41 @@ export async function persistExecutionArtifact(args: {
   const nextArtifact = withUpdatedExecutionArtifact(
     args.sessionArtifact,
     args.executionIntelligence
+  );
+
+  const saved = await saveSessionArtifact({
+    sessionId: args.sessionId,
+    artifact: nextArtifact,
+  });
+
+  return {
+    sessionArtifact: saved.artifact,
+    artifactUpdatedAtIso: saved.artifactUpdatedAtIso,
+  };
+}
+
+export async function persistReleaseHealthArtifact(args: {
+  sessionId: string;
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+  releaseHealth: ReleaseHealthArtifact | null;
+}): Promise<{
+  sessionArtifact: SessionArtifact | null;
+  artifactUpdatedAtIso: string | null;
+}> {
+  if (!args.releaseHealth) {
+    return {
+      sessionArtifact: args.sessionArtifact,
+      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+    };
+  }
+
+  // M12.15:
+  // Normalize again at persistence boundary so saved release-health state
+  // cannot drift from the locked artifact contract.
+  const nextArtifact = withUpdatedReleaseHealthState(
+    args.sessionArtifact,
+    args.releaseHealth
   );
 
   const saved = await saveSessionArtifact({
