@@ -1335,7 +1335,10 @@ export async function POST(req: Request) {
       sessionArtifact,
       artifactUpdatedAtIso,
       executionIntelligence: executionObj,
-    });   
+    });
+
+    sessionArtifact = executionPersistResult.sessionArtifact;
+    artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
 
     const releaseHealthPersistResult = await persistReleaseHealthArtifact({
       sessionId,
@@ -1346,9 +1349,6 @@ export async function POST(req: Request) {
 
     sessionArtifact = releaseHealthPersistResult.sessionArtifact;
     artifactUpdatedAtIso = releaseHealthPersistResult.artifactUpdatedAtIso;
-
-    sessionArtifact = executionPersistResult.sessionArtifact;
-    artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
 
     if (shouldEmitCasesTelemetry && casesFlowTelemetry) {
       await emitTelemetryEvent({
