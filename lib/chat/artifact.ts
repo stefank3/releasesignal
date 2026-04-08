@@ -54,6 +54,13 @@
 // - keep classification artifact-owned and parser/service-consumable
 // - support case-level classification + suite-level summary without adding workflow logic here
 // - preserve existing execution ingestion behavior when classification is absent
+//
+// M12.15 CHANGE:
+// - add deterministic release-health contract support
+// - keep release health artifact-owned and service-computable
+// - aggregate requirement/suite/review/execution/classification readiness without AI inference
+// - support explicit partial-state degradation and stable UI consumption
+// - preserve existing artifact behavior and backward compatibility
 
 import { Prisma } from "@prisma/client";
 
@@ -212,6 +219,64 @@ export type ExecutionIntelligenceArtifact = {
   failureSummary?: FailureClassificationSummary;
 };
 
+// M12.15:
+// Stable deterministic release-health enums.
+// These are intentionally explicit so partial artifact states degrade visibly.
+export type ReleaseHealthCoverageStatus =
+  | "missing_requirement"
+  | "requirement_only"
+  | "suite_ready"
+  | "review_ready";
+
+export type ReleaseHealthExecutionStatus =
+  | "not_started"
+  | "passed"
+  | "failed"
+  | "partial"
+  | "blocked"
+  | "unknown";
+
+export type ReleaseHealthFailureBurden =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "unknown";
+
+export type ReleaseHealthOverallStatus =
+  | "not_ready"
+  | "needs_review"
+  | "ready_for_execution"
+  | "healthy"
+  | "degraded"
+  | "blocked"
+  | "unknown";
+
+export type ReleaseHealthArtifact = {
+  computedAt: string;
+  coverageStatus: ReleaseHealthCoverageStatus;
+  executionStatus: ReleaseHealthExecutionStatus;
+  failureBurden: ReleaseHealthFailureBurden;
+  overallStatus: ReleaseHealthOverallStatus;
+
+  requirementPresent: boolean;
+  suitePresent: boolean;
+  reviewPresent: boolean;
+  executionPresent: boolean;
+  failureClassificationPresent: boolean;
+
+  suiteVersion: number | null;
+  reviewScore: number | null;
+  executionTotal: number;
+  executionFailed: number;
+  executionTimedOut: number;
+  totalClassifiedFailures: number;
+
+  // Deterministic explanation surface for UI.
+  // Service layer may populate these from artifact state only.
+  reasons: string[];
+};
+
 export type TestCase = {
   id: string;
   title: string;
@@ -244,6 +309,7 @@ export type FeatureWorkspaceArtifact = {
   testSuite?: TestSuiteArtifact;
   reviewResult?: PersistedReviewResult;
   executionIntelligence?: ExecutionIntelligenceArtifact;
+  releaseHealth?: ReleaseHealthArtifact;
   lastUpdatedAt?: string;
 };
 
@@ -252,6 +318,7 @@ export type SessionArtifact = {
   testSuite?: TestSuiteArtifact;
   reviewResult?: PersistedReviewResult;
   executionIntelligence?: ExecutionIntelligenceArtifact;
+  releaseHealth?: ReleaseHealthArtifact;
   featureWorkspace?: FeatureWorkspaceArtifact;
 };
 
@@ -691,6 +758,127 @@ export function getExecutionIntelligence(
   );
 }
 
+// M12.15:
+// Normalize only explicit deterministic release-health enums and fields.
+// Computation stays in service layers; this file only protects artifact shape.
+export function normalizeReleaseHealthCoverageStatus(
+  value: string | null | undefined
+): ReleaseHealthCoverageStatus {
+  const normalized = normalizeWhitespace(String(value ?? "")).toLowerCase();
+
+  if (normalized === "missing_requirement") return "missing_requirement";
+  if (normalized === "requirement_only") return "requirement_only";
+  if (normalized === "suite_ready") return "suite_ready";
+  if (normalized === "review_ready") return "review_ready";
+
+  return "missing_requirement";
+}
+
+export function normalizeReleaseHealthExecutionStatus(
+  value: string | null | undefined
+): ReleaseHealthExecutionStatus {
+  const normalized = normalizeWhitespace(String(value ?? "")).toLowerCase();
+
+  if (normalized === "not_started") return "not_started";
+  if (normalized === "passed") return "passed";
+  if (normalized === "failed") return "failed";
+  if (normalized === "partial") return "partial";
+  if (normalized === "blocked") return "blocked";
+  if (normalized === "unknown") return "unknown";
+
+  return "unknown";
+}
+
+export function normalizeReleaseHealthFailureBurden(
+  value: string | null | undefined
+): ReleaseHealthFailureBurden {
+  const normalized = normalizeWhitespace(String(value ?? "")).toLowerCase();
+
+  if (normalized === "none") return "none";
+  if (normalized === "low") return "low";
+  if (normalized === "medium") return "medium";
+  if (normalized === "high") return "high";
+  if (normalized === "unknown") return "unknown";
+
+  return "unknown";
+}
+
+export function normalizeReleaseHealthOverallStatus(
+  value: string | null | undefined
+): ReleaseHealthOverallStatus {
+  const normalized = normalizeWhitespace(String(value ?? "")).toLowerCase();
+
+  if (normalized === "not_ready") return "not_ready";
+  if (normalized === "needs_review") return "needs_review";
+  if (normalized === "ready_for_execution") return "ready_for_execution";
+  if (normalized === "healthy") return "healthy";
+  if (normalized === "degraded") return "degraded";
+  if (normalized === "blocked") return "blocked";
+  if (normalized === "unknown") return "unknown";
+
+  return "unknown";
+}
+
+export function normalizeReleaseHealthArtifact(
+  health: ReleaseHealthArtifact
+): ReleaseHealthArtifact {
+  return {
+    computedAt: normalizeWhitespace(health.computedAt),
+    coverageStatus: normalizeReleaseHealthCoverageStatus(health.coverageStatus),
+    executionStatus: normalizeReleaseHealthExecutionStatus(health.executionStatus),
+    failureBurden: normalizeReleaseHealthFailureBurden(health.failureBurden),
+    overallStatus: normalizeReleaseHealthOverallStatus(health.overallStatus),
+    requirementPresent: !!health.requirementPresent,
+    suitePresent: !!health.suitePresent,
+    reviewPresent: !!health.reviewPresent,
+    executionPresent: !!health.executionPresent,
+    failureClassificationPresent: !!health.failureClassificationPresent,
+    suiteVersion:
+      typeof health.suiteVersion === "number" && Number.isFinite(health.suiteVersion)
+        ? health.suiteVersion
+        : null,
+    reviewScore:
+      typeof health.reviewScore === "number" && Number.isFinite(health.reviewScore)
+        ? Math.max(0, Math.min(100, Math.round(health.reviewScore)))
+        : null,
+    executionTotal:
+      typeof health.executionTotal === "number" && Number.isFinite(health.executionTotal)
+        ? Math.max(0, Math.round(health.executionTotal))
+        : 0,
+    executionFailed:
+      typeof health.executionFailed === "number" && Number.isFinite(health.executionFailed)
+        ? Math.max(0, Math.round(health.executionFailed))
+        : 0,
+    executionTimedOut:
+      typeof health.executionTimedOut === "number" &&
+      Number.isFinite(health.executionTimedOut)
+        ? Math.max(0, Math.round(health.executionTimedOut))
+        : 0,
+    totalClassifiedFailures:
+      typeof health.totalClassifiedFailures === "number" &&
+      Number.isFinite(health.totalClassifiedFailures)
+        ? Math.max(0, Math.round(health.totalClassifiedFailures))
+        : 0,
+    reasons: normalizeList(health.reasons),
+  };
+}
+
+export function getReleaseHealth(
+  artifact: SessionArtifact | null | undefined
+): ReleaseHealthArtifact | null {
+  const releaseHealth = artifact?.releaseHealth;
+
+  if (!releaseHealth || typeof releaseHealth !== "object") return null;
+  if (typeof releaseHealth.computedAt !== "string") return null;
+  if (typeof releaseHealth.coverageStatus !== "string") return null;
+  if (typeof releaseHealth.executionStatus !== "string") return null;
+  if (typeof releaseHealth.failureBurden !== "string") return null;
+  if (typeof releaseHealth.overallStatus !== "string") return null;
+  if (!Array.isArray(releaseHealth.reasons)) return null;
+
+  return normalizeReleaseHealthArtifact(releaseHealth as ReleaseHealthArtifact);
+}
+
 export function withUpdatedExecutionIntelligenceArtifact(
   existingArtifact: SessionArtifact | null,
   executionIntelligence: ExecutionIntelligenceArtifact
@@ -710,12 +898,48 @@ export function withUpdatedExecutionIntelligenceArtifact(
       : {}),
     ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
     ...(prev.reviewResult ? { reviewResult: prev.reviewResult } : {}),
+    ...(prev.releaseHealth ? { releaseHealth: prev.releaseHealth } : {}),
     executionIntelligence: normalizedExecution,
     ...(prev.featureWorkspace
       ? {
           featureWorkspace: {
             ...prev.featureWorkspace,
             executionIntelligence: normalizedExecution,
+          },
+        }
+      : {}),
+  };
+}
+
+// M12.15:
+// Preserve existing artifact state while writing normalized release health.
+// This keeps persistence deterministic and route/service layers thin.
+export function withUpdatedReleaseHealthArtifact(
+  existingArtifact: SessionArtifact | null,
+  releaseHealth: ReleaseHealthArtifact
+): SessionArtifact {
+  const prev: SessionArtifact =
+    existingArtifact && typeof existingArtifact === "object"
+      ? existingArtifact
+      : {};
+
+  const normalizedReleaseHealth = normalizeReleaseHealthArtifact(releaseHealth);
+
+  return {
+    ...(prev.refinedRequirement
+      ? { refinedRequirement: prev.refinedRequirement }
+      : {}),
+    ...(prev.testSuite ? { testSuite: prev.testSuite } : {}),
+    ...(prev.reviewResult ? { reviewResult: prev.reviewResult } : {}),
+    ...(prev.executionIntelligence
+      ? { executionIntelligence: prev.executionIntelligence }
+      : {}),
+    releaseHealth: normalizedReleaseHealth,
+    ...(prev.featureWorkspace
+      ? {
+          featureWorkspace: {
+            ...prev.featureWorkspace,
+            releaseHealth: normalizedReleaseHealth,
           },
         }
       : {}),
@@ -1238,6 +1462,7 @@ export function mergeArtifact(
     ...(prev.executionIntelligence
       ? { executionIntelligence: prev.executionIntelligence }
       : {}),
+    ...(prev.releaseHealth ? { releaseHealth: prev.releaseHealth } : {}),
     ...(prev.featureWorkspace ? { featureWorkspace: prev.featureWorkspace } : {}),
   };
 }
@@ -1383,6 +1608,36 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     lines.push("");
     lines.push(`LATEST REVIEW (pinned): score ${artifact.reviewResult.score}/100`);
     lines.push(`- Verdict: ${artifact.reviewResult.verdict}`);
+  }
+
+  const releaseHealth = getReleaseHealth(artifact);
+  if (releaseHealth) {
+    lines.push("");
+    lines.push(
+      `RELEASE HEALTH (pinned): overall ${releaseHealth.overallStatus}, coverage ${releaseHealth.coverageStatus}, execution ${releaseHealth.executionStatus}, failure burden ${releaseHealth.failureBurden}`
+    );
+    lines.push(
+      `- Signals: requirement ${releaseHealth.requirementPresent ? "yes" : "no"}, suite ${releaseHealth.suitePresent ? "yes" : "no"}, review ${releaseHealth.reviewPresent ? "yes" : "no"}, execution ${releaseHealth.executionPresent ? "yes" : "no"}, classified failures ${releaseHealth.failureClassificationPresent ? "yes" : "no"}`
+    );
+
+    if (typeof releaseHealth.suiteVersion === "number") {
+      lines.push(`- Suite version: v${releaseHealth.suiteVersion}`);
+    }
+
+    if (typeof releaseHealth.reviewScore === "number") {
+      lines.push(`- Review score: ${releaseHealth.reviewScore}/100`);
+    }
+
+    lines.push(
+      `- Execution totals: total ${releaseHealth.executionTotal}, failed ${releaseHealth.executionFailed}, timed out ${releaseHealth.executionTimedOut}, classified failures ${releaseHealth.totalClassifiedFailures}`
+    );
+
+    if (releaseHealth.reasons.length) {
+      lines.push("- Reasons:");
+      for (const reason of releaseHealth.reasons.slice(0, 12)) {
+        lines.push(`  - ${reason}`);
+      }
+    }
   }
 
   return lines.join("\n");
