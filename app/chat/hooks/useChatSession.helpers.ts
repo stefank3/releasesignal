@@ -6,6 +6,7 @@ import type {
   ChatItem,
   CoachSuggestions,
   Mode,
+  ReleaseHealthArtifact,
   ReviewResult,
   SessionArtifact,
   WorkflowStatus,
@@ -267,6 +268,33 @@ export function artifactHasTestSuiteSignal(artifact: SessionArtifact | null): bo
     "suite" in artifact ||
     "casesResult" in artifact
   );
+}
+
+export function artifactHasExecutionSignal(artifact: SessionArtifact | null): boolean {
+  if (!isRecord(artifact)) return false;
+  return "executionIntelligence" in artifact;
+}
+
+export function artifactHasReleaseHealthSignal(artifact: SessionArtifact | null): boolean {
+  if (!isRecord(artifact)) return false;
+  return "releaseHealth" in artifact;
+}
+
+export function getReleaseHealthFromArtifact(
+  artifact: SessionArtifact | null
+): ReleaseHealthArtifact | null {
+  if (!isRecord(artifact)) return null;
+
+  const releaseHealth = artifact["releaseHealth"];
+  if (!isRecord(releaseHealth)) return null;
+  if (typeof releaseHealth["computedAt"] !== "string") return null;
+  if (typeof releaseHealth["coverageStatus"] !== "string") return null;
+  if (typeof releaseHealth["executionStatus"] !== "string") return null;
+  if (typeof releaseHealth["failureBurden"] !== "string") return null;
+  if (typeof releaseHealth["overallStatus"] !== "string") return null;
+  if (!Array.isArray(releaseHealth["reasons"])) return null;
+
+  return releaseHealth as ReleaseHealthArtifact;
 }
 
 function getPersistedSuiteText(artifact: SessionArtifact | null): string | null {
