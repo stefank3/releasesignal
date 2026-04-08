@@ -22,6 +22,8 @@ import {
   isGuidedClarificationAnswer,
 } from "@/lib/chat/artifact";
 
+
+
 import { loadOrCreateSession } from "@/lib/chat/sessionStore";
 import {
   persistUserMessageIdempotent,
@@ -57,8 +59,11 @@ import {
   persistExecutionArtifact,
   persistGeneratedSuiteArtifact,
   persistReviewArtifact,
+  persistReleaseHealthArtifact,
   type RequirementRefinedTelemetry,
 } from "@/lib/server/chat/artifactUpdateService";
+
+import { buildReleaseHealthArtifact } from "@/lib/server/chat/releaseHealthService";
 
 import { runPostModelFlow } from "@/lib/server/chat/postModelFlowService";
 
@@ -741,6 +746,18 @@ export async function POST(req: Request) {
 
         sessionArtifact = executionPersistResult.sessionArtifact;
         artifactUpdatedAtIso = executionPersistResult.artifactUpdatedAtIso;
+
+      const releaseHealthPersistResult = await persistReleaseHealthArtifact({
+        sessionId,
+        sessionArtifact: executionPersistResult.sessionArtifact,
+        artifactUpdatedAtIso: executionPersistResult.artifactUpdatedAtIso,
+        releaseHealth: buildReleaseHealthArtifact(
+          executionPersistResult.sessionArtifact
+        ),
+      });
+
+      sessionArtifact = releaseHealthPersistResult.sessionArtifact;
+      artifactUpdatedAtIso = releaseHealthPersistResult.artifactUpdatedAtIso;
 
         await recordChatMetric({
           nowMs: Date.now(),
