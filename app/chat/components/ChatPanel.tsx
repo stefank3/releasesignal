@@ -68,6 +68,11 @@
 // - strengthen first-run guidance and empty-state clarity
 // - add presentational onboarding copy around how the workspace is used
 // - keep all workflow/artifact decisions hook-driven and unchanged
+//
+// M12.15 FOLLOW-UP CHANGE:
+// - pass chat artifact context into the workflow banner
+// - allow compact release-health reinforcement in the banner
+// - keep ChatPanel orchestration-only
 
 "use client";
 
@@ -495,6 +500,7 @@ export default function ChatPanel({
             />
             <ChatWorkflowBanner
               status={chat.workflowStatus}
+              chat={chat}
               resolvedTheme={resolvedTheme}
             />
           </div>
