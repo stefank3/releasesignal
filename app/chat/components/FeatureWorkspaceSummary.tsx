@@ -24,9 +24,9 @@
 // - surface explicit partial-state degradation from persisted artifact only
 //
 // M12.15 FOLLOW-UP CHANGE:
-// - keep release-health presentation compact inside the existing workspace grid
-// - strengthen only the Release Health card with visual status pills
-// - preserve artifact-driven behavior and avoid turning the workspace into a dashboard
+// - align Requirement / Test Suite / Review with the compact dashboard card style
+// - keep Release Health as the strongest visual card while preserving one shared family
+// - preserve artifact-driven behavior and avoid turning the workspace into a full analytics dashboard
 
 "use client";
 
@@ -37,6 +37,8 @@ type Props = {
   chat: UseChatSessionReturn;
   resolvedTheme?: "light" | "dark";
 };
+
+type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
 
 function StatusChip(args: {
   ready: boolean;
@@ -107,142 +109,67 @@ function StageBadge(args: {
   );
 }
 
-function SummaryCard(args: {
-  title: string;
-  ready: boolean;
-  description: string;
-  meta?: string;
-  emphasis?: string;
-  helpText?: string;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <div
-      style={{
+function getToneStyles(
+  tone: Tone,
+  isDark: boolean
+): { border: string; background: string } {
+  switch (tone) {
+    case "positive":
+      return {
+        border: isDark
+          ? "1px solid rgba(34,197,94,0.28)"
+          : "1px solid rgba(22,163,74,0.22)",
+        background: isDark
+          ? "rgba(34,197,94,0.14)"
+          : "rgba(22,163,74,0.10)",
+      };
+    case "warning":
+      return {
+        border: isDark
+          ? "1px solid rgba(245,158,11,0.30)"
+          : "1px solid rgba(217,119,6,0.24)",
+        background: isDark
+          ? "rgba(245,158,11,0.14)"
+          : "rgba(245,158,11,0.10)",
+      };
+    case "negative":
+      return {
+        border: isDark
+          ? "1px solid rgba(239,68,68,0.28)"
+          : "1px solid rgba(220,38,38,0.22)",
+        background: isDark
+          ? "rgba(239,68,68,0.14)"
+          : "rgba(239,68,68,0.10)",
+      };
+    case "info":
+      return {
+        border: isDark
+          ? "1px solid rgba(96,165,250,0.28)"
+          : "1px solid rgba(37,99,235,0.22)",
+        background: isDark
+          ? "rgba(96,165,250,0.14)"
+          : "rgba(37,99,235,0.08)",
+      };
+    default:
+      return {
         border: isDark
           ? "1px solid rgba(255,255,255,0.10)"
           : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: 14,
-        padding: 12,
-        background: isDark ? "rgba(255,255,255,0.03)" : "rgba(15,23,42,0.025)",
-        display: "grid",
-        gap: 8,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 950,
-            color: isDark ? "#ffffff" : "#0f172a",
-          }}
-        >
-          {args.title}
-        </div>
-
-        <StatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
-      </div>
-
-      {args.emphasis ? (
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 900,
-            lineHeight: 1.4,
-            color: isDark ? "#ffffff" : "#0f172a",
-          }}
-        >
-          {args.emphasis}
-        </div>
-      ) : null}
-
-      <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.8 }}>
-        {args.description}
-      </div>
-
-      {args.helpText ? (
-        <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72 }}>
-          {args.helpText}
-        </div>
-      ) : null}
-
-      {args.meta ? (
-        <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
-          {args.meta}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function HealthStatusPill(args: {
-  label: string;
-  value: string;
-  tone: "neutral" | "positive" | "warning" | "negative" | "info";
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  function getToneStyles() {
-    switch (args.tone) {
-      case "positive":
-        return {
-          border: isDark
-            ? "1px solid rgba(34,197,94,0.28)"
-            : "1px solid rgba(22,163,74,0.22)",
-          background: isDark
-            ? "rgba(34,197,94,0.14)"
-            : "rgba(22,163,74,0.10)",
-        };
-      case "warning":
-        return {
-          border: isDark
-            ? "1px solid rgba(245,158,11,0.30)"
-            : "1px solid rgba(217,119,6,0.24)",
-          background: isDark
-            ? "rgba(245,158,11,0.14)"
-            : "rgba(245,158,11,0.10)",
-        };
-      case "negative":
-        return {
-          border: isDark
-            ? "1px solid rgba(239,68,68,0.28)"
-            : "1px solid rgba(220,38,38,0.22)",
-          background: isDark
-            ? "rgba(239,68,68,0.14)"
-            : "rgba(239,68,68,0.10)",
-        };
-      case "info":
-        return {
-          border: isDark
-            ? "1px solid rgba(96,165,250,0.28)"
-            : "1px solid rgba(37,99,235,0.22)",
-          background: isDark
-            ? "rgba(96,165,250,0.14)"
-            : "rgba(37,99,235,0.08)",
-        };
-      default:
-        return {
-          border: isDark
-            ? "1px solid rgba(255,255,255,0.10)"
-            : "1px solid rgba(15,23,42,0.10)",
-          background: isDark
-            ? "rgba(255,255,255,0.05)"
-            : "rgba(15,23,42,0.04)",
-        };
+        background: isDark
+          ? "rgba(255,255,255,0.05)"
+          : "rgba(15,23,42,0.04)",
+      };
     }
   }
 
-  const toneStyles = getToneStyles();
+function DashboardTile(args: {
+  label: string;
+  value: string;
+  tone: Tone;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const toneStyles = getToneStyles(args.tone, isDark);
 
   return (
     <div
@@ -268,6 +195,103 @@ function HealthStatusPill(args: {
       >
         {args.value}
       </div>
+    </div>
+  );
+}
+
+function DashboardSummaryCard(args: {
+  title: string;
+  ready: boolean;
+  emphasis: string;
+  description: string;
+  tiles: Array<{
+    label: string;
+    value: string;
+    tone: Tone;
+  }>;
+  helpText?: string;
+  meta?: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const accentTone: Tone = args.ready ? "info" : "neutral";
+
+  return (
+    <div
+      style={{
+        border: getAccentBorder(accentTone, isDark),
+        borderRadius: 14,
+        padding: 12,
+        background: getAccentBackground(accentTone, isDark),
+        display: "grid",
+        gap: 10,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 950,
+            color: isDark ? "#ffffff" : "#0f172a",
+          }}
+        >
+          {args.title}
+        </div>
+
+        <StatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
+      </div>
+
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 900,
+          lineHeight: 1.4,
+          color: isDark ? "#ffffff" : "#0f172a",
+        }}
+      >
+        {args.emphasis}
+      </div>
+
+      <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.82 }}>
+        {args.description}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        }}
+      >
+        {args.tiles.map((tile) => (
+          <DashboardTile
+            key={`${args.title}-${tile.label}`}
+            label={tile.label}
+            value={tile.value}
+            tone={tile.tone}
+            resolvedTheme={args.resolvedTheme}
+          />
+        ))}
+      </div>
+
+      {args.helpText ? (
+        <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.74 }}>
+          {args.helpText}
+        </div>
+      ) : null}
+
+      {args.meta ? (
+        <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
+          {args.meta}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -350,25 +374,25 @@ function ReleaseHealthCard(args: {
             gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
           }}
         >
-          <HealthStatusPill
+          <DashboardTile
             label="Overall"
             value={args.overall ?? "Unknown"}
             tone={overallTone}
             resolvedTheme={args.resolvedTheme}
           />
-          <HealthStatusPill
+          <DashboardTile
             label="Coverage"
             value={args.coverage ?? "Unknown"}
             tone={coverageTone}
             resolvedTheme={args.resolvedTheme}
           />
-          <HealthStatusPill
+          <DashboardTile
             label="Execution"
             value={args.execution ?? "Unknown"}
             tone={executionTone}
             resolvedTheme={args.resolvedTheme}
           />
-          <HealthStatusPill
+          <DashboardTile
             label="Failure burden"
             value={args.failureBurden ?? "Unknown"}
             tone={failureTone}
@@ -412,10 +436,10 @@ function normalizeStageTitle(title: string | undefined): string {
 
 function toRelativeStrength(score: number | null | undefined): string | null {
   if (typeof score !== "number") return null;
-  if (score >= 90) return "Strong review result";
-  if (score >= 75) return "Usable review result";
-  if (score >= 50) return "Mixed review result";
-  return "Weak review result";
+  if (score >= 90) return "Strong";
+  if (score >= 75) return "Usable";
+  if (score >= 50) return "Mixed";
+  return "Weak";
 }
 
 function toReleaseHealthLabel(value: string | null | undefined): string {
@@ -427,9 +451,7 @@ function toReleaseHealthLabel(value: string | null | undefined): string {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function toOverallTone(
-  value: string | null | undefined
-): "neutral" | "positive" | "warning" | "negative" | "info" {
+function toOverallTone(value: string | null | undefined): Tone {
   const normalized = String(value ?? "").trim().toLowerCase();
 
   if (!normalized || normalized === "unknown") return "neutral";
@@ -442,22 +464,18 @@ function toOverallTone(
   return "info";
 }
 
-function toCoverageTone(
-  value: string | null | undefined
-): "neutral" | "positive" | "warning" | "negative" | "info" {
+function toCoverageTone(value: string | null | undefined): Tone {
   const normalized = String(value ?? "").trim().toLowerCase();
 
   if (!normalized || normalized === "unknown") return "neutral";
-  if (normalized.includes("review complete")) return "positive";
+  if (normalized.includes("review")) return "positive";
   if (normalized.includes("suite ready")) return "info";
   if (normalized.includes("requirement only")) return "warning";
 
   return "info";
 }
 
-function toExecutionTone(
-  value: string | null | undefined
-): "neutral" | "positive" | "warning" | "negative" | "info" {
+function toExecutionTone(value: string | null | undefined): Tone {
   const normalized = String(value ?? "").trim().toLowerCase();
 
   if (!normalized || normalized === "unknown") return "neutral";
@@ -468,9 +486,7 @@ function toExecutionTone(
   return "info";
 }
 
-function toFailureBurdenTone(
-  value: string | null | undefined
-): "neutral" | "positive" | "warning" | "negative" | "info" {
+function toFailureBurdenTone(value: string | null | undefined): Tone {
   const normalized = String(value ?? "").trim().toLowerCase();
 
   if (!normalized || normalized === "unknown") return "neutral";
@@ -482,10 +498,7 @@ function toFailureBurdenTone(
   return "info";
 }
 
-function getAccentBorder(
-  tone: "neutral" | "positive" | "warning" | "negative" | "info",
-  isDark: boolean
-): string {
+function getAccentBorder(tone: Tone, isDark: boolean): string {
   switch (tone) {
     case "positive":
       return isDark
@@ -510,10 +523,7 @@ function getAccentBorder(
   }
 }
 
-function getAccentBackground(
-  tone: "neutral" | "positive" | "warning" | "negative" | "info",
-  isDark: boolean
-): string {
+function getAccentBackground(tone: Tone, isDark: boolean): string {
   switch (tone) {
     case "positive":
       return isDark ? "rgba(34,197,94,0.05)" : "rgba(22,163,74,0.05)";
@@ -574,7 +584,9 @@ export default function FeatureWorkspaceSummary({
   const reviewStrength = toRelativeStrength(reviewScore);
   const reviewEmphasis = reviewReady
     ? reviewStrength
-      ? `${reviewStrength}${typeof reviewScore === "number" ? ` (${reviewScore}/100)` : ""}`
+      ? `${reviewStrength} review result${
+          typeof reviewScore === "number" ? ` (${reviewScore}/100)` : ""
+        }`
       : "Latest review result is available"
     : "No persisted review yet";
 
@@ -582,8 +594,6 @@ export default function FeatureWorkspaceSummary({
     ? `Overall status: ${releaseHealthOverall}`
     : "No release health computed yet";
 
-  // WHY: keep partial-state messaging explicit and artifact-driven without
-  // adding any UI-owned health calculation logic.
   const releaseHealthPartialStateText = releaseHealthReady
     ? releaseHealthOverall === "Not Ready" &&
       releaseHealthCoverage === "Requirement Only" &&
@@ -605,6 +615,95 @@ export default function FeatureWorkspaceSummary({
         .filter(Boolean)
         .join(" · ")
     : "Release health will appear once the dashboard signal is available";
+
+  const requirementTiles = [
+    {
+      label: "State",
+      value: requirementReady ? "Saved" : "Missing",
+      tone: requirementReady ? "positive" : "warning",
+    },
+    {
+      label: "Workflow",
+      value: requirementReady ? "Can drive design" : "Needs refinement",
+      tone: requirementReady ? "info" : "warning",
+    },
+    {
+      label: "Artifact",
+      value: requirementReady ? "Strategy artifact" : "Not available",
+      tone: requirementReady ? "info" : "neutral",
+    },
+    {
+      label: "Readiness",
+      value: requirementReady ? "Ready" : "Pending",
+      tone: requirementReady ? "positive" : "neutral",
+    },
+  ] as const;
+
+  const suiteTiles = [
+    {
+      label: "Version",
+      value: suiteReady ? `v${suiteVersion ?? "—"}` : "—",
+      tone: suiteReady ? "info" : "neutral",
+    },
+    {
+      label: "Cases",
+      value: suiteReady ? String(suiteCount) : "0",
+      tone: suiteReady ? "info" : "neutral",
+    },
+    {
+      label: "State",
+      value: suiteReady ? "Saved" : "Missing",
+      tone: suiteReady ? "positive" : "warning",
+    },
+    {
+      label: "Readiness",
+      value: suiteReady ? "Ready" : "Pending",
+      tone: suiteReady ? "positive" : "neutral",
+    },
+  ] as const;
+
+  const reviewTiles = [
+    {
+      label: "Score",
+      value:
+        reviewReady && typeof reviewScore === "number"
+          ? `${reviewScore}/100`
+          : "—",
+      tone:
+        reviewReady && typeof reviewScore === "number"
+          ? reviewScore >= 90
+            ? "positive"
+            : reviewScore >= 75
+              ? "info"
+              : reviewScore >= 50
+                ? "warning"
+                : "negative"
+          : "neutral",
+    },
+    {
+      label: "Strength",
+      value: reviewReady ? reviewStrength ?? "Available" : "—",
+      tone: reviewReady
+        ? reviewStrength === "Strong"
+          ? "positive"
+          : reviewStrength === "Usable"
+            ? "info"
+            : reviewStrength === "Mixed"
+              ? "warning"
+              : "negative"
+        : "neutral",
+    },
+    {
+      label: "State",
+      value: reviewReady ? "Saved" : "Missing",
+      tone: reviewReady ? "positive" : "warning",
+    },
+    {
+      label: "Readiness",
+      value: reviewReady ? "Ready" : "Pending",
+      tone: reviewReady ? "positive" : "neutral",
+    },
+  ] as const;
 
   return (
     <div
@@ -651,7 +750,7 @@ export default function FeatureWorkspaceSummary({
           gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
         }}
       >
-        <SummaryCard
+        <DashboardSummaryCard
           title="Requirement"
           ready={requirementReady}
           emphasis={requirementEmphasis}
@@ -660,6 +759,7 @@ export default function FeatureWorkspaceSummary({
               ? "A refined requirement is present and can drive downstream workflow actions."
               : "The feature scope still needs refinement before downstream workflow steps."
           }
+          tiles={[...requirementTiles]}
           helpText={
             requirementReady
               ? "This is the saved requirement artifact used as the basis for test design."
@@ -673,7 +773,7 @@ export default function FeatureWorkspaceSummary({
           resolvedTheme={resolvedTheme}
         />
 
-        <SummaryCard
+        <DashboardSummaryCard
           title="Test Suite"
           ready={suiteReady}
           emphasis={suiteEmphasis}
@@ -682,6 +782,7 @@ export default function FeatureWorkspaceSummary({
               ? "A generated test suite is available for this workspace."
               : "No persisted suite exists yet for this feature."
           }
+          tiles={[...suiteTiles]}
           helpText={
             suiteReady
               ? "This is the latest saved suite artifact for the current requirement."
@@ -695,7 +796,7 @@ export default function FeatureWorkspaceSummary({
           resolvedTheme={resolvedTheme}
         />
 
-        <SummaryCard
+        <DashboardSummaryCard
           title="Review"
           ready={reviewReady}
           emphasis={reviewEmphasis}
@@ -704,6 +805,7 @@ export default function FeatureWorkspaceSummary({
               ? "A persisted review result is available for the current suite."
               : "Coverage review has not yet been completed for this suite."
           }
+          tiles={[...reviewTiles]}
           helpText={
             reviewReady
               ? "This reflects the latest saved review outcome for the current suite."
