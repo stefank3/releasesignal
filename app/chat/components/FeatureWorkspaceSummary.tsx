@@ -22,6 +22,11 @@
 // - keep all health display artifact-driven and read-only
 // - do not compute release health in UI
 // - surface explicit partial-state degradation from persisted artifact only
+//
+// M12.15 FOLLOW-UP CHANGE:
+// - keep release-health presentation compact inside the existing workspace grid
+// - strengthen only the Release Health card with visual status pills
+// - preserve artifact-driven behavior and avoid turning the workspace into a dashboard
 
 "use client";
 
@@ -179,6 +184,226 @@ function SummaryCard(args: {
   );
 }
 
+function HealthStatusPill(args: {
+  label: string;
+  value: string;
+  tone: "neutral" | "positive" | "warning" | "negative" | "info";
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  function getToneStyles() {
+    switch (args.tone) {
+      case "positive":
+        return {
+          border: isDark
+            ? "1px solid rgba(34,197,94,0.28)"
+            : "1px solid rgba(22,163,74,0.22)",
+          background: isDark
+            ? "rgba(34,197,94,0.14)"
+            : "rgba(22,163,74,0.10)",
+        };
+      case "warning":
+        return {
+          border: isDark
+            ? "1px solid rgba(245,158,11,0.30)"
+            : "1px solid rgba(217,119,6,0.24)",
+          background: isDark
+            ? "rgba(245,158,11,0.14)"
+            : "rgba(245,158,11,0.10)",
+        };
+      case "negative":
+        return {
+          border: isDark
+            ? "1px solid rgba(239,68,68,0.28)"
+            : "1px solid rgba(220,38,38,0.22)",
+          background: isDark
+            ? "rgba(239,68,68,0.14)"
+            : "rgba(239,68,68,0.10)",
+        };
+      case "info":
+        return {
+          border: isDark
+            ? "1px solid rgba(96,165,250,0.28)"
+            : "1px solid rgba(37,99,235,0.22)",
+          background: isDark
+            ? "rgba(96,165,250,0.14)"
+            : "rgba(37,99,235,0.08)",
+        };
+      default:
+        return {
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid rgba(15,23,42,0.10)",
+          background: isDark
+            ? "rgba(255,255,255,0.05)"
+            : "rgba(15,23,42,0.04)",
+        };
+    }
+  }
+
+  const toneStyles = getToneStyles();
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 3,
+        padding: "8px 9px",
+        borderRadius: 12,
+        border: toneStyles.border,
+        background: toneStyles.background,
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.72 }}>
+        {args.label}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 900,
+          lineHeight: 1.35,
+          color: isDark ? "#ffffff" : "#0f172a",
+        }}
+      >
+        {args.value}
+      </div>
+    </div>
+  );
+}
+
+function ReleaseHealthCard(args: {
+  ready: boolean;
+  overall: string | null;
+  coverage: string | null;
+  execution: string | null;
+  failureBurden: string | null;
+  emphasis: string;
+  description: string;
+  helpText: string;
+  partialStateText?: string | null;
+  meta: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  const overallTone = toOverallTone(args.overall);
+  const coverageTone = toCoverageTone(args.coverage);
+  const executionTone = toExecutionTone(args.execution);
+  const failureTone = toFailureBurdenTone(args.failureBurden);
+
+  const accentBorder = getAccentBorder(overallTone, isDark);
+  const accentBackground = getAccentBackground(overallTone, isDark);
+
+  return (
+    <div
+      style={{
+        border: accentBorder,
+        borderRadius: 14,
+        padding: 12,
+        background: accentBackground,
+        display: "grid",
+        gap: 10,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 950,
+            color: isDark ? "#ffffff" : "#0f172a",
+          }}
+        >
+          Release Health
+        </div>
+
+        <StatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
+      </div>
+
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 900,
+          lineHeight: 1.4,
+          color: isDark ? "#ffffff" : "#0f172a",
+        }}
+      >
+        {args.emphasis}
+      </div>
+
+      <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.82 }}>
+        {args.description}
+      </div>
+
+      {args.ready ? (
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          }}
+        >
+          <HealthStatusPill
+            label="Overall"
+            value={args.overall ?? "Unknown"}
+            tone={overallTone}
+            resolvedTheme={args.resolvedTheme}
+          />
+          <HealthStatusPill
+            label="Coverage"
+            value={args.coverage ?? "Unknown"}
+            tone={coverageTone}
+            resolvedTheme={args.resolvedTheme}
+          />
+          <HealthStatusPill
+            label="Execution"
+            value={args.execution ?? "Unknown"}
+            tone={executionTone}
+            resolvedTheme={args.resolvedTheme}
+          />
+          <HealthStatusPill
+            label="Failure burden"
+            value={args.failureBurden ?? "Unknown"}
+            tone={failureTone}
+            resolvedTheme={args.resolvedTheme}
+          />
+        </div>
+      ) : null}
+
+      {args.partialStateText ? (
+        <div
+          style={{
+            fontSize: 11,
+            lineHeight: 1.45,
+            opacity: 0.78,
+            borderTop: isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
+            paddingTop: 8,
+          }}
+        >
+          {args.partialStateText}
+        </div>
+      ) : null}
+
+      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.74 }}>
+        {args.helpText}
+      </div>
+
+      <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
+        {args.meta}
+      </div>
+    </div>
+  );
+}
+
 function normalizeStageTitle(title: string | undefined): string {
   return (
     String(title ?? "").replace(/^Workspace stage:\s*/i, "").trim() || "Unknown"
@@ -200,6 +425,107 @@ function toReleaseHealthLabel(value: string | null | undefined): string {
   return normalized
     .replace(/_/g, " ")
     .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function toOverallTone(
+  value: string | null | undefined
+): "neutral" | "positive" | "warning" | "negative" | "info" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+
+  if (!normalized || normalized === "unknown") return "neutral";
+  if (normalized.includes("ready")) return "positive";
+  if (normalized.includes("healthy")) return "positive";
+  if (normalized.includes("not ready")) return "warning";
+  if (normalized.includes("needs")) return "warning";
+  if (normalized.includes("degraded")) return "negative";
+
+  return "info";
+}
+
+function toCoverageTone(
+  value: string | null | undefined
+): "neutral" | "positive" | "warning" | "negative" | "info" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+
+  if (!normalized || normalized === "unknown") return "neutral";
+  if (normalized.includes("review complete")) return "positive";
+  if (normalized.includes("suite ready")) return "info";
+  if (normalized.includes("requirement only")) return "warning";
+
+  return "info";
+}
+
+function toExecutionTone(
+  value: string | null | undefined
+): "neutral" | "positive" | "warning" | "negative" | "info" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+
+  if (!normalized || normalized === "unknown") return "neutral";
+  if (normalized.includes("passed")) return "positive";
+  if (normalized.includes("not started")) return "warning";
+  if (normalized.includes("failed")) return "negative";
+
+  return "info";
+}
+
+function toFailureBurdenTone(
+  value: string | null | undefined
+): "neutral" | "positive" | "warning" | "negative" | "info" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+
+  if (!normalized || normalized === "unknown") return "neutral";
+  if (normalized.includes("none")) return "positive";
+  if (normalized.includes("low")) return "info";
+  if (normalized.includes("medium")) return "warning";
+  if (normalized.includes("high")) return "negative";
+
+  return "info";
+}
+
+function getAccentBorder(
+  tone: "neutral" | "positive" | "warning" | "negative" | "info",
+  isDark: boolean
+): string {
+  switch (tone) {
+    case "positive":
+      return isDark
+        ? "1px solid rgba(34,197,94,0.24)"
+        : "1px solid rgba(22,163,74,0.18)";
+    case "warning":
+      return isDark
+        ? "1px solid rgba(245,158,11,0.24)"
+        : "1px solid rgba(217,119,6,0.18)";
+    case "negative":
+      return isDark
+        ? "1px solid rgba(239,68,68,0.24)"
+        : "1px solid rgba(220,38,38,0.18)";
+    case "info":
+      return isDark
+        ? "1px solid rgba(96,165,250,0.24)"
+        : "1px solid rgba(37,99,235,0.18)";
+    default:
+      return isDark
+        ? "1px solid rgba(255,255,255,0.10)"
+        : "1px solid rgba(15,23,42,0.10)";
+  }
+}
+
+function getAccentBackground(
+  tone: "neutral" | "positive" | "warning" | "negative" | "info",
+  isDark: boolean
+): string {
+  switch (tone) {
+    case "positive":
+      return isDark ? "rgba(34,197,94,0.05)" : "rgba(22,163,74,0.05)";
+    case "warning":
+      return isDark ? "rgba(245,158,11,0.05)" : "rgba(245,158,11,0.05)";
+    case "negative":
+      return isDark ? "rgba(239,68,68,0.05)" : "rgba(239,68,68,0.05)";
+    case "info":
+      return isDark ? "rgba(96,165,250,0.05)" : "rgba(37,99,235,0.05)";
+    default:
+      return isDark ? "rgba(255,255,255,0.03)" : "rgba(15,23,42,0.025)";
+  }
 }
 
 export default function FeatureWorkspaceSummary({
@@ -255,6 +581,18 @@ export default function FeatureWorkspaceSummary({
   const releaseHealthEmphasis = releaseHealthReady
     ? `Overall status: ${releaseHealthOverall}`
     : "No release health computed yet";
+
+  // WHY: keep partial-state messaging explicit and artifact-driven without
+  // adding any UI-owned health calculation logic.
+  const releaseHealthPartialStateText = releaseHealthReady
+    ? releaseHealthOverall === "Not Ready" &&
+      releaseHealthCoverage === "Requirement Only" &&
+      releaseHealthExecution === "Not Started"
+      ? "Partial state is explicit: the requirement exists, but suite, review, or execution progress is still incomplete."
+      : releaseHealthExecution === "Not Started"
+        ? "Execution has not started yet, so the current health view reflects persisted pre-execution readiness only."
+        : null
+    : null;
 
   const releaseHealthMeta = releaseHealthReady
     ? [
@@ -381,9 +719,12 @@ export default function FeatureWorkspaceSummary({
           resolvedTheme={resolvedTheme}
         />
 
-        <SummaryCard
-          title="Release Health"
+        <ReleaseHealthCard
           ready={releaseHealthReady}
+          overall={releaseHealthOverall}
+          coverage={releaseHealthCoverage}
+          execution={releaseHealthExecution}
+          failureBurden={releaseHealthFailureBurden}
           emphasis={releaseHealthEmphasis}
           description={
             releaseHealthReady
@@ -395,6 +736,7 @@ export default function FeatureWorkspaceSummary({
               ? "This view is read-only and reflects the latest saved health rollup from requirement, suite, review, and execution artifacts."
               : "This will become visible once release-health data is computed and persisted by the backend."
           }
+          partialStateText={releaseHealthPartialStateText}
           meta={releaseHealthMeta}
           resolvedTheme={resolvedTheme}
         />
