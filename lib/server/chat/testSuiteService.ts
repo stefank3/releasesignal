@@ -29,6 +29,11 @@
 // - drop malformed regenerated cases instead of failing the entire replacement
 // - dedupe regenerated replacement cases deterministically
 // - renumber cleaned replacement suite from TC-001
+//
+// M12.17 CHANGE:
+// - parse generated cases into structured artifact fields
+// - preserve backward-compatible body rendering
+// - keep expansion layer artifact-first without changing TestSuiteArtifact contract
 
 import type {
   SessionArtifact,
@@ -108,6 +113,18 @@ export type RegenerateSuiteResult =
       message: string;
     };
 
+type ParsedGeneratedCase = {
+  title: string;
+  body: string;
+  priority?: TestCase["priority"];
+  type?: TestCase["type"];
+  preconditions?: string[];
+  steps?: string[];
+  expectedResults?: string[];
+  tags?: string[];
+  notes?: string;
+};
+
 /**
  * Normalize titles for lightweight duplicate filtering.
  * Kept for compatibility with older callers, but Step 5 merge safety
@@ -137,6 +154,87 @@ function normalizePastedSuiteText(text: string): string {
     .trim();
 }
 
+function normalizeStructuredItems(items: string[]): string[] {
+  return Array.from(
+    new Set(
+      items
+        .map((item) => normalizeWhitespace(item))
+        .filter(Boolean)
+    )
+  );
+}
+
+function splitInlineOrBulletedValue(value: string): string[] {
+  const normalized = normalizeMultilineText(value);
+  if (!normalized) return [];
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.replace(/^[-*•\d.)\s]+/, "").trim())
+    .filter(Boolean);
+
+  if (lines.length > 1) {
+    return normalizeStructuredItems(lines);
+  }
+
+  return normalizeStructuredItems(
+    normalized
+      .split(/,|\s\|\s|\s\/\s/g)
+      .map((part) => part.trim())
+      .filter(Boolean)
+  );
+}
+
+function extractSectionValue(block: string, labels: string[]): string {
+  const normalizedBlock = normalizeMultilineText(block);
+  if (!normalizedBlock) return "";
+
+  const escapedLabels = labels.map((label) =>
+    label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  );
+  const allLabelsPattern = [
+    ...new Set([
+      "Type",
+      "Priority",
+      "Preconditions",
+      "Test Steps",
+      "Steps",
+      "Expected Result",
+      "Expected Results",
+      "Tags",
+      "Notes",
+      ...labels,
+    ]),
+  ]
+    .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+
+  const sectionPattern = new RegExp(
+    `(?:^|\\n)\\s*(?:${escapedLabels.join("|")})\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:${allLabelsPattern})\\s*:|$)`,
+    "i"
+  );
+
+  const match = normalizedBlock.match(sectionPattern);
+  return normalizeMultilineText(match?.[1] ?? "");
+}
+
+function normalizePriority(value: string): TestCase["priority"] | undefined {
+  const normalized = normalizeWhitespace(value).toUpperCase();
+  if (normalized === "P0") return "P0";
+  if (normalized === "P1") return "P1";
+  if (normalized === "P2") return "P2";
+  return undefined;
+}
+
+function normalizeCaseType(value: string): TestCase["type"] | undefined {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+  if (normalized === "ui") return "UI";
+  if (normalized === "api") return "API";
+  if (normalized === "integration") return "Integration";
+  if (normalized === "e2e") return "E2E";
+  return undefined;
+}
+
 /**
  * Parse generated plain-text test cases from the model reply or pasted suite.
  * Expected header:
@@ -150,10 +248,12 @@ function normalizePastedSuiteText(text: string): string {
  * - Preconditions
  * - Test Steps or Steps
  * - Expected Result / Expected Results
+ *
+ * M12.17:
+ * Also extract structured case fields so persisted artifacts can support
+ * deeper execution-ready content without changing the contract.
  */
-export function parseGeneratedTestCases(
-  text: string
-): Array<{ title: string; body: string }> {
+export function parseGeneratedTestCases(text: string): ParsedGeneratedCase[] {
   const raw = normalizePastedSuiteText(text);
   if (!raw) return [];
 
@@ -166,7 +266,7 @@ export function parseGeneratedTestCases(
     .map((block) => block.trim())
     .filter((block) => /^\s*TC-\d{1,4}\s*[-–:]\s*.+$/im.test(block));
 
-  const out: Array<{ title: string; body: string }> = [];
+  const out: ParsedGeneratedCase[] = [];
 
   for (const block of blocks) {
     const lines = block.split("\n");
@@ -175,14 +275,22 @@ export function parseGeneratedTestCases(
     const title = String(titleMatch?.[1] ?? "").trim();
     const normalizedBlock = block.trim();
 
-    const hasType = /(^|\n)\s*Type\s*:/i.test(normalizedBlock);
-    const hasPriority = /(^|\n)\s*Priority\s*:/i.test(normalizedBlock);
-    const hasPreconditions = /(^|\n)\s*Preconditions\s*:/i.test(normalizedBlock);
-    const hasSteps =
-      /(^|\n)\s*Test Steps\s*:/i.test(normalizedBlock) ||
-      /(^|\n)\s*Steps\s*:/i.test(normalizedBlock);
-    const hasExpected =
-      /(^|\n)\s*Expected Result(s)?\s*:/i.test(normalizedBlock);
+    const typeValue = extractSectionValue(normalizedBlock, ["Type"]);
+    const priorityValue = extractSectionValue(normalizedBlock, ["Priority"]);
+    const preconditionsValue = extractSectionValue(normalizedBlock, ["Preconditions"]);
+    const stepsValue = extractSectionValue(normalizedBlock, ["Test Steps", "Steps"]);
+    const expectedValue = extractSectionValue(normalizedBlock, [
+      "Expected Results",
+      "Expected Result",
+    ]);
+    const tagsValue = extractSectionValue(normalizedBlock, ["Tags"]);
+    const notesValue = extractSectionValue(normalizedBlock, ["Notes"]);
+
+    const hasType = !!typeValue;
+    const hasPriority = !!priorityValue;
+    const hasPreconditions = !!preconditionsValue;
+    const hasSteps = !!stepsValue;
+    const hasExpected = !!expectedValue;
 
     if (
       !title ||
@@ -196,7 +304,17 @@ export function parseGeneratedTestCases(
       continue;
     }
 
-    out.push({ title, body: normalizedBlock });
+    out.push({
+      title,
+      body: normalizedBlock,
+      type: normalizeCaseType(typeValue),
+      priority: normalizePriority(priorityValue),
+      preconditions: splitInlineOrBulletedValue(preconditionsValue),
+      steps: splitInlineOrBulletedValue(stepsValue),
+      expectedResults: splitInlineOrBulletedValue(expectedValue),
+      ...(tagsValue ? { tags: splitInlineOrBulletedValue(tagsValue) } : {}),
+      ...(notesValue ? { notes: notesValue } : {}),
+    });
   }
 
   return out;
@@ -226,13 +344,27 @@ export function buildNormalizedCaseBody(
 
 function buildStructuredCase(
   caseId: string,
-  title: string,
-  rawBody: string
+  parsedCase: ParsedGeneratedCase
 ): TestCase {
   return normalizeTestCase({
     id: caseId,
-    title,
-    body: buildNormalizedCaseBody(caseId, title, rawBody),
+    title: parsedCase.title,
+    body: buildNormalizedCaseBody(caseId, parsedCase.title, parsedCase.body),
+
+    // M12.17:
+    // Persist structured execution-ready fields instead of keeping everything
+    // trapped inside plain body text only.
+    ...(parsedCase.priority ? { priority: parsedCase.priority } : {}),
+    ...(parsedCase.type ? { type: parsedCase.type } : {}),
+    ...(parsedCase.preconditions?.length
+      ? { preconditions: parsedCase.preconditions }
+      : {}),
+    ...(parsedCase.steps?.length ? { steps: parsedCase.steps } : {}),
+    ...(parsedCase.expectedResults?.length
+      ? { expectedResults: parsedCase.expectedResults }
+      : {}),
+    ...(parsedCase.tags?.length ? { tags: parsedCase.tags } : {}),
+    ...(parsedCase.notes ? { notes: parsedCase.notes } : {}),
   });
 }
 
@@ -297,7 +429,7 @@ function isMalformedReplacementCase(testCase: TestCase): boolean {
   );
 }
 
-function sanitizeReplacementCases(parsed: Array<{ title: string; body: string }>): {
+function sanitizeReplacementCases(parsed: ParsedGeneratedCase[]): {
   cases: TestCase[];
   malformedDroppedCount: number;
   duplicateSkippedCount: number;
@@ -309,7 +441,7 @@ function sanitizeReplacementCases(parsed: Array<{ title: string; body: string }>
   let duplicateSkippedCount = 0;
 
   for (const candidate of parsed) {
-    const tempCase = buildStructuredCase("TC-000", candidate.title, candidate.body);
+    const tempCase = buildStructuredCase("TC-000", candidate);
 
     if (isMalformedReplacementCase(tempCase)) {
       malformedDroppedCount += 1;
@@ -333,7 +465,17 @@ function sanitizeReplacementCases(parsed: Array<{ title: string; body: string }>
 
   const renumberedCases = cases.map((c, idx) => {
     const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
-    return buildStructuredCase(caseId, c.title, c.body);
+    return buildStructuredCase(caseId, {
+      title: c.title,
+      body: c.body,
+      priority: c.priority,
+      type: c.type,
+      preconditions: c.preconditions,
+      steps: c.steps,
+      expectedResults: c.expectedResults,
+      tags: c.tags,
+      notes: c.notes,
+    });
   });
 
   return {
@@ -462,7 +604,7 @@ export function mergeGeneratedCasesIntoSuite(args: {
   if (args.explicitReset || !args.existingSuite) {
     const freshCases: TestCase[] = parsed.map((c, idx) => {
       const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
-      return buildStructuredCase(caseId, c.title, c.body);
+      return buildStructuredCase(caseId, c);
     });
 
     return {
@@ -497,7 +639,7 @@ export function mergeGeneratedCasesIntoSuite(args: {
 
   for (const generated of parsed) {
     const caseId = `TC-${String(nextNumber).padStart(3, "0")}`;
-    const candidate = buildStructuredCase(caseId, generated.title, generated.body);
+    const candidate = buildStructuredCase(caseId, generated);
     const signature = buildTestCaseSignature(candidate);
 
     if (!signature) continue;
