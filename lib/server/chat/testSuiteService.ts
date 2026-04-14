@@ -31,9 +31,10 @@
 // - renumber cleaned replacement suite from TC-001
 //
 // M12.17 CHANGE:
-// - parse generated cases into structured artifact fields
+// - parse generated cases into safe structured artifact fields
 // - preserve backward-compatible body rendering
-// - keep expansion layer artifact-first without changing TestSuiteArtifact contract
+// - keep body-driven UI labels for Type/Priority unchanged
+// - only persist type/priority when they already match the locked artifact enum
 
 import type {
   SessionArtifact,
@@ -154,6 +155,12 @@ function normalizePastedSuiteText(text: string): string {
     .trim();
 }
 
+/**
+ * WHY:
+ * M12.17 stores richer structured arrays without changing the persisted
+ * TestSuite contract. These helpers stay local to the service so UI
+ * behavior remains body-driven and unchanged.
+ */
 function normalizeStructuredItems(items: string[]): string[] {
   return Array.from(
     new Set(
@@ -192,6 +199,7 @@ function extractSectionValue(block: string, labels: string[]): string {
   const escapedLabels = labels.map((label) =>
     label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   );
+
   const allLabelsPattern = [
     ...new Set([
       "Type",
@@ -218,6 +226,12 @@ function extractSectionValue(block: string, labels: string[]): string {
   return normalizeMultilineText(match?.[1] ?? "");
 }
 
+/**
+ * WHY:
+ * Only persist priority when the generated body already uses the locked
+ * artifact enum. Current UI may display "High/Medium/Low" from body text,
+ * and that should remain body-only until explicitly redesigned.
+ */
 function normalizePriority(value: string): TestCase["priority"] | undefined {
   const normalized = normalizeWhitespace(value).toUpperCase();
   if (normalized === "P0") return "P0";
@@ -226,6 +240,12 @@ function normalizePriority(value: string): TestCase["priority"] | undefined {
   return undefined;
 }
 
+/**
+ * WHY:
+ * Only persist type when the generated body already uses the locked
+ * artifact enum. Current UI may display "Positive/Negative" from body text,
+ * and that should remain body-only until explicitly redesigned.
+ */
 function normalizeCaseType(value: string): TestCase["type"] | undefined {
   const normalized = normalizeWhitespace(value).toLowerCase();
   if (normalized === "ui") return "UI";
@@ -250,8 +270,8 @@ function normalizeCaseType(value: string): TestCase["type"] | undefined {
  * - Expected Result / Expected Results
  *
  * M12.17:
- * Also extract structured case fields so persisted artifacts can support
- * deeper execution-ready content without changing the contract.
+ * Extract safe structured fields from the case body while preserving the
+ * body text as the backward-compatible rendering surface.
  */
 export function parseGeneratedTestCases(text: string): ParsedGeneratedCase[] {
   const raw = normalizePastedSuiteText(text);
@@ -307,8 +327,17 @@ export function parseGeneratedTestCases(text: string): ParsedGeneratedCase[] {
     out.push({
       title,
       body: normalizedBlock,
-      type: normalizeCaseType(typeValue),
-      priority: normalizePriority(priorityValue),
+
+      // WHY:
+      // Persist only enum-safe values. Non-enum labels such as Positive,
+      // Negative, High, etc remain preserved in body for the current UI.
+      ...(normalizeCaseType(typeValue)
+        ? { type: normalizeCaseType(typeValue) }
+        : {}),
+      ...(normalizePriority(priorityValue)
+        ? { priority: normalizePriority(priorityValue) }
+        : {}),
+
       preconditions: splitInlineOrBulletedValue(preconditionsValue),
       steps: splitInlineOrBulletedValue(stepsValue),
       expectedResults: splitInlineOrBulletedValue(expectedValue),
@@ -352,8 +381,8 @@ function buildStructuredCase(
     body: buildNormalizedCaseBody(caseId, parsedCase.title, parsedCase.body),
 
     // M12.17:
-    // Persist structured execution-ready fields instead of keeping everything
-    // trapped inside plain body text only.
+    // Persist only safe structured fields. Body remains the compatibility
+    // source for visible Type/Priority labels in the current UI.
     ...(parsedCase.priority ? { priority: parsedCase.priority } : {}),
     ...(parsedCase.type ? { type: parsedCase.type } : {}),
     ...(parsedCase.preconditions?.length
