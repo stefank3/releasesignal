@@ -44,7 +44,7 @@
 // M12.16 CHANGE:
 // - add local search/filter/sort controls for persisted suite scanability
 // - add invalid-only visibility mode for faster operator review
-// - add compact/expanded rendering toggle without changing artifact data
+// - replace weak compact preview with a structured suite overview card
 // - keep all controls UI-local; no workflow or persistence logic moved into the card
 
 "use client";
@@ -71,28 +71,30 @@ type CaseValidation = {
 };
 
 type SortMode = "id_asc" | "id_desc" | "title_asc" | "title_desc";
-
 type FilterMode = "all" | "invalid" | "editing";
+type ViewMode = "expanded" | "overview";
 
-type ViewMode = "expanded" | "compact";
+type CaseOverview = {
+  type: string | null;
+  priority: string | null;
+  preconditions: string | null;
+  firstStep: string | null;
+  expected: string | null;
+};
 
 type Props = {
   text: string;
   resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
-  // M12.9 CHANGE:
-  // actions are injected from parent/hook layer
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
 
-  // M12.9 Phase 2 CHANGE:
   onGenerateNextBatchAction?: () => void;
   canGenerateNextBatch?: boolean;
   isGeneratingNextBatch?: boolean;
 
-  // M12.9 Phase 2 CHANGE:
   onRegenerateSuiteAction?: () => void;
   canRegenerateSuite?: boolean;
   isRegeneratingSuite?: boolean;
@@ -152,29 +154,63 @@ function SelectControl(args: {
   const isDark = args.resolvedTheme === "dark";
 
   return (
-    <select
-      value={args.value}
-      disabled={args.disabled}
-      onChange={(e) => args.onChange(e.target.value)}
+    <div
       style={{
-        padding: "8px 10px",
-        borderRadius: 10,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.14)"
-          : "1px solid rgba(15,23,42,0.14)",
-        background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
-        color: isDark ? "#ffffff" : "#0f172a",
-        fontSize: 12,
-        fontWeight: 700,
-        minWidth: 140,
+        position: "relative",
+        minWidth: 150,
       }}
     >
-      {args.options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+      <select
+        value={args.value}
+        disabled={args.disabled}
+        onChange={(e) => args.onChange(e.target.value)}
+        style={{
+          width: "100%",
+          appearance: "none",
+          WebkitAppearance: "none",
+          MozAppearance: "none",
+          padding: "8px 34px 8px 10px",
+          borderRadius: 10,
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.14)"
+            : "1px solid rgba(15,23,42,0.14)",
+          background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+          color: isDark ? "#ffffff" : "#0f172a",
+          fontSize: 12,
+          fontWeight: 700,
+          outline: "none",
+          cursor: args.disabled ? "not-allowed" : "pointer",
+        }}
+      >
+        {args.options.map((option) => (
+          <option
+            key={option.value}
+            value={option.value}
+            style={{
+              color: "#0f172a",
+              background: "#ffffff",
+            }}
+          >
+            {option.label}
+          </option>
+        ))}
+      </select>
+
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          right: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
+          pointerEvents: "none",
+          fontSize: 10,
+          color: isDark ? "rgba(255,255,255,0.78)" : "rgba(15,23,42,0.72)",
+        }}
+      >
+        ▼
+      </div>
+    </div>
   );
 }
 
@@ -251,6 +287,33 @@ function SectionLabel(args: {
           {args.description}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ToneBadge(args: {
+  label: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        fontSize: 10,
+        fontWeight: 900,
+        padding: "3px 7px",
+        borderRadius: 999,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.12)",
+        background: isDark
+          ? "rgba(255,255,255,0.05)"
+          : "rgba(15,23,42,0.04)",
+        color: isDark ? "rgba(255,255,255,0.86)" : "rgba(15,23,42,0.82)",
+      }}
+    >
+      {args.label}
     </div>
   );
 }
@@ -367,16 +430,74 @@ function getCaseNumber(id: string): number {
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
-function getCompactBodyPreview(body: string): string {
-  const lines = String(body ?? "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+function readSingleLineField(body: string, label: string): string | null {
+  const pattern = new RegExp(`(?:^|\\n)\\s*${label}\\s*:\\s*(.+)`, "i");
+  const match = String(body ?? "").match(pattern);
+  const value = normalizeWhitespace(match?.[1] ?? "");
+  return value || null;
+}
 
-  if (lines.length <= 1) return lines[0] ?? "";
+function readSectionLines(body: string, labels: string[]): string[] {
+  const lines = String(body ?? "").replace(/\r/g, "").split("\n");
+  const normalizedLabels = labels.map((label) => label.toLowerCase());
 
-  const preview = lines.slice(1, 4).join("  •  ");
-  return preview.length > 220 ? `${preview.slice(0, 220).trim()}…` : preview;
+  let startIndex = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim().toLowerCase();
+    const isMatch = normalizedLabels.some((label) => line.startsWith(`${label}:`));
+    if (isMatch) {
+      startIndex = i;
+      break;
+    }
+  }
+
+  if (startIndex === -1) return [];
+
+  const values: string[] = [];
+  const sectionHeaderRegex =
+    /^\s*(type|priority|preconditions|test steps|steps|expected result|expected results)\s*:/i;
+
+  const firstLine = lines[startIndex];
+  const inlineValue = normalizeWhitespace(firstLine.replace(/^[^:]+:\s*/i, ""));
+  if (inlineValue) values.push(inlineValue);
+
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const nextLine = lines[i];
+    if (sectionHeaderRegex.test(nextLine)) break;
+
+    const normalizedLine = normalizeWhitespace(
+      nextLine.replace(/^[-*]\s*/, "").replace(/^\d+\.\s*/, "")
+    );
+
+    if (normalizedLine) values.push(normalizedLine);
+  }
+
+  return values;
+}
+
+function buildCaseOverview(body: string): CaseOverview {
+  const type = readSingleLineField(body, "Type");
+  const priority = readSingleLineField(body, "Priority");
+  const preconditions = readSectionLines(body, ["Preconditions"]).join(" • ") || null;
+  const firstStep = readSectionLines(body, ["Test Steps", "Steps"])[0] ?? null;
+  const expected =
+    readSectionLines(body, ["Expected Result", "Expected Results"])[0] ?? null;
+
+  return {
+    type,
+    priority,
+    preconditions,
+    firstStep,
+    expected,
+  };
+}
+
+function truncateText(value: string | null, max = 180): string {
+  const text = normalizeWhitespace(value ?? "");
+  if (!text) return "—";
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trim()}…`;
 }
 
 function CasesTextCardContent({
@@ -400,19 +521,12 @@ function CasesTextCardContent({
   hasStructuredCases: boolean;
   resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
-
-  // M12.9 CHANGE:
-  // actions remain external; card only renders triggers
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
-
-  // M12.9 Phase 2 CHANGE:
   onGenerateNextBatchAction?: () => void;
   canGenerateNextBatch?: boolean;
   isGeneratingNextBatch?: boolean;
-
-  // M12.9 Phase 2 CHANGE:
   onRegenerateSuiteAction?: () => void;
   canRegenerateSuite?: boolean;
   isRegeneratingSuite?: boolean;
@@ -424,8 +538,6 @@ function CasesTextCardContent({
   const [editedCases, setEditedCases] = useState<ParsedCase[]>(parsedCases);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // M12.16:
-  // UI-local controls only. These never mutate persisted artifact data.
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("id_asc");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
@@ -489,14 +601,7 @@ function CasesTextCardContent({
     const matchesQuery = (tc: ParsedCase) => {
       if (!normalizedQuery) return true;
 
-      const haystack = [
-        tc.id,
-        tc.title,
-        tc.body,
-      ]
-        .join("\n")
-        .toLowerCase();
-
+      const haystack = [tc.id, tc.title, tc.body].join("\n").toLowerCase();
       return haystack.includes(normalizedQuery);
     };
 
@@ -621,9 +726,6 @@ function CasesTextCardContent({
       return;
     }
 
-    // M12.9 Phase 2 FIX:
-    // Clicking Done should persist the edited suite immediately so users do not
-    // need to scroll back to the top Save action on long suites.
     const didSave = await saveSuite();
     console.log("handleEditToggle save result", {
       id,
@@ -834,7 +936,7 @@ function CasesTextCardContent({
               style={{
                 display: "grid",
                 gap: 8,
-                gridTemplateColumns: "minmax(220px, 1fr) repeat(3, minmax(140px, auto))",
+                gridTemplateColumns: "minmax(220px, 1fr) repeat(3, minmax(150px, auto))",
                 alignItems: "center",
               }}
             >
@@ -878,7 +980,7 @@ function CasesTextCardContent({
                 disabled={isSaving}
                 options={[
                   { value: "expanded", label: "View: Expanded" },
-                  { value: "compact", label: "View: Compact" },
+                  { value: "overview", label: "View: Overview" },
                 ]}
               />
             </div>
@@ -991,6 +1093,7 @@ function CasesTextCardContent({
           {visibleCases.map((tc) => {
             const isEditing = editingId === tc.id;
             const isInvalid = invalidCaseIds.has(tc.id);
+            const overview = buildCaseOverview(tc.body);
 
             return (
               <div
@@ -1031,7 +1134,7 @@ function CasesTextCardContent({
                         alignItems: "center",
                         gap: 8,
                         flexWrap: "wrap",
-                        marginBottom: 4,
+                        marginBottom: 6,
                       }}
                     >
                       <div
@@ -1064,6 +1167,20 @@ function CasesTextCardContent({
                         >
                           CHECK
                         </div>
+                      ) : null}
+
+                      {overview.type ? (
+                        <ToneBadge
+                          label={`Type: ${overview.type}`}
+                          resolvedTheme={resolvedTheme}
+                        />
+                      ) : null}
+
+                      {overview.priority ? (
+                        <ToneBadge
+                          label={`Priority: ${overview.priority}`}
+                          resolvedTheme={resolvedTheme}
+                        />
                       ) : null}
 
                       {isEditing ? (
@@ -1111,7 +1228,7 @@ function CasesTextCardContent({
                         }}
                       />
                     ) : (
-                      <div style={{ fontWeight: 900 }}>{tc.title}</div>
+                      <div style={{ fontWeight: 900, marginBottom: 6 }}>{tc.title}</div>
                     )}
                   </div>
 
@@ -1151,25 +1268,101 @@ function CasesTextCardContent({
                       boxSizing: "border-box",
                     }}
                   />
-                ) : viewMode === "compact" ? (
+                ) : viewMode === "overview" ? (
                   <div
                     style={{
-                      fontSize: 12,
-                      lineHeight: 1.5,
-                      background: isDark
-                        ? "rgba(255,255,255,0.03)"
-                        : "rgba(15,23,42,0.03)",
-                      border: isDark
-                        ? "1px solid rgba(255,255,255,0.08)"
-                        : "1px solid rgba(15,23,42,0.08)",
-                      borderRadius: 12,
-                      padding: 12,
-                      color: isDark
-                        ? "rgba(255,255,255,0.86)"
-                        : "rgba(15,23,42,0.86)",
+                      display: "grid",
+                      gap: 8,
                     }}
                   >
-                    {getCompactBodyPreview(tc.body) || "No case details"}
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                      }}
+                    >
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: 10,
+                          background: isDark
+                            ? "rgba(255,255,255,0.03)"
+                            : "rgba(15,23,42,0.03)",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.08)"
+                            : "1px solid rgba(15,23,42,0.08)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            opacity: 0.66,
+                            marginBottom: 4,
+                          }}
+                        >
+                          PRECONDITIONS
+                        </div>
+                        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                          {truncateText(overview.preconditions)}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: 10,
+                          background: isDark
+                            ? "rgba(255,255,255,0.03)"
+                            : "rgba(15,23,42,0.03)",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.08)"
+                            : "1px solid rgba(15,23,42,0.08)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            opacity: 0.66,
+                            marginBottom: 4,
+                          }}
+                        >
+                          FIRST STEP
+                        </div>
+                        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                          {truncateText(overview.firstStep)}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: 10,
+                          background: isDark
+                            ? "rgba(255,255,255,0.03)"
+                            : "rgba(15,23,42,0.03)",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.08)"
+                            : "1px solid rgba(15,23,42,0.08)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            opacity: 0.66,
+                            marginBottom: 4,
+                          }}
+                        >
+                          EXPECTED RESULT
+                        </div>
+                        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                          {truncateText(overview.expected)}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <pre
