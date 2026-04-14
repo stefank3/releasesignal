@@ -40,7 +40,12 @@
 // - separate suite workflow actions from local editing controls
 // - make edit/save state easier to scan in long suites
 // - clarify copy-ready output vs editable workspace content
-// - preserve existing validation and persistence behavior
+//
+// M12.16 CHANGE:
+// - add local search/filter/sort controls for persisted suite scanability
+// - add invalid-only visibility mode for faster operator review
+// - add compact/expanded rendering toggle without changing artifact data
+// - keep all controls UI-local; no workflow or persistence logic moved into the card
 
 "use client";
 
@@ -64,6 +69,12 @@ type CaseValidation = {
   malformedHeaderIds: string[];
   emptyCaseIds: string[];
 };
+
+type SortMode = "id_asc" | "id_desc" | "title_asc" | "title_desc";
+
+type FilterMode = "all" | "invalid" | "editing";
+
+type ViewMode = "expanded" | "compact";
 
 type Props = {
   text: string;
@@ -128,6 +139,75 @@ function SmallButton(args: {
     >
       {args.children}
     </button>
+  );
+}
+
+function SelectControl(args: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  resolvedTheme: "light" | "dark";
+  disabled?: boolean;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <select
+      value={args.value}
+      disabled={args.disabled}
+      onChange={(e) => args.onChange(e.target.value)}
+      style={{
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+        color: isDark ? "#ffffff" : "#0f172a",
+        fontSize: 12,
+        fontWeight: 700,
+        minWidth: 140,
+      }}
+    >
+      {args.options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function TextInput(args: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  resolvedTheme: "light" | "dark";
+  disabled?: boolean;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <input
+      value={args.value}
+      disabled={args.disabled}
+      onChange={(e) => args.onChange(e.target.value)}
+      placeholder={args.placeholder}
+      style={{
+        width: "100%",
+        minWidth: 180,
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+        color: isDark ? "#fff" : "#0f172a",
+        fontSize: 12,
+        fontWeight: 700,
+        outline: "none",
+      }}
+    />
   );
 }
 
@@ -282,6 +362,23 @@ function validateEditedCases(cases: ParsedCase[]): CaseValidation {
   };
 }
 
+function getCaseNumber(id: string): number {
+  const match = String(id ?? "").match(/^TC-(\d{1,4})$/i);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+function getCompactBodyPreview(body: string): string {
+  const lines = String(body ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) return lines[0] ?? "";
+
+  const preview = lines.slice(1, 4).join("  •  ");
+  return preview.length > 220 ? `${preview.slice(0, 220).trim()}…` : preview;
+}
+
 function CasesTextCardContent({
   parsedCases,
   text,
@@ -326,6 +423,13 @@ function CasesTextCardContent({
   const [isSaving, setIsSaving] = useState(false);
   const [editedCases, setEditedCases] = useState<ParsedCase[]>(parsedCases);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // M12.16:
+  // UI-local controls only. These never mutate persisted artifact data.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("id_asc");
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("expanded");
 
   const persistedCases = useMemo(() => {
     return toPersistedCases(editedCases);
@@ -378,6 +482,51 @@ function CasesTextCardContent({
 
   const showRegenerateSuiteAction =
     typeof onRegenerateSuiteAction === "function" && hasStructuredCases;
+
+  const visibleCases = useMemo(() => {
+    const normalizedQuery = normalizeWhitespace(searchQuery).toLowerCase();
+
+    const matchesQuery = (tc: ParsedCase) => {
+      if (!normalizedQuery) return true;
+
+      const haystack = [
+        tc.id,
+        tc.title,
+        tc.body,
+      ]
+        .join("\n")
+        .toLowerCase();
+
+      return haystack.includes(normalizedQuery);
+    };
+
+    const matchesFilter = (tc: ParsedCase) => {
+      if (filterMode === "all") return true;
+      if (filterMode === "invalid") return invalidCaseIds.has(tc.id);
+      if (filterMode === "editing") return editingId === tc.id;
+      return true;
+    };
+
+    const next = editedCases.filter((tc) => matchesQuery(tc) && matchesFilter(tc));
+
+    next.sort((a, b) => {
+      switch (sortMode) {
+        case "id_desc":
+          return getCaseNumber(b.id) - getCaseNumber(a.id);
+        case "title_asc":
+          return a.title.localeCompare(b.title);
+        case "title_desc":
+          return b.title.localeCompare(a.title);
+        case "id_asc":
+        default:
+          return getCaseNumber(a.id) - getCaseNumber(b.id);
+      }
+    });
+
+    return next;
+  }, [editedCases, searchQuery, filterMode, sortMode, invalidCaseIds, editingId]);
+
+  const hiddenCount = Math.max(editedCases.length - visibleCases.length, 0);
 
   const copyText = async () => {
     try {
@@ -672,6 +821,92 @@ function CasesTextCardContent({
             ) : null}
           </div>
         </div>
+
+        {hasStructuredCases ? (
+          <div>
+            <SectionLabel
+              title="Suite controls"
+              description="Search, sort, and narrow the visible suite without changing persisted artifact data."
+              resolvedTheme={resolvedTheme}
+            />
+
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: "minmax(220px, 1fr) repeat(3, minmax(140px, auto))",
+                alignItems: "center",
+              }}
+            >
+              <TextInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search by ID, title, or case body"
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+              />
+
+              <SelectControl
+                value={filterMode}
+                onChange={(value) => setFilterMode(value as FilterMode)}
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+                options={[
+                  { value: "all", label: "Show: All" },
+                  { value: "invalid", label: "Show: Invalid only" },
+                  { value: "editing", label: "Show: Editing only" },
+                ]}
+              />
+
+              <SelectControl
+                value={sortMode}
+                onChange={(value) => setSortMode(value as SortMode)}
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+                options={[
+                  { value: "id_asc", label: "Sort: ID ↑" },
+                  { value: "id_desc", label: "Sort: ID ↓" },
+                  { value: "title_asc", label: "Sort: Title A-Z" },
+                  { value: "title_desc", label: "Sort: Title Z-A" },
+                ]}
+              />
+
+              <SelectControl
+                value={viewMode}
+                onChange={(value) => setViewMode(value as ViewMode)}
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+                options={[
+                  { value: "expanded", label: "View: Expanded" },
+                  { value: "compact", label: "View: Compact" },
+                ]}
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                marginTop: 8,
+                fontSize: 12,
+                color: isDark
+                  ? "rgba(255,255,255,0.72)"
+                  : "rgba(15,23,42,0.72)",
+              }}
+            >
+              <div>
+                Visible: <strong>{visibleCases.length}</strong> / {editedCases.length}
+              </div>
+              <div>
+                Invalid: <strong>{invalidCaseIds.size}</strong>
+              </div>
+              <div>
+                Hidden: <strong>{hiddenCount}</strong>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {toast ? (
@@ -731,7 +966,29 @@ function CasesTextCardContent({
             resolvedTheme={resolvedTheme}
           />
 
-          {editedCases.map((tc) => {
+          {visibleCases.length === 0 ? (
+            <div
+              style={{
+                marginBottom: 12,
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.10)"
+                  : "1px solid rgba(15,23,42,0.10)",
+                borderRadius: 14,
+                padding: 14,
+                background: isDark
+                  ? "rgba(255,255,255,0.03)"
+                  : "rgba(15,23,42,0.03)",
+                fontSize: 13,
+                color: isDark
+                  ? "rgba(255,255,255,0.78)"
+                  : "rgba(15,23,42,0.78)",
+              }}
+            >
+              No cases match the current controls.
+            </div>
+          ) : null}
+
+          {visibleCases.map((tc) => {
             const isEditing = editingId === tc.id;
             const isInvalid = invalidCaseIds.has(tc.id);
 
@@ -894,6 +1151,26 @@ function CasesTextCardContent({
                       boxSizing: "border-box",
                     }}
                   />
+                ) : viewMode === "compact" ? (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                      background: isDark
+                        ? "rgba(255,255,255,0.03)"
+                        : "rgba(15,23,42,0.03)",
+                      border: isDark
+                        ? "1px solid rgba(255,255,255,0.08)"
+                        : "1px solid rgba(15,23,42,0.08)",
+                      borderRadius: 12,
+                      padding: 12,
+                      color: isDark
+                        ? "rgba(255,255,255,0.86)"
+                        : "rgba(15,23,42,0.86)",
+                    }}
+                  >
+                    {getCompactBodyPreview(tc.body) || "No case details"}
+                  </div>
                 ) : (
                   <pre
                     style={{
