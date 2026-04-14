@@ -40,7 +40,12 @@
 // - separate suite workflow actions from local editing controls
 // - make edit/save state easier to scan in long suites
 // - clarify copy-ready output vs editable workspace content
-// - preserve existing validation and persistence behavior
+//
+// M12.16 CHANGE:
+// - add local search/filter/sort controls for persisted suite scanability
+// - add invalid-only visibility mode for faster operator review
+// - replace weak compact preview with a structured suite overview card
+// - keep all controls UI-local; no workflow or persistence logic moved into the card
 
 "use client";
 
@@ -65,23 +70,31 @@ type CaseValidation = {
   emptyCaseIds: string[];
 };
 
+type SortMode = "id_asc" | "id_desc" | "title_asc" | "title_desc";
+type FilterMode = "all" | "invalid" | "editing";
+type ViewMode = "expanded" | "overview";
+
+type CaseOverview = {
+  type: string | null;
+  priority: string | null;
+  preconditions: string | null;
+  firstStep: string | null;
+  expected: string | null;
+};
+
 type Props = {
   text: string;
   resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
-  // M12.9 CHANGE:
-  // actions are injected from parent/hook layer
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
 
-  // M12.9 Phase 2 CHANGE:
   onGenerateNextBatchAction?: () => void;
   canGenerateNextBatch?: boolean;
   isGeneratingNextBatch?: boolean;
 
-  // M12.9 Phase 2 CHANGE:
   onRegenerateSuiteAction?: () => void;
   canRegenerateSuite?: boolean;
   isRegeneratingSuite?: boolean;
@@ -131,6 +144,109 @@ function SmallButton(args: {
   );
 }
 
+function SelectControl(args: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  resolvedTheme: "light" | "dark";
+  disabled?: boolean;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        minWidth: 150,
+      }}
+    >
+      <select
+        value={args.value}
+        disabled={args.disabled}
+        onChange={(e) => args.onChange(e.target.value)}
+        style={{
+          width: "100%",
+          appearance: "none",
+          WebkitAppearance: "none",
+          MozAppearance: "none",
+          padding: "8px 34px 8px 10px",
+          borderRadius: 10,
+          border: isDark
+            ? "1px solid rgba(255,255,255,0.14)"
+            : "1px solid rgba(15,23,42,0.14)",
+          background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+          color: isDark ? "#ffffff" : "#0f172a",
+          fontSize: 12,
+          fontWeight: 700,
+          outline: "none",
+          cursor: args.disabled ? "not-allowed" : "pointer",
+        }}
+      >
+        {args.options.map((option) => (
+          <option
+            key={option.value}
+            value={option.value}
+            style={{
+              color: "#0f172a",
+              background: "#ffffff",
+            }}
+          >
+            {option.label}
+          </option>
+        ))}
+      </select>
+
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          right: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
+          pointerEvents: "none",
+          fontSize: 10,
+          color: isDark ? "rgba(255,255,255,0.78)" : "rgba(15,23,42,0.72)",
+        }}
+      >
+        ▼
+      </div>
+    </div>
+  );
+}
+
+function TextInput(args: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  resolvedTheme: "light" | "dark";
+  disabled?: boolean;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <input
+      value={args.value}
+      disabled={args.disabled}
+      onChange={(e) => args.onChange(e.target.value)}
+      placeholder={args.placeholder}
+      style={{
+        width: "100%",
+        minWidth: 180,
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.14)",
+        background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+        color: isDark ? "#fff" : "#0f172a",
+        fontSize: 12,
+        fontWeight: 700,
+        outline: "none",
+      }}
+    />
+  );
+}
+
 function SectionLabel(args: {
   title: string;
   description?: string;
@@ -171,6 +287,33 @@ function SectionLabel(args: {
           {args.description}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ToneBadge(args: {
+  label: string;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        fontSize: 10,
+        fontWeight: 900,
+        padding: "3px 7px",
+        borderRadius: 999,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.12)",
+        background: isDark
+          ? "rgba(255,255,255,0.05)"
+          : "rgba(15,23,42,0.04)",
+        color: isDark ? "rgba(255,255,255,0.86)" : "rgba(15,23,42,0.82)",
+      }}
+    >
+      {args.label}
     </div>
   );
 }
@@ -282,6 +425,81 @@ function validateEditedCases(cases: ParsedCase[]): CaseValidation {
   };
 }
 
+function getCaseNumber(id: string): number {
+  const match = String(id ?? "").match(/^TC-(\d{1,4})$/i);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+function readSingleLineField(body: string, label: string): string | null {
+  const pattern = new RegExp(`(?:^|\\n)\\s*${label}\\s*:\\s*(.+)`, "i");
+  const match = String(body ?? "").match(pattern);
+  const value = normalizeWhitespace(match?.[1] ?? "");
+  return value || null;
+}
+
+function readSectionLines(body: string, labels: string[]): string[] {
+  const lines = String(body ?? "").replace(/\r/g, "").split("\n");
+  const normalizedLabels = labels.map((label) => label.toLowerCase());
+
+  let startIndex = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim().toLowerCase();
+    const isMatch = normalizedLabels.some((label) => line.startsWith(`${label}:`));
+    if (isMatch) {
+      startIndex = i;
+      break;
+    }
+  }
+
+  if (startIndex === -1) return [];
+
+  const values: string[] = [];
+  const sectionHeaderRegex =
+    /^\s*(type|priority|preconditions|test steps|steps|expected result|expected results)\s*:/i;
+
+  const firstLine = lines[startIndex];
+  const inlineValue = normalizeWhitespace(firstLine.replace(/^[^:]+:\s*/i, ""));
+  if (inlineValue) values.push(inlineValue);
+
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const nextLine = lines[i];
+    if (sectionHeaderRegex.test(nextLine)) break;
+
+    const normalizedLine = normalizeWhitespace(
+      nextLine.replace(/^[-*]\s*/, "").replace(/^\d+\.\s*/, "")
+    );
+
+    if (normalizedLine) values.push(normalizedLine);
+  }
+
+  return values;
+}
+
+function buildCaseOverview(body: string): CaseOverview {
+  const type = readSingleLineField(body, "Type");
+  const priority = readSingleLineField(body, "Priority");
+  const preconditions = readSectionLines(body, ["Preconditions"]).join(" • ") || null;
+  const firstStep = readSectionLines(body, ["Test Steps", "Steps"])[0] ?? null;
+  const expected =
+    readSectionLines(body, ["Expected Result", "Expected Results"])[0] ?? null;
+
+  return {
+    type,
+    priority,
+    preconditions,
+    firstStep,
+    expected,
+  };
+}
+
+function truncateText(value: string | null, max = 180): string {
+  const text = normalizeWhitespace(value ?? "");
+  if (!text) return "—";
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trim()}…`;
+}
+
 function CasesTextCardContent({
   parsedCases,
   text,
@@ -303,19 +521,12 @@ function CasesTextCardContent({
   hasStructuredCases: boolean;
   resolvedTheme?: "light" | "dark";
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
-
-  // M12.9 CHANGE:
-  // actions remain external; card only renders triggers
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
   isReviewingTestSuite?: boolean;
-
-  // M12.9 Phase 2 CHANGE:
   onGenerateNextBatchAction?: () => void;
   canGenerateNextBatch?: boolean;
   isGeneratingNextBatch?: boolean;
-
-  // M12.9 Phase 2 CHANGE:
   onRegenerateSuiteAction?: () => void;
   canRegenerateSuite?: boolean;
   isRegeneratingSuite?: boolean;
@@ -326,6 +537,11 @@ function CasesTextCardContent({
   const [isSaving, setIsSaving] = useState(false);
   const [editedCases, setEditedCases] = useState<ParsedCase[]>(parsedCases);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("id_asc");
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("expanded");
 
   const persistedCases = useMemo(() => {
     return toPersistedCases(editedCases);
@@ -378,6 +594,44 @@ function CasesTextCardContent({
 
   const showRegenerateSuiteAction =
     typeof onRegenerateSuiteAction === "function" && hasStructuredCases;
+
+  const visibleCases = useMemo(() => {
+    const normalizedQuery = normalizeWhitespace(searchQuery).toLowerCase();
+
+    const matchesQuery = (tc: ParsedCase) => {
+      if (!normalizedQuery) return true;
+
+      const haystack = [tc.id, tc.title, tc.body].join("\n").toLowerCase();
+      return haystack.includes(normalizedQuery);
+    };
+
+    const matchesFilter = (tc: ParsedCase) => {
+      if (filterMode === "all") return true;
+      if (filterMode === "invalid") return invalidCaseIds.has(tc.id);
+      if (filterMode === "editing") return editingId === tc.id;
+      return true;
+    };
+
+    const next = editedCases.filter((tc) => matchesQuery(tc) && matchesFilter(tc));
+
+    next.sort((a, b) => {
+      switch (sortMode) {
+        case "id_desc":
+          return getCaseNumber(b.id) - getCaseNumber(a.id);
+        case "title_asc":
+          return a.title.localeCompare(b.title);
+        case "title_desc":
+          return b.title.localeCompare(a.title);
+        case "id_asc":
+        default:
+          return getCaseNumber(a.id) - getCaseNumber(b.id);
+      }
+    });
+
+    return next;
+  }, [editedCases, searchQuery, filterMode, sortMode, invalidCaseIds, editingId]);
+
+  const hiddenCount = Math.max(editedCases.length - visibleCases.length, 0);
 
   const copyText = async () => {
     try {
@@ -472,9 +726,6 @@ function CasesTextCardContent({
       return;
     }
 
-    // M12.9 Phase 2 FIX:
-    // Clicking Done should persist the edited suite immediately so users do not
-    // need to scroll back to the top Save action on long suites.
     const didSave = await saveSuite();
     console.log("handleEditToggle save result", {
       id,
@@ -672,6 +923,92 @@ function CasesTextCardContent({
             ) : null}
           </div>
         </div>
+
+        {hasStructuredCases ? (
+          <div>
+            <SectionLabel
+              title="Suite controls"
+              description="Search, sort, and narrow the visible suite without changing persisted artifact data."
+              resolvedTheme={resolvedTheme}
+            />
+
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: "minmax(220px, 1fr) repeat(3, minmax(150px, auto))",
+                alignItems: "center",
+              }}
+            >
+              <TextInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search by ID, title, or case body"
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+              />
+
+              <SelectControl
+                value={filterMode}
+                onChange={(value) => setFilterMode(value as FilterMode)}
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+                options={[
+                  { value: "all", label: "Show: All" },
+                  { value: "invalid", label: "Show: Invalid only" },
+                  { value: "editing", label: "Show: Editing only" },
+                ]}
+              />
+
+              <SelectControl
+                value={sortMode}
+                onChange={(value) => setSortMode(value as SortMode)}
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+                options={[
+                  { value: "id_asc", label: "Sort: ID ↑" },
+                  { value: "id_desc", label: "Sort: ID ↓" },
+                  { value: "title_asc", label: "Sort: Title A-Z" },
+                  { value: "title_desc", label: "Sort: Title Z-A" },
+                ]}
+              />
+
+              <SelectControl
+                value={viewMode}
+                onChange={(value) => setViewMode(value as ViewMode)}
+                resolvedTheme={resolvedTheme}
+                disabled={isSaving}
+                options={[
+                  { value: "expanded", label: "View: Expanded" },
+                  { value: "overview", label: "View: Overview" },
+                ]}
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                marginTop: 8,
+                fontSize: 12,
+                color: isDark
+                  ? "rgba(255,255,255,0.72)"
+                  : "rgba(15,23,42,0.72)",
+              }}
+            >
+              <div>
+                Visible: <strong>{visibleCases.length}</strong> / {editedCases.length}
+              </div>
+              <div>
+                Invalid: <strong>{invalidCaseIds.size}</strong>
+              </div>
+              <div>
+                Hidden: <strong>{hiddenCount}</strong>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {toast ? (
@@ -731,9 +1068,32 @@ function CasesTextCardContent({
             resolvedTheme={resolvedTheme}
           />
 
-          {editedCases.map((tc) => {
+          {visibleCases.length === 0 ? (
+            <div
+              style={{
+                marginBottom: 12,
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.10)"
+                  : "1px solid rgba(15,23,42,0.10)",
+                borderRadius: 14,
+                padding: 14,
+                background: isDark
+                  ? "rgba(255,255,255,0.03)"
+                  : "rgba(15,23,42,0.03)",
+                fontSize: 13,
+                color: isDark
+                  ? "rgba(255,255,255,0.78)"
+                  : "rgba(15,23,42,0.78)",
+              }}
+            >
+              No cases match the current controls.
+            </div>
+          ) : null}
+
+          {visibleCases.map((tc) => {
             const isEditing = editingId === tc.id;
             const isInvalid = invalidCaseIds.has(tc.id);
+            const overview = buildCaseOverview(tc.body);
 
             return (
               <div
@@ -774,7 +1134,7 @@ function CasesTextCardContent({
                         alignItems: "center",
                         gap: 8,
                         flexWrap: "wrap",
-                        marginBottom: 4,
+                        marginBottom: 6,
                       }}
                     >
                       <div
@@ -807,6 +1167,20 @@ function CasesTextCardContent({
                         >
                           CHECK
                         </div>
+                      ) : null}
+
+                      {overview.type ? (
+                        <ToneBadge
+                          label={`Type: ${overview.type}`}
+                          resolvedTheme={resolvedTheme}
+                        />
+                      ) : null}
+
+                      {overview.priority ? (
+                        <ToneBadge
+                          label={`Priority: ${overview.priority}`}
+                          resolvedTheme={resolvedTheme}
+                        />
                       ) : null}
 
                       {isEditing ? (
@@ -854,7 +1228,7 @@ function CasesTextCardContent({
                         }}
                       />
                     ) : (
-                      <div style={{ fontWeight: 900 }}>{tc.title}</div>
+                      <div style={{ fontWeight: 900, marginBottom: 6 }}>{tc.title}</div>
                     )}
                   </div>
 
@@ -894,6 +1268,102 @@ function CasesTextCardContent({
                       boxSizing: "border-box",
                     }}
                   />
+                ) : viewMode === "overview" ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                      }}
+                    >
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: 10,
+                          background: isDark
+                            ? "rgba(255,255,255,0.03)"
+                            : "rgba(15,23,42,0.03)",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.08)"
+                            : "1px solid rgba(15,23,42,0.08)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            opacity: 0.66,
+                            marginBottom: 4,
+                          }}
+                        >
+                          PRECONDITIONS
+                        </div>
+                        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                          {truncateText(overview.preconditions)}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: 10,
+                          background: isDark
+                            ? "rgba(255,255,255,0.03)"
+                            : "rgba(15,23,42,0.03)",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.08)"
+                            : "1px solid rgba(15,23,42,0.08)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            opacity: 0.66,
+                            marginBottom: 4,
+                          }}
+                        >
+                          FIRST STEP
+                        </div>
+                        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                          {truncateText(overview.firstStep)}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: 10,
+                          background: isDark
+                            ? "rgba(255,255,255,0.03)"
+                            : "rgba(15,23,42,0.03)",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.08)"
+                            : "1px solid rgba(15,23,42,0.08)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 900,
+                            opacity: 0.66,
+                            marginBottom: 4,
+                          }}
+                        >
+                          EXPECTED RESULT
+                        </div>
+                        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                          {truncateText(overview.expected)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <pre
                     style={{
