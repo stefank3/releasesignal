@@ -61,6 +61,13 @@
 // - aggregate requirement/suite/review/execution/classification readiness without AI inference
 // - support explicit partial-state degradation and stable UI consumption
 // - preserve existing artifact behavior and backward compatibility
+//
+// M12.18 CHANGE:
+// - add explicit requirement lineage metadata
+// - allow suite/review artifacts to declare which requirement version they were derived from
+// - expose deterministic stale-state helpers for workflow/UI layers
+// - keep fields optional for backward compatibility with already-persisted artifacts
+// - do not clear downstream artifacts in this file; contract/helpers only
 
 import { Prisma } from "@prisma/client";
 
@@ -79,6 +86,12 @@ export type PersistedReviewResult = {
   riskGaps: string[];
   antiPatterns: string[];
   improvements: string[];
+
+  // M12.18:
+  // Lineage metadata is optional so older persisted reviews remain valid.
+  // Workflow/service layers should stamp these when a review is produced.
+  basedOnRequirementVersion?: number;
+  basedOnSuiteVersion?: number;
 };
 
 export type RefinedRequirement = {
@@ -115,6 +128,12 @@ export type RefinedRequirement = {
 
   // M12.12 bridge field.
   openQuestionsClarifications?: string[];
+
+  // M12.18:
+  // Explicit requirement versioning is needed so downstream artifacts can
+  // declare whether they are aligned or stale after refinement.
+  version?: number;
+  lastUpdatedAt?: string;
 };
 
 export type ExecutionSource =
@@ -301,6 +320,11 @@ export type TestSuiteArtifact = {
   cases: TestCase[];
   createdAt: string;
   lastUpdatedAt: string;
+
+  // M12.18:
+  // Optional lineage marker. When absent on older suites, consumers should
+  // treat lineage as unknown rather than falsely aligned.
+  basedOnRequirementVersion?: number;
 };
 
 export type FeatureWorkspaceArtifact = {
@@ -328,6 +352,20 @@ export type TestSuiteValidationResult = {
   totalCases: number;
   malformedCaseIds: string[];
   hasMalformedCases: boolean;
+};
+
+export type ArtifactConsistencyState = {
+  requirementVersion: number | null;
+  suiteVersion: number | null;
+  suiteBasedOnRequirementVersion: number | null;
+  reviewBasedOnRequirementVersion: number | null;
+  reviewBasedOnSuiteVersion: number | null;
+  suiteStale: boolean;
+  reviewStaleBecauseOfRequirement: boolean;
+  reviewStaleBecauseOfSuite: boolean;
+  reviewStale: boolean;
+  hasStaleDownstream: boolean;
+  reasons: string[];
 };
 
 export function normalizeWhitespace(value: string): string {
@@ -1300,6 +1338,201 @@ export function parseStructuredRequirementInput(
   return Object.keys(partial).length ? partial : null;
 }
 
+function dedupeStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((x) => x.trim()).filter(Boolean)));
+}
+
+function normalizeRequirementForComparison(
+  requirement: RefinedRequirement | null | undefined
+): Omit<RefinedRequirement, "version" | "lastUpdatedAt"> {
+  const rr = requirement ?? {};
+
+  return {
+    ...(rr.objective ? { objective: rr.objective } : {}),
+    ...(rr.context ? { context: rr.context } : {}),
+    ...(rr.inScope?.length ? { inScope: dedupeStrings(rr.inScope) } : {}),
+    ...(rr.outOfScope?.length ? { outOfScope: dedupeStrings(rr.outOfScope) } : {}),
+    ...(rr.integrations?.length ? { integrations: dedupeStrings(rr.integrations) } : {}),
+    ...(rr.riskFocus?.length ? { riskFocus: dedupeStrings(rr.riskFocus) } : {}),
+    ...(rr.functionalScope?.length
+      ? { functionalScope: dedupeStrings(rr.functionalScope) }
+      : {}),
+    ...(rr.businessRules?.length
+      ? { businessRules: dedupeStrings(rr.businessRules) }
+      : {}),
+    ...(rr.acceptanceCriteria?.length
+      ? { acceptanceCriteria: dedupeStrings(rr.acceptanceCriteria) }
+      : {}),
+    ...(rr.edgeCases?.length ? { edgeCases: dedupeStrings(rr.edgeCases) } : {}),
+    ...(rr.edgeCasesNegativePaths?.length
+      ? { edgeCasesNegativePaths: dedupeStrings(rr.edgeCasesNegativePaths) }
+      : {}),
+    ...(rr.nonFunctionalConstraints?.length
+      ? { nonFunctionalConstraints: dedupeStrings(rr.nonFunctionalConstraints) }
+      : {}),
+    ...(rr.testStrategyHooks?.length
+      ? { testStrategyHooks: dedupeStrings(rr.testStrategyHooks) }
+      : {}),
+    ...(rr.riskAreas?.length ? { riskAreas: dedupeStrings(rr.riskAreas) } : {}),
+    ...(rr.coverageTargets?.length
+      ? { coverageTargets: dedupeStrings(rr.coverageTargets) }
+      : {}),
+    ...(rr.minimalReproScenarios?.length
+      ? { minimalReproScenarios: dedupeStrings(rr.minimalReproScenarios) }
+      : {}),
+    ...(rr.openQuestions?.length
+      ? { openQuestions: dedupeStrings(rr.openQuestions) }
+      : {}),
+    ...(rr.openQuestionsClarifications?.length
+      ? {
+          openQuestionsClarifications: dedupeStrings(
+            rr.openQuestionsClarifications
+          ),
+        }
+      : {}),
+  };
+}
+
+export function getRefinedRequirementVersion(
+  requirement: RefinedRequirement | null | undefined
+): number | null {
+  if (!requirement || typeof requirement !== "object") return null;
+
+  if (
+    typeof requirement.version === "number" &&
+    Number.isFinite(requirement.version) &&
+    requirement.version > 0
+  ) {
+    return Math.round(requirement.version);
+  }
+
+  const comparable = normalizeRequirementForComparison(requirement);
+  return Object.keys(comparable).length ? 1 : null;
+}
+
+export function getTestSuiteRequirementVersion(
+  suite: TestSuiteArtifact | null | undefined
+): number | null {
+  if (!suite || typeof suite !== "object") return null;
+
+  if (
+    typeof suite.basedOnRequirementVersion === "number" &&
+    Number.isFinite(suite.basedOnRequirementVersion) &&
+    suite.basedOnRequirementVersion > 0
+  ) {
+    return Math.round(suite.basedOnRequirementVersion);
+  }
+
+  return null;
+}
+
+export function getReviewRequirementVersion(
+  review: PersistedReviewResult | null | undefined
+): number | null {
+  if (!review || typeof review !== "object") return null;
+
+  if (
+    typeof review.basedOnRequirementVersion === "number" &&
+    Number.isFinite(review.basedOnRequirementVersion) &&
+    review.basedOnRequirementVersion > 0
+  ) {
+    return Math.round(review.basedOnRequirementVersion);
+  }
+
+  return null;
+}
+
+export function getReviewSuiteVersion(
+  review: PersistedReviewResult | null | undefined
+): number | null {
+  if (!review || typeof review !== "object") return null;
+
+  if (
+    typeof review.basedOnSuiteVersion === "number" &&
+    Number.isFinite(review.basedOnSuiteVersion) &&
+    review.basedOnSuiteVersion > 0
+  ) {
+    return Math.round(review.basedOnSuiteVersion);
+  }
+
+  return null;
+}
+
+// M12.18:
+// Deterministic downstream staleness evaluation.
+// This helper does not mutate artifacts; it only makes hidden drift explicit.
+export function getArtifactConsistencyState(
+  artifact: SessionArtifact | null | undefined
+): ArtifactConsistencyState {
+  const requirementVersion = getRefinedRequirementVersion(artifact?.refinedRequirement);
+  const suiteVersion =
+    typeof artifact?.testSuite?.version === "number" &&
+    Number.isFinite(artifact.testSuite.version)
+      ? Math.round(artifact.testSuite.version)
+      : null;
+
+  const suiteBasedOnRequirementVersion = getTestSuiteRequirementVersion(
+    artifact?.testSuite
+  );
+  const reviewBasedOnRequirementVersion = getReviewRequirementVersion(
+    artifact?.reviewResult
+  );
+  const reviewBasedOnSuiteVersion = getReviewSuiteVersion(artifact?.reviewResult);
+
+  const suiteStale =
+    !!artifact?.testSuite &&
+    requirementVersion != null &&
+    suiteBasedOnRequirementVersion != null &&
+    suiteBasedOnRequirementVersion !== requirementVersion;
+
+  const reviewStaleBecauseOfRequirement =
+    !!artifact?.reviewResult &&
+    requirementVersion != null &&
+    reviewBasedOnRequirementVersion != null &&
+    reviewBasedOnRequirementVersion !== requirementVersion;
+
+  const reviewStaleBecauseOfSuite =
+    !!artifact?.reviewResult &&
+    suiteVersion != null &&
+    reviewBasedOnSuiteVersion != null &&
+    reviewBasedOnSuiteVersion !== suiteVersion;
+
+  const reasons: string[] = [];
+
+  if (suiteStale) {
+    reasons.push(
+      `Test suite is based on requirement v${suiteBasedOnRequirementVersion}, but current requirement is v${requirementVersion}.`
+    );
+  }
+
+  if (reviewStaleBecauseOfRequirement) {
+    reasons.push(
+      `Review result is based on requirement v${reviewBasedOnRequirementVersion}, but current requirement is v${requirementVersion}.`
+    );
+  }
+
+  if (reviewStaleBecauseOfSuite) {
+    reasons.push(
+      `Review result is based on suite v${reviewBasedOnSuiteVersion}, but current suite is v${suiteVersion}.`
+    );
+  }
+
+  return {
+    requirementVersion,
+    suiteVersion,
+    suiteBasedOnRequirementVersion,
+    reviewBasedOnRequirementVersion,
+    reviewBasedOnSuiteVersion,
+    suiteStale,
+    reviewStaleBecauseOfRequirement,
+    reviewStaleBecauseOfSuite,
+    reviewStale: reviewStaleBecauseOfRequirement || reviewStaleBecauseOfSuite,
+    hasStaleDownstream:
+      suiteStale || reviewStaleBecauseOfRequirement || reviewStaleBecauseOfSuite,
+    reasons,
+  };
+}
+
 export function mergeArtifact(
   existing: SessionArtifact | null,
   patch: Partial<RefinedRequirement>
@@ -1311,69 +1544,63 @@ export function mergeArtifact(
       ? prev.refinedRequirement
       : {};
 
-  const dedupe = (arr: string[]) =>
-    Array.from(new Set(arr.map((x) => x.trim()).filter(Boolean)));
-
-  // M12.8 / M12.12 bridge:
-  // legacy coach patches still populate inScope / riskFocus / integrations.
-  // During transition, normalize them into the locked reviewable shape too.
-  const normalizedFunctionalScope = dedupe([
+  const normalizedFunctionalScope = dedupeStrings([
     ...(patch.functionalScope ?? []),
     ...(patch.inScope ?? []),
   ]);
 
-  const normalizedRiskAreas = dedupe([
+  const normalizedRiskAreas = dedupeStrings([
     ...(patch.riskAreas ?? []),
     ...(patch.riskFocus ?? []),
   ]);
 
-  const normalizedNonFunctionalConstraints = dedupe([
+  const normalizedNonFunctionalConstraints = dedupeStrings([
     ...(patch.nonFunctionalConstraints ?? []),
     ...(patch.integrations ?? []).map((x) => `Integration dependency: ${x}`),
   ]);
 
-  const normalizedEdgeCasesNegativePaths = dedupe([
+  const normalizedEdgeCasesNegativePaths = dedupeStrings([
     ...(patch.edgeCasesNegativePaths ?? []),
     ...(patch.edgeCases ?? []),
   ]);
 
-  const normalizedOpenQuestionsClarifications = dedupe([
+  const normalizedOpenQuestionsClarifications = dedupeStrings([
     ...(patch.openQuestionsClarifications ?? []),
     ...(patch.openQuestions ?? []),
   ]);
 
-  const normalizedTestStrategyHooks = dedupe([
+  const normalizedTestStrategyHooks = dedupeStrings([
     ...(patch.testStrategyHooks ?? []),
   ]);
 
-  const nextRR: RefinedRequirement = {
+  const candidateRR: RefinedRequirement = {
     ...prevRR,
     ...(patch.objective ? { objective: patch.objective } : {}),
     ...(patch.context ? { context: patch.context } : {}),
 
     // Keep legacy fields for compatibility during migration.
     ...(patch.inScope?.length
-      ? { inScope: dedupe([...(prevRR.inScope ?? []), ...patch.inScope]) }
+      ? { inScope: dedupeStrings([...(prevRR.inScope ?? []), ...patch.inScope]) }
       : {}),
     ...(patch.outOfScope?.length
-      ? { outOfScope: dedupe([...(prevRR.outOfScope ?? []), ...patch.outOfScope]) }
+      ? { outOfScope: dedupeStrings([...(prevRR.outOfScope ?? []), ...patch.outOfScope]) }
       : {}),
     ...(patch.integrations?.length
       ? {
-          integrations: dedupe([
+          integrations: dedupeStrings([
             ...(prevRR.integrations ?? []),
             ...patch.integrations,
           ]),
         }
       : {}),
     ...(patch.riskFocus?.length
-      ? { riskFocus: dedupe([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) }
+      ? { riskFocus: dedupeStrings([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) }
       : {}),
 
     // Locked unified fields used by deterministic review and artifact context.
     ...(normalizedFunctionalScope.length
       ? {
-          functionalScope: dedupe([
+          functionalScope: dedupeStrings([
             ...(prevRR.functionalScope ?? []),
             ...normalizedFunctionalScope,
           ]),
@@ -1381,7 +1608,7 @@ export function mergeArtifact(
       : {}),
     ...(patch.businessRules?.length
       ? {
-          businessRules: dedupe([
+          businessRules: dedupeStrings([
             ...(prevRR.businessRules ?? []),
             ...patch.businessRules,
           ]),
@@ -1389,7 +1616,7 @@ export function mergeArtifact(
       : {}),
     ...(patch.acceptanceCriteria?.length
       ? {
-          acceptanceCriteria: dedupe([
+          acceptanceCriteria: dedupeStrings([
             ...(prevRR.acceptanceCriteria ?? []),
             ...patch.acceptanceCriteria,
           ]),
@@ -1397,8 +1624,11 @@ export function mergeArtifact(
       : {}),
     ...(normalizedEdgeCasesNegativePaths.length
       ? {
-          edgeCases: dedupe([...(prevRR.edgeCases ?? []), ...normalizedEdgeCasesNegativePaths]),
-          edgeCasesNegativePaths: dedupe([
+          edgeCases: dedupeStrings([
+            ...(prevRR.edgeCases ?? []),
+            ...normalizedEdgeCasesNegativePaths,
+          ]),
+          edgeCasesNegativePaths: dedupeStrings([
             ...(prevRR.edgeCasesNegativePaths ?? []),
             ...normalizedEdgeCasesNegativePaths,
           ]),
@@ -1406,7 +1636,7 @@ export function mergeArtifact(
       : {}),
     ...(normalizedNonFunctionalConstraints.length
       ? {
-          nonFunctionalConstraints: dedupe([
+          nonFunctionalConstraints: dedupeStrings([
             ...(prevRR.nonFunctionalConstraints ?? []),
             ...normalizedNonFunctionalConstraints,
           ]),
@@ -1414,7 +1644,7 @@ export function mergeArtifact(
       : {}),
     ...(normalizedTestStrategyHooks.length
       ? {
-          testStrategyHooks: dedupe([
+          testStrategyHooks: dedupeStrings([
             ...(prevRR.testStrategyHooks ?? []),
             ...normalizedTestStrategyHooks,
           ]),
@@ -1422,12 +1652,12 @@ export function mergeArtifact(
       : {}),
     ...(normalizedRiskAreas.length
       ? {
-          riskAreas: dedupe([...(prevRR.riskAreas ?? []), ...normalizedRiskAreas]),
+          riskAreas: dedupeStrings([...(prevRR.riskAreas ?? []), ...normalizedRiskAreas]),
         }
       : {}),
     ...(patch.coverageTargets?.length
       ? {
-          coverageTargets: dedupe([
+          coverageTargets: dedupeStrings([
             ...(prevRR.coverageTargets ?? []),
             ...patch.coverageTargets,
           ]),
@@ -1435,7 +1665,7 @@ export function mergeArtifact(
       : {}),
     ...(patch.minimalReproScenarios?.length
       ? {
-          minimalReproScenarios: dedupe([
+          minimalReproScenarios: dedupeStrings([
             ...(prevRR.minimalReproScenarios ?? []),
             ...patch.minimalReproScenarios,
           ]),
@@ -1443,16 +1673,34 @@ export function mergeArtifact(
       : {}),
     ...(normalizedOpenQuestionsClarifications.length
       ? {
-          openQuestions: dedupe([
+          openQuestions: dedupeStrings([
             ...(prevRR.openQuestions ?? []),
             ...normalizedOpenQuestionsClarifications,
           ]),
-          openQuestionsClarifications: dedupe([
+          openQuestionsClarifications: dedupeStrings([
             ...(prevRR.openQuestionsClarifications ?? []),
             ...normalizedOpenQuestionsClarifications,
           ]),
         }
       : {}),
+  };
+
+  const prevComparable = normalizeRequirementForComparison(prevRR);
+  const nextComparable = normalizeRequirementForComparison(candidateRR);
+  const didRequirementChange =
+    JSON.stringify(prevComparable) !== JSON.stringify(nextComparable);
+
+  const previousVersion = getRefinedRequirementVersion(prevRR) ?? 0;
+  const nextVersion = didRequirementChange ? previousVersion + 1 : previousVersion || 1;
+  const timestamp =
+    didRequirementChange
+      ? new Date().toISOString()
+      : prevRR.lastUpdatedAt ?? new Date().toISOString();
+
+  const nextRR: RefinedRequirement = {
+    ...candidateRR,
+    version: nextVersion,
+    lastUpdatedAt: timestamp,
   };
 
   return {
@@ -1463,7 +1711,18 @@ export function mergeArtifact(
       ? { executionIntelligence: prev.executionIntelligence }
       : {}),
     ...(prev.releaseHealth ? { releaseHealth: prev.releaseHealth } : {}),
-    ...(prev.featureWorkspace ? { featureWorkspace: prev.featureWorkspace } : {}),
+    ...(prev.featureWorkspace
+      ? {
+          featureWorkspace: {
+            ...prev.featureWorkspace,
+
+            // M12.18:
+            // Keep workspace requirement synchronized with top-level source of truth.
+            // Leaving this untouched would preserve a stale in-workspace requirement snapshot.
+            refinedRequirement: nextRR,
+          },
+        }
+      : {}),
   };
 }
 
@@ -1483,7 +1742,12 @@ export function getTestSuite(
 
 export function artifactToContextText(artifact: SessionArtifact): string {
   const rr = artifact.refinedRequirement ?? {};
-  const lines: string[] = ["REFINED REQUIREMENT (pinned):"];
+  const consistency = getArtifactConsistencyState(artifact);
+  const requirementVersion = getRefinedRequirementVersion(rr);
+
+  const lines: string[] = [
+    `REFINED REQUIREMENT (pinned${requirementVersion ? `, v${requirementVersion}` : ""}):`,
+  ];
 
   if (rr.objective) lines.push(`- Objective: ${rr.objective}`);
   if (rr.context) lines.push(`- Context: ${rr.context}`);
@@ -1568,6 +1832,14 @@ export function artifactToContextText(artifact: SessionArtifact): string {
       `TEST SUITE (pinned): v${suite.version}, total cases: ${suite.cases.length}`
     );
 
+    if (suite.basedOnRequirementVersion != null) {
+      lines.push(`- Based on requirement version: v${suite.basedOnRequirementVersion}`);
+    }
+
+    if (consistency.suiteStale) {
+      lines.push("- Stale status: suite no longer matches the latest requirement.");
+    }
+
     if (validation.hasDuplicates) {
       lines.push(`- Duplicate groups detected: ${validation.duplicateGroups.length}`);
     }
@@ -1608,6 +1880,22 @@ export function artifactToContextText(artifact: SessionArtifact): string {
     lines.push("");
     lines.push(`LATEST REVIEW (pinned): score ${artifact.reviewResult.score}/100`);
     lines.push(`- Verdict: ${artifact.reviewResult.verdict}`);
+
+    if (artifact.reviewResult.basedOnRequirementVersion != null) {
+      lines.push(
+        `- Based on requirement version: v${artifact.reviewResult.basedOnRequirementVersion}`
+      );
+    }
+
+    if (artifact.reviewResult.basedOnSuiteVersion != null) {
+      lines.push(
+        `- Based on suite version: v${artifact.reviewResult.basedOnSuiteVersion}`
+      );
+    }
+
+    if (consistency.reviewStale) {
+      lines.push("- Stale status: review no longer matches the latest workspace state.");
+    }
   }
 
   const releaseHealth = getReleaseHealth(artifact);
@@ -1637,6 +1925,14 @@ export function artifactToContextText(artifact: SessionArtifact): string {
       for (const reason of releaseHealth.reasons.slice(0, 12)) {
         lines.push(`  - ${reason}`);
       }
+    }
+  }
+
+  if (consistency.hasStaleDownstream) {
+    lines.push("");
+    lines.push("WORKSPACE CONSISTENCY:");
+    for (const reason of consistency.reasons) {
+      lines.push(`- ${reason}`);
     }
   }
 
