@@ -48,6 +48,12 @@
 // - keep release-health computation outside this service
 // - mirror release-health state into featureWorkspace only when that wrapper already exists
 // - preserve existing requirement/suite/review/execution behavior
+//
+// M12.18 CHANGE:
+// - clear stale review/release-health when requirement changes through guided or standalone ingestion
+// - preserve suite on requirement change, but do not rewrite its lineage
+// - stamp persisted suites with current requirement version
+// - clear stale review/release-health when a new suite is persisted
 
 import { type ReviewResult } from "@/lib/framework/reviewSchema";
 
@@ -56,6 +62,10 @@ import {
   type ReleaseHealthArtifact,
   type SessionArtifact,
   type TestSuiteArtifact,
+  getRefinedRequirementVersion,
+  getReviewRequirementVersion,
+  getReviewSuiteVersion,
+  getTestSuiteRequirementVersion,
   mergeArtifact,
   normalizeExecutionIntelligenceArtifact,
   normalizeReleaseHealthArtifact,
@@ -103,9 +113,27 @@ function withUpdatedReviewArtifact(
   reviewResult: ReviewResult
 ): SessionArtifact {
   const base = isRecord(artifact) ? { ...artifact } : {};
+
+  // M12.18:
+  // Stamp lineage at persistence time so later requirement/suite evolution can
+  // deterministically invalidate stale review state.
+  const stampedReviewResult: ReviewResult = {
+    ...reviewResult,
+    ...(typeof getRefinedRequirementVersion(base.refinedRequirement) === "number"
+      ? {
+          basedOnRequirementVersion: getRefinedRequirementVersion(
+            base.refinedRequirement
+          )!,
+        }
+      : {}),
+    ...(typeof base.testSuite?.version === "number"
+      ? { basedOnSuiteVersion: base.testSuite.version }
+      : {}),
+  };
+
   const next = {
     ...base,
-    reviewResult,
+    reviewResult: stampedReviewResult,
   } as SessionArtifact & Record<string, unknown>;
 
   if (isRecord(base.featureWorkspace)) {
@@ -115,7 +143,7 @@ function withUpdatedReviewArtifact(
         ? { refinedRequirement: base.refinedRequirement }
         : {}),
       ...(base.testSuite ? { testSuite: base.testSuite } : {}),
-      reviewResult,
+      reviewResult: stampedReviewResult,
       lastUpdatedAt: new Date().toISOString(),
     };
   }
@@ -244,8 +272,128 @@ function withFeatureWorkspaceRequirementMirror(
   };
 }
 
+/**
+ * M12.18:
+ * Requirement refinement changes the baseline for downstream derived artifacts.
+ * Preserve the suite, but clear review/release-health when the requirement
+ * version advances. Do not rewrite suite lineage here; stale detection depends
+ * on the mismatch remaining explicit.
+ */
+function applyRequirementRefinementEffects(args: {
+  previousArtifact: SessionArtifact | null;
+  nextArtifact: SessionArtifact;
+}): SessionArtifact {
+  const previousRequirementVersion = getRefinedRequirementVersion(
+    args.previousArtifact?.refinedRequirement
+  );
+  const nextRequirementVersion = getRefinedRequirementVersion(
+    args.nextArtifact.refinedRequirement
+  );
+
+  if (
+    previousRequirementVersion != null &&
+    nextRequirementVersion != null &&
+    previousRequirementVersion === nextRequirementVersion
+  ) {
+    return args.nextArtifact;
+  }
+
+  const preservedSuite = args.previousArtifact?.testSuite ?? args.nextArtifact.testSuite;
+
+  return {
+    ...args.nextArtifact,
+    ...(preservedSuite ? { testSuite: preservedSuite } : {}),
+    reviewResult: undefined,
+    releaseHealth: undefined,
+    ...(isRecord(args.nextArtifact.featureWorkspace)
+      ? {
+          featureWorkspace: {
+            ...args.nextArtifact.featureWorkspace,
+            ...(preservedSuite ? { testSuite: preservedSuite } : {}),
+            refinedRequirement: args.nextArtifact.refinedRequirement,
+            reviewResult: undefined,
+            releaseHealth: undefined,
+            lastUpdatedAt: new Date().toISOString(),
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * M12.18:
+ * When a suite is newly persisted or replaced, any existing review/release-health
+ * is potentially stale because both are derived from suite content/version.
+ */
+function applySuitePersistenceEffects(args: {
+  previousArtifact: SessionArtifact | null;
+  nextArtifact: SessionArtifact;
+}): SessionArtifact {
+  const previousSuiteVersion =
+    typeof args.previousArtifact?.testSuite?.version === "number"
+      ? args.previousArtifact.testSuite.version
+      : null;
+  const nextSuiteVersion =
+    typeof args.nextArtifact.testSuite?.version === "number"
+      ? args.nextArtifact.testSuite.version
+      : null;
+
+  const reviewBasedOnSuiteVersion = getReviewSuiteVersion(
+    args.previousArtifact?.reviewResult
+  );
+  const reviewBasedOnRequirementVersion = getReviewRequirementVersion(
+    args.previousArtifact?.reviewResult
+  );
+  const currentRequirementVersion = getRefinedRequirementVersion(
+    args.nextArtifact.refinedRequirement
+  );
+
+  const suiteChanged =
+    previousSuiteVersion == null ||
+    nextSuiteVersion == null ||
+    previousSuiteVersion !== nextSuiteVersion;
+
+  if (!suiteChanged) {
+    return args.nextArtifact;
+  }
+
+  const shouldClearReview =
+    !!args.previousArtifact?.reviewResult &&
+    (
+      reviewBasedOnSuiteVersion == null ||
+      nextSuiteVersion == null ||
+      reviewBasedOnSuiteVersion !== nextSuiteVersion ||
+      (
+        currentRequirementVersion != null &&
+        reviewBasedOnRequirementVersion != null &&
+        reviewBasedOnRequirementVersion !== currentRequirementVersion
+      )
+    );
+
+  return {
+    ...args.nextArtifact,
+    ...(shouldClearReview ? { reviewResult: undefined } : {}),
+    releaseHealth: undefined,
+    ...(isRecord(args.nextArtifact.featureWorkspace)
+      ? {
+          featureWorkspace: {
+            ...args.nextArtifact.featureWorkspace,
+            testSuite: args.nextArtifact.testSuite,
+            ...(args.nextArtifact.refinedRequirement
+              ? { refinedRequirement: args.nextArtifact.refinedRequirement }
+              : {}),
+            ...(shouldClearReview ? { reviewResult: undefined } : {}),
+            releaseHealth: undefined,
+            lastUpdatedAt: new Date().toISOString(),
+          },
+        }
+      : {}),
+  };
+}
+
 function buildFreshSuiteFromParsedCases(
-  parsedCases: Array<{ title: string; body: string }>
+  parsedCases: Array<{ title: string; body: string }>,
+  basedOnRequirementVersion: number | null
 ): TestSuiteArtifact | null {
   if (!parsedCases.length) return null;
 
@@ -255,6 +403,9 @@ function buildFreshSuiteFromParsedCases(
     version: 1,
     createdAt: nowIso,
     lastUpdatedAt: nowIso,
+    ...(typeof basedOnRequirementVersion === "number"
+      ? { basedOnRequirementVersion }
+      : {}),
     cases: parsedCases.map((testCase, index) =>
       normalizeTestCase({
         id: `TC-${String(index + 1).padStart(3, "0")}`,
@@ -298,9 +449,17 @@ export async function applyGuidedArtifactPatch(args: {
     };
   }
 
-  const nextArtifact = withFeatureWorkspaceRequirementMirror(
+  const mergedArtifact = withFeatureWorkspaceRequirementMirror(
     mergeArtifact(args.sessionArtifact, patch)
   );
+
+  // M12.18:
+  // Guided refinement must enforce the same invalidation rules as the main
+  // coach flow, otherwise old review state survives requirement changes.
+  const nextArtifact = applyRequirementRefinementEffects({
+    previousArtifact: args.sessionArtifact,
+    nextArtifact: mergedArtifact,
+  });
 
   const saved = await saveSessionArtifact({
     sessionId: args.sessionId,
@@ -350,15 +509,6 @@ export async function applyStandaloneReviewArtifactPatch(args: {
   }
 
   const requirementPatch = parseStructuredRequirementInput(args.message);
-  const parsedCases = parseGeneratedTestCases(args.message);
-  const nextStandaloneSuite = buildFreshSuiteFromParsedCases(parsedCases);
-
-  if (!requirementPatch && !nextStandaloneSuite) {
-    return {
-      sessionArtifact: args.sessionArtifact,
-      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
-    };
-  }
 
   let nextArtifact: SessionArtifact =
     args.sessionArtifact && typeof args.sessionArtifact === "object"
@@ -366,8 +516,29 @@ export async function applyStandaloneReviewArtifactPatch(args: {
       : {};
 
   if (requirementPatch) {
-    nextArtifact = mergeArtifact(nextArtifact, requirementPatch);
-    nextArtifact = withFeatureWorkspaceRequirementMirror(nextArtifact);
+    const mergedArtifact = mergeArtifact(nextArtifact, requirementPatch);
+    nextArtifact = withFeatureWorkspaceRequirementMirror(mergedArtifact);
+    nextArtifact = applyRequirementRefinementEffects({
+      previousArtifact: args.sessionArtifact,
+      nextArtifact,
+    });
+  }
+
+  const requirementVersionForSuite = getRefinedRequirementVersion(
+    nextArtifact.refinedRequirement
+  );
+
+  const parsedCases = parseGeneratedTestCases(args.message);
+  const nextStandaloneSuite = buildFreshSuiteFromParsedCases(
+    parsedCases,
+    requirementVersionForSuite
+  );
+
+  if (!requirementPatch && !nextStandaloneSuite) {
+    return {
+      sessionArtifact: args.sessionArtifact,
+      artifactUpdatedAtIso: args.artifactUpdatedAtIso,
+    };
   }
 
   if (nextStandaloneSuite) {
@@ -378,10 +549,15 @@ export async function applyStandaloneReviewArtifactPatch(args: {
       nextStandaloneSuite
     );
 
-    nextArtifact = withFeatureWorkspaceSuiteMirror(
+    const mirroredArtifact = withFeatureWorkspaceSuiteMirror(
       nextArtifactBase,
       nextStandaloneSuite
     );
+
+    nextArtifact = applySuitePersistenceEffects({
+      previousArtifact: args.sessionArtifact,
+      nextArtifact: mirroredArtifact,
+    });
   }
 
   const saved = await saveSessionArtifact({
@@ -411,8 +587,15 @@ export async function persistGeneratedSuiteArtifact(args: {
     };
   }
 
+  const currentRequirementVersion = getRefinedRequirementVersion(
+    args.sessionArtifact?.refinedRequirement
+  );
+
   const normalizedSuite: TestSuiteArtifact = {
     ...args.nextTestSuiteArtifact,
+    ...(typeof currentRequirementVersion === "number"
+      ? { basedOnRequirementVersion: currentRequirementVersion }
+      : {}),
     cases: args.nextTestSuiteArtifact.cases.map((c) => normalizeTestCase(c)),
   };
 
@@ -423,10 +606,15 @@ export async function persistGeneratedSuiteArtifact(args: {
     normalizedSuite
   );
 
-  const nextArtifact = withFeatureWorkspaceSuiteMirror(
+  const mirroredArtifact = withFeatureWorkspaceSuiteMirror(
     nextArtifactBase,
     normalizedSuite
   );
+
+  const nextArtifact = applySuitePersistenceEffects({
+    previousArtifact: args.sessionArtifact,
+    nextArtifact: mirroredArtifact,
+  });
 
   const saved = await saveSessionArtifact({
     sessionId: args.sessionId,
