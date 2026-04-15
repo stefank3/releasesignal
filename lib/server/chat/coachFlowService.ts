@@ -14,9 +14,23 @@
 // - keep Risk Areas separate from Test Strategy Hooks
 // - do not synthesize hooks from risk areas or coverage targets
 // - persist the normalized requirement without reintroducing duplicate semantic sections
+//
+// M12.18 CHANGE:
+// - stamp requirement version through artifact merge path
+// - preserve existing suite on requirement refinement, but make lineage mismatch explicit
+// - clear stale review/release-health artifacts when the requirement materially changes
+// - keep the route thin and keep workflow integrity decisions in service code
 
-import type { RefinedRequirement, SessionArtifact } from "@/lib/chat/artifact";
-import { mergeArtifact } from "@/lib/chat/artifact";
+import type {
+  RefinedRequirement,
+  SessionArtifact,
+  TestSuiteArtifact,
+} from "@/lib/chat/artifact";
+import {
+  getRefinedRequirementVersion,
+  getTestSuiteRequirementVersion,
+  mergeArtifact,
+} from "@/lib/chat/artifact";
 import type { CoachResult } from "@/lib/framework/reviewSchema";
 
 import {
@@ -54,6 +68,101 @@ function normalizedRequirementToArtifactPatch(
     minimalReproScenarios: requirement.minimalReproScenarios,
     openQuestions: requirement.openQuestionsClarifications,
     openQuestionsClarifications: requirement.openQuestionsClarifications,
+  };
+}
+
+/**
+ * M12.18:
+ * Apply requirement-refinement side effects after mergeArtifact(...) has stamped
+ * the new requirement version.
+ *
+ * Workflow decision:
+ * - testSuite is preserved so the user does not lose work, but it will become
+ *   explicitly stale when its basedOnRequirementVersion no longer matches
+ * - reviewResult is cleared when requirement version changes because it is an
+ *   authoritative derived assessment and must not survive a changed baseline
+ * - releaseHealth is also cleared because it is a computed aggregate that would
+ *   otherwise silently reflect outdated review/alignment state
+ *
+ * We intentionally do not mutate executionIntelligence here.
+ */
+function applyRequirementRefinementEffects(args: {
+  previousArtifact: SessionArtifact | null;
+  nextArtifact: SessionArtifact;
+}): SessionArtifact {
+  const previousRequirementVersion = getRefinedRequirementVersion(
+    args.previousArtifact?.refinedRequirement
+  );
+  const nextRequirementVersion = getRefinedRequirementVersion(
+    args.nextArtifact.refinedRequirement
+  );
+
+  // No effective requirement change -> preserve downstream artifacts as-is.
+  if (
+    previousRequirementVersion != null &&
+    nextRequirementVersion != null &&
+    previousRequirementVersion === nextRequirementVersion
+  ) {
+    return args.nextArtifact;
+  }
+
+  const previousSuite = args.previousArtifact?.testSuite ?? null;
+  const nextSuite = args.nextArtifact.testSuite ?? null;
+  const currentRequirementVersion = nextRequirementVersion ?? 1;
+
+  let preservedSuite: TestSuiteArtifact | undefined = nextSuite ?? undefined;
+
+  if (previousSuite) {
+    const previousSuiteRequirementVersion =
+      getTestSuiteRequirementVersion(previousSuite);
+
+    // M12.18:
+    // Do not rewrite suite lineage here.
+    // Preserving the previous suite metadata ensures it remains visibly stale
+    // when the requirement version advances.
+    preservedSuite = {
+      ...previousSuite,
+      ...(typeof previousSuiteRequirementVersion === "number"
+        ? { basedOnRequirementVersion: previousSuiteRequirementVersion }
+        : {}),
+    };
+  } else if (nextSuite) {
+    // Defensive fallback: if a suite somehow exists only on the merged artifact,
+    // keep it and make its current lineage explicit.
+    preservedSuite = {
+      ...nextSuite,
+      basedOnRequirementVersion:
+        nextSuite.basedOnRequirementVersion ?? currentRequirementVersion,
+    };
+  }
+
+  return {
+    ...args.nextArtifact,
+    ...(preservedSuite ? { testSuite: preservedSuite } : {}),
+
+    // M12.18 integrity rule:
+    // A changed requirement invalidates the old review baseline.
+    reviewResult: undefined,
+
+    // M12.18 integrity rule:
+    // Release health is derived from artifact state and must be recomputed later.
+    releaseHealth: undefined,
+
+    ...(args.nextArtifact.featureWorkspace
+      ? {
+          featureWorkspace: {
+            ...args.nextArtifact.featureWorkspace,
+            ...(preservedSuite ? { testSuite: preservedSuite } : {}),
+
+            // Keep workspace requirement synchronized to the merged top-level artifact.
+            refinedRequirement: args.nextArtifact.refinedRequirement,
+
+            // Clear stale derived workspace artifacts for the same reason as top-level.
+            reviewResult: undefined,
+            releaseHealth: undefined,
+          },
+        }
+      : {}),
   };
 }
 
@@ -103,10 +212,19 @@ export async function runCoachFlow(args: {
       normalizedRequirementToArtifactPatch(normalizedRequirement);
 
     if (normalizedRequirementPatch) {
-      const nextArtifact = mergeArtifact(
+      const mergedArtifact = mergeArtifact(
         sessionArtifact,
         normalizedRequirementPatch
       );
+
+      // M12.18:
+      // Merge updates the requirement artifact itself.
+      // This follow-up step enforces downstream integrity rules after the
+      // requirement version has been recalculated.
+      const nextArtifact = applyRequirementRefinementEffects({
+        previousArtifact: sessionArtifact,
+        nextArtifact: mergedArtifact,
+      });
 
       const saved = await saveSessionArtifact({
         sessionId: args.sessionId,
@@ -125,7 +243,15 @@ export async function runCoachFlow(args: {
       });
 
       if (continuityPatch) {
-        const nextArtifact = mergeArtifact(sessionArtifact, continuityPatch);
+        const mergedArtifact = mergeArtifact(sessionArtifact, continuityPatch);
+
+        // M12.18:
+        // Legacy continuity patches can still materially change the requirement.
+        // Apply the same downstream invalidation rules here.
+        const nextArtifact = applyRequirementRefinementEffects({
+          previousArtifact: sessionArtifact,
+          nextArtifact: mergedArtifact,
+        });
 
         const saved = await saveSessionArtifact({
           sessionId: args.sessionId,
