@@ -28,6 +28,10 @@
 // - wire regenerate_suite to strict replacement path
 // - keep regenerate distinct from append-only next-batch behavior
 // - preserve existing suite when no valid replacement suite is produced
+//
+// M12.17 CHANGE:
+// - preserve artifact-enriched suite flows without changing body-driven UI behavior
+// - keep changed-but-invalid suite outcomes explicit instead of looking like silent no-ops
 
 import type {
   SessionArtifact,
@@ -71,6 +75,7 @@ export type CasesFlowTelemetry = {
     unchanged?: boolean;
     workflowAction?: CasesWorkflowAction;
     noOpReason?: "no_new_coverage" | "duplicates_only" | "no_valid_cases";
+    validationBlockedRender?: boolean;
   };
 };
 
@@ -139,6 +144,38 @@ function buildNoChangeReply(args: {
   return args.noOpReason === "no_new_coverage"
     ? "No additional coverage gaps identified"
     : "No valid test cases were produced.";
+}
+
+/**
+ * WHY:
+ * A changed suite with validation issues should not look like a no-op.
+ * We keep rendering deterministic and explicit so operators can see the
+ * updated suite and understand why it needs follow-up.
+ */
+function buildChangedButInvalidReply(args: {
+  nextSuite: TestSuiteArtifact;
+  validation: ReturnType<typeof validateTestSuite>;
+}): string {
+  const lines: string[] = [
+    "Suite updated, but validation issues were detected in the resulting suite.",
+  ];
+
+  if (args.validation.duplicateGroups.length) {
+    lines.push(
+      `Duplicate groups detected: ${args.validation.duplicateGroups.length}.`
+    );
+  }
+
+  if (args.validation.malformedCaseIds.length) {
+    lines.push(
+      `Malformed cases detected: ${args.validation.malformedCaseIds.join(", ")}.`
+    );
+  }
+
+  lines.push("");
+  lines.push(renderTestSuiteForUser(args.nextSuite));
+
+  return lines.join("\n");
 }
 
 export async function runCasesFlow(args: {
@@ -251,19 +288,31 @@ export async function runCasesFlow(args: {
   const analysis = analyzeTestSuite(nextTestSuiteArtifact);
   const guidance = buildWorkflowGuidance(analysis);
 
-  const replyTextForUser =
-    nextTestSuiteArtifact &&
-    !diffSummary.unchanged &&
-    !validation.hasDuplicates
-      ? renderTestSuiteForUser(nextTestSuiteArtifact)
-      : buildNoChangeReply({
-          existingSuite: nextTestSuiteArtifact ?? existingSuite,
-          explicitRegenerationRequest: args.explicitRegenerationRequest,
-          hasDuplicates: validation.hasDuplicates,
-          duplicateSkippedCount: diffSummary.duplicateSkippedCount,
-          workflowAction,
-          noOpReason,
-        });
+  const shouldRenderChangedSuite =
+    !!nextTestSuiteArtifact && !diffSummary.unchanged && !validation.hasDuplicates;
+
+  const shouldRenderChangedButInvalidSuite =
+    !!nextTestSuiteArtifact && !diffSummary.unchanged && validation.hasDuplicates;
+
+  let replyTextForUser: string;
+
+  if (shouldRenderChangedSuite && nextTestSuiteArtifact) {
+    replyTextForUser = renderTestSuiteForUser(nextTestSuiteArtifact);
+  } else if (shouldRenderChangedButInvalidSuite && nextTestSuiteArtifact) {
+    replyTextForUser = buildChangedButInvalidReply({
+      nextSuite: nextTestSuiteArtifact,
+      validation,
+    });
+  } else {
+    replyTextForUser = buildNoChangeReply({
+      existingSuite: nextTestSuiteArtifact ?? existingSuite,
+      explicitRegenerationRequest: args.explicitRegenerationRequest,
+      hasDuplicates: validation.hasDuplicates,
+      duplicateSkippedCount: diffSummary.duplicateSkippedCount,
+      workflowAction,
+      noOpReason,
+    });
+  }
 
   let telemetry: CasesFlowTelemetry | null = null;
 
@@ -292,6 +341,7 @@ export async function runCasesFlow(args: {
         unchanged: diffSummary.unchanged,
         workflowAction,
         noOpReason,
+        validationBlockedRender: shouldRenderChangedButInvalidSuite,
       },
     };
   }
