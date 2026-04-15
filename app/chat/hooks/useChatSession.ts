@@ -45,6 +45,11 @@
 // - keep release-health artifact rehydration flowing through the existing artifact path
 // - do not introduce client-owned release-health logic
 // - preserve release-health state whenever artifact payloads are accepted
+//
+// M12.18 CHANGE:
+// - current review state must come from persisted artifact only
+// - old review chat items must not promote themselves into latest artifact state
+// - prune stale review cards from reset-time history mapping when persisted review artifact is absent
 
 "use client";
 
@@ -244,6 +249,41 @@ function shouldApplyIncomingArtifact(args: {
   }
 
   return incomingMs >= currentMs;
+}
+
+/**
+ * M12.18:
+ * Reset-time history replay may still contain old review chat items.
+ * Those are valid as history, but when no persisted review artifact exists
+ * they must not keep rendering as the current/latest review workspace state.
+ *
+ * We downgrade them to plain text history items so chat continuity remains
+ * visible without letting old review cards impersonate artifact truth.
+ */
+function pruneStaleReviewItems(args: {
+  mapped: ChatItem[];
+  effectiveHistoryArtifact: SessionArtifact | null;
+}): ChatItem[] {
+  const hasPersistedReviewArtifact = artifactHasReviewSignal(
+    args.effectiveHistoryArtifact
+  );
+
+  if (hasPersistedReviewArtifact) {
+    return args.mapped;
+  }
+
+  return args.mapped.map((item) => {
+    if (item.kind !== "review" || item.role !== "bot") {
+      return item;
+    }
+
+    return {
+      kind: "text",
+      role: "bot",
+      text: "Previous review result kept in chat history. It is no longer the current persisted review artifact for this workspace.",
+      requestId: item.requestId,
+    } as ChatItem;
+  });
 }
 
 export function useChatSession(): UseChatSessionReturn {
@@ -488,6 +528,14 @@ export function useChatSession(): UseChatSessionReturn {
         sessionArtifact: effectiveHistoryArtifact,
       });
 
+      const nextMappedItems =
+        reset
+          ? pruneStaleReviewItems({
+              mapped,
+              effectiveHistoryArtifact,
+            })
+          : mapped;
+
       if (reset) {
         // BUG FIX (M12.10):
         // Preserve the selected/restored visible mode for the workspace.
@@ -495,7 +543,7 @@ export function useChatSession(): UseChatSessionReturn {
         setMode(sessionMode);
       }
 
-      setItems((prev) => (reset ? mapped : [...mapped, ...prev]));
+      setItems((prev) => (reset ? nextMappedItems : [...nextMappedItems, ...prev]));
       setMessagesCursor(data.nextCursor);
     } catch (e) {
       console.error("Failed to load messages", e);
@@ -1470,9 +1518,10 @@ export function useChatSession(): UseChatSessionReturn {
     !!sessionArtifact?.testSuite &&
     Array.isArray(sessionArtifact.testSuite.cases);
 
-  const hasReviewArtifact =
-    artifactHasReviewSignal(sessionArtifact) ||
-    items.some((it) => it.kind === "review" && it.role === "bot");
+  // M12.18:
+  // Current workspace truth must come from persisted artifact state only.
+  // Historical review chat items must not re-create current review state.
+  const hasReviewArtifact = artifactHasReviewSignal(sessionArtifact);
 
   const canGenerateTests =
     !!activeSessionId &&
