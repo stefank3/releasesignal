@@ -161,13 +161,13 @@ function normalizePastedSuiteText(text: string): string {
  * TestSuite contract. These helpers stay local to the service so UI
  * behavior remains body-driven and unchanged.
  */
+function cleanupStructuredItem(value: string): string {
+  return normalizeWhitespace(String(value ?? "").replace(/^[-*•\d.)\s]+/, ""));
+}
+
 function normalizeStructuredItems(items: string[]): string[] {
   return Array.from(
-    new Set(
-      items
-        .map((item) => normalizeWhitespace(item))
-        .filter(Boolean)
-    )
+    new Set(items.map((item) => cleanupStructuredItem(item)).filter(Boolean))
   );
 }
 
@@ -177,7 +177,7 @@ function splitInlineOrBulletedValue(value: string): string[] {
 
   const lines = normalized
     .split("\n")
-    .map((line) => line.replace(/^[-*•\d.)\s]+/, "").trim())
+    .map((line) => cleanupStructuredItem(line))
     .filter(Boolean);
 
   if (lines.length > 1) {
@@ -187,7 +187,7 @@ function splitInlineOrBulletedValue(value: string): string[] {
   return normalizeStructuredItems(
     normalized
       .split(/,|\s\|\s|\s\/\s/g)
-      .map((part) => part.trim())
+      .map((part) => cleanupStructuredItem(part))
       .filter(Boolean)
   );
 }
