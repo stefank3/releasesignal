@@ -50,6 +50,7 @@
 // - current review state must come from persisted artifact only
 // - old review chat items must not promote themselves into latest artifact state
 // - prune stale review cards from reset-time history mapping when persisted review artifact is absent
+// - prune stale review cards immediately in-session when requirement refinement invalidates the persisted review artifact
 
 "use client";
 
@@ -273,6 +274,36 @@ function pruneStaleReviewItems(args: {
   }
 
   return args.mapped.map((item) => {
+    if (item.kind !== "review" || item.role !== "bot") {
+      return item;
+    }
+
+    return {
+      kind: "text",
+      role: "bot",
+      text: "Previous review result kept in chat history. It is no longer the current persisted review artifact for this workspace.",
+      requestId: item.requestId,
+    } as ChatItem;
+  });
+}
+
+/**
+ * M12.18:
+ * Apply the same stale-review cleanup immediately during live session updates.
+ * This prevents the user from needing a refresh before the old review stops
+ * appearing as current state after a material requirement change.
+ */
+function pruneLiveStaleReviewItems(args: {
+  items: ChatItem[];
+  nextArtifact: SessionArtifact | null;
+}): ChatItem[] {
+  const hasPersistedReviewArtifact = artifactHasReviewSignal(args.nextArtifact);
+
+  if (hasPersistedReviewArtifact) {
+    return args.items;
+  }
+
+  return args.items.map((item) => {
     if (item.kind !== "review" || item.role !== "bot") {
       return item;
     }
@@ -528,13 +559,12 @@ export function useChatSession(): UseChatSessionReturn {
         sessionArtifact: effectiveHistoryArtifact,
       });
 
-      const nextMappedItems =
-        reset
-          ? pruneStaleReviewItems({
-              mapped,
-              effectiveHistoryArtifact,
-            })
-          : mapped;
+      const nextMappedItems = reset
+        ? pruneStaleReviewItems({
+            mapped,
+            effectiveHistoryArtifact,
+          })
+        : mapped;
 
       if (reset) {
         // BUG FIX (M12.10):
@@ -902,6 +932,16 @@ export function useChatSession(): UseChatSessionReturn {
         // as all other persisted state.
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
+
+        // M12.18:
+        // Apply live stale-review cleanup as soon as the authoritative artifact
+        // says no persisted review exists.
+        setItems((prev) =>
+          pruneLiveStaleReviewItems({
+            items: prev,
+            nextArtifact: artifactPayload.artifact,
+          })
+        );
       }
 
       if (
@@ -1311,6 +1351,15 @@ export function useChatSession(): UseChatSessionReturn {
         // requirement/suite/review state.
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
+
+        // M12.18:
+        // Apply live stale-review cleanup for freeform coach refinements too.
+        setItems((prev) =>
+          pruneLiveStaleReviewItems({
+            items: prev,
+            nextArtifact: artifactPayload.artifact,
+          })
+        );
       }
 
       if (
