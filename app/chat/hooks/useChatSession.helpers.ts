@@ -226,7 +226,9 @@ export function getDisplayReplyText(args: {
       ? (data["reply"] as string)
       : "No reply returned";
 
-  const textToShow = !replyValue && typeof rawValue === "string" ? rawValue : replyValue;
+  const textToShow =
+    !replyValue && typeof rawValue === "string" ? rawValue : replyValue;
+
   return effectiveMode === "coach" && looksLikeJson(textToShow)
     ? tryFormatCoachJson(textToShow) ?? textToShow
     : textToShow;
@@ -239,8 +241,13 @@ export function extractCoachSuggestions(data: unknown): CoachSuggestions | null 
     return data["suggestions"] as CoachSuggestions;
   }
 
-  if (isRecord(data["coach"]) && (data["coach"] as Record<string, unknown>)["suggestions"]) {
-    return (data["coach"] as Record<string, unknown>)["suggestions"] as CoachSuggestions;
+  if (
+    isRecord(data["coach"]) &&
+    (data["coach"] as Record<string, unknown>)["suggestions"]
+  ) {
+    return (data["coach"] as Record<string, unknown>)[
+      "suggestions"
+    ] as CoachSuggestions;
   }
 
   return null;
@@ -255,9 +262,24 @@ export function modeLabel(m: Mode) {
   return m === "coach" ? "Strategy" : m === "review" ? "Test Review" : "Test Design";
 }
 
+/**
+ * M12.18:
+ * Current review truth must require a valid persisted review payload,
+ * not merely the presence of a property key.
+ */
 export function artifactHasReviewSignal(artifact: SessionArtifact | null): boolean {
   if (!isRecord(artifact)) return false;
-  return "reviewResult" in artifact || "reviewArtifact" in artifact || "testReview" in artifact;
+
+  const reviewResult = artifact.reviewResult;
+  if (!isRecord(reviewResult)) return false;
+
+  return (
+    typeof reviewResult.score === "number" &&
+    isRecord(reviewResult.breakdown) &&
+    Array.isArray(reviewResult.riskGaps) &&
+    Array.isArray(reviewResult.antiPatterns) &&
+    Array.isArray(reviewResult.improvements)
+  );
 }
 
 export function artifactHasTestSuiteSignal(artifact: SessionArtifact | null): boolean {
@@ -318,7 +340,12 @@ function getPersistedSuiteText(artifact: SessionArtifact | null): string | null 
 
   if (!caseBodies.length) return null;
 
-  return [`Test Suite v${version}`, `Total test cases: ${caseBodies.length}`, "", ...caseBodies]
+  return [
+    `Test Suite v${version}`,
+    `Total test cases: ${caseBodies.length}`,
+    "",
+    ...caseBodies,
+  ]
     .join("\n")
     .trim();
 }
@@ -401,10 +428,23 @@ function mapAssistantHistoryItem(args: {
 }): ChatItem {
   const { content, fallbackMode } = args;
   const sessionArtifact = args.sessionArtifact ?? null;
+  const hasPersistedReviewArtifact = artifactHasReviewSignal(sessionArtifact);
 
   const maybeReview = tryParseReview(content);
+
+  // M12.18:
+  // Historical review-shaped assistant content must not rehydrate as an active
+  // review card when the persisted artifact no longer has a valid review.
   if (maybeReview) {
-    return { kind: "review", role: "bot", review: maybeReview };
+    if (hasPersistedReviewArtifact) {
+      return { kind: "review", role: "bot", review: maybeReview };
+    }
+
+    return {
+      kind: "text",
+      role: "bot",
+      text: "Previous review result kept in chat history. It is no longer the current persisted review artifact for this workspace.",
+    };
   }
 
   const maybeCasesLegacy = tryParseCasesLegacy(content);
@@ -420,7 +460,7 @@ function mapAssistantHistoryItem(args: {
     return { kind: "text", role: "bot", text: content };
   }
 
-  if (artifactHasReviewSignal(sessionArtifact) && fallbackMode === "review") {
+  if (hasPersistedReviewArtifact && fallbackMode === "review") {
     return { kind: "text", role: "bot", text: content };
   }
 
@@ -448,7 +488,13 @@ function deriveEffectiveHistorySessionMode(args: {
     return sessionMode;
   }
 
-  if (tryParseReview(latestAssistant.content)) {
+  // M12.18:
+  // Do not infer review mode from old chat history when no persisted review
+  // artifact exists anymore.
+  if (
+    artifactHasReviewSignal(sessionArtifact ?? null) &&
+    tryParseReview(latestAssistant.content)
+  ) {
     return "review";
   }
 
@@ -491,6 +537,9 @@ export function mapHistoryItems(args: {
   const hasPersistedSuiteArtifact = artifactHasTestSuiteSignal(
     sessionArtifact ?? null
   );
+  const hasPersistedReviewArtifact = artifactHasReviewSignal(
+    sessionArtifact ?? null
+  );
   const persistedSuiteText = getPersistedSuiteText(sessionArtifact ?? null);
 
   const mapped: ChatItem[] = items
@@ -514,6 +563,17 @@ export function mapHistoryItems(args: {
         hasPersistedSuiteArtifact &&
         m.role === "assistant" &&
         (looksLikeCasesPlainText(m.content) || looksLikePersistedSuiteHeader(m.content))
+      ) {
+        return false;
+      }
+
+      // M12.18:
+      // When no persisted review artifact exists anymore, suppress historical
+      // review JSON blobs so they cannot be remapped into current review cards.
+      if (
+        !hasPersistedReviewArtifact &&
+        m.role === "assistant" &&
+        !!tryParseReview(m.content)
       ) {
         return false;
       }
