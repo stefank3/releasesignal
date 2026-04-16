@@ -34,6 +34,11 @@
 // - reduce false orphan signals by treating partial requirement alignment as mapped
 // - calibrate business relevance and risk coverage from explicit coverage strength
 // - remove the blunt small-suite score cap in favor of explainable rule outputs
+//
+// M12.19 CALIBRATION PASS:
+// - reduce partial-credit inflation
+// - cap top-band category scores when unresolved requirement units remain
+// - gate final score bands using unresolved obligation counts, not suite size
 
 import type {
   RefinedRequirement,
@@ -415,10 +420,14 @@ function buildCoveragePoints(requirementCoverage: RequirementCoverage[]): {
   let maximum = 0;
 
   for (const coverage of requirementCoverage) {
-    maximum += 2;
+    // M12.19 WHY:
+    // Strong coverage should dominate the ratio.
+    // Partial coverage earns only a small fraction so unresolved obligations
+    // remain visible in score behavior instead of being flattened upward.
+    maximum += 4;
 
     if (coverage.strength === "strong") {
-      earned += 2;
+      earned += 4;
       continue;
     }
 
@@ -430,11 +439,48 @@ function buildCoveragePoints(requirementCoverage: RequirementCoverage[]): {
   return { earned, maximum };
 }
 
+function getCoverageCategoryCap(args: {
+  baseCap: number;
+  totalUnits: number;
+  uncoveredUnits: number;
+  partialUnits: number;
+}): number {
+  if (args.totalUnits === 0) return args.baseCap;
+
+  // M12.19 WHY:
+  // Top-band category scores should be blocked while explicit unresolved
+  // requirement obligations remain. This is deterministic and explainable.
+  if (args.uncoveredUnits >= 3) {
+    return Math.min(args.baseCap, 16);
+  }
+
+  if (args.uncoveredUnits > 0) {
+    return Math.min(args.baseCap, 19);
+  }
+
+  if (args.partialUnits >= Math.max(5, Math.ceil(args.totalUnits * 0.3))) {
+    return Math.min(args.baseCap, 20);
+  }
+
+  if (args.partialUnits >= 2) {
+    return Math.min(args.baseCap, 22);
+  }
+
+  if (args.partialUnits === 1) {
+    return Math.min(args.baseCap, 24);
+  }
+
+  return args.baseCap;
+}
+
 function buildRiskCoverageScore(args: {
   coveragePoints: number;
   maximumCoveragePoints: number;
   orphanCount: number;
   totalCases: number;
+  totalUnits: number;
+  uncoveredUnits: number;
+  partialUnits: number;
 }): number {
   if (args.maximumCoveragePoints === 0) {
     return args.totalCases > 0 ? 10 : 0;
@@ -443,28 +489,51 @@ function buildRiskCoverageScore(args: {
   const coverageRatio = args.coveragePoints / args.maximumCoveragePoints;
   const orphanPenalty =
     args.totalCases > 0
-      ? Math.min(0.08, args.orphanCount / (args.totalCases * 1.5))
+      ? Math.min(0.1, args.orphanCount / Math.max(1, args.totalCases * 1.25))
       : 0;
 
   const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
-  return Math.round(adjustedRatio * 25);
+  const rawScore = Math.round(adjustedRatio * 25);
+
+  return Math.min(
+    rawScore,
+    getCoverageCategoryCap({
+      baseCap: 25,
+      totalUnits: args.totalUnits,
+      uncoveredUnits: args.uncoveredUnits,
+      partialUnits: args.partialUnits,
+    })
+  );
 }
 
 function buildBusinessRelevanceScore(args: {
   coveragePoints: number;
   maximumCoveragePoints: number;
+  totalUnits: number;
+  uncoveredUnits: number;
+  partialUnits: number;
 }): number {
   if (args.maximumCoveragePoints === 0) return 0;
 
   const ratio = args.coveragePoints / args.maximumCoveragePoints;
+  const rawScore = Math.round(Math.min(1, ratio) * 25);
 
-  return Math.round(Math.min(1, ratio) * 25);
+  return Math.min(
+    rawScore,
+    getCoverageCategoryCap({
+      baseCap: 25,
+      totalUnits: args.totalUnits,
+      uncoveredUnits: args.uncoveredUnits,
+      partialUnits: args.partialUnits,
+    })
+  );
 }
 
 function buildDesignQualityScore(args: {
   duplicateGroupCount: number;
   totalCases: number;
   orphanCount: number;
+  uncoveredUnits: number;
 }): number {
   if (args.totalCases === 0) return 0;
 
@@ -478,25 +547,37 @@ function buildDesignQualityScore(args: {
     score -= Math.min(4, args.orphanCount);
   }
 
+  // M12.19 WHY:
+  // This remains a structural category, but large uncovered obligation counts
+  // should still slightly reduce "design quality" because the suite structure is
+  // not proving useful enough to cover the requirement set.
+  if (args.uncoveredUnits > 0) {
+    score -= Math.min(3, args.uncoveredUnits);
+  }
+
   return Math.max(0, score);
 }
 
-function buildLevelAndScopeScore(cases: TestCase[]): number {
-  if (!cases.length) return 0;
+function buildLevelAndScopeScore(args: {
+  cases: TestCase[];
+  uncoveredUnits: number;
+  partialUnits: number;
+}): number {
+  if (!args.cases.length) return 0;
 
   let score = 0;
 
-  const hasPositive = hasScenarioSignal(cases, /\b(valid|success|happy)\b/);
+  const hasPositive = hasScenarioSignal(args.cases, /\b(valid|success|happy)\b/);
   const hasNegative = hasScenarioSignal(
-    cases,
+    args.cases,
     /\b(invalid|error|fail|negative|unauthori[sz]ed|forbidden|denied)\b/
   );
   const hasEdge = hasScenarioSignal(
-    cases,
+    args.cases,
     /\b(edge|boundary|limit|max|min|empty|null|blank|expired|duplicate)\b/
   );
   const hasSecurity = hasScenarioSignal(
-    cases,
+    args.cases,
     /\b(security|auth|authentication|authorization|unauthori[sz]ed|permission|role)\b/
   );
 
@@ -505,15 +586,26 @@ function buildLevelAndScopeScore(cases: TestCase[]): number {
   if (hasEdge) score += 4;
   if (hasSecurity) score += 2;
 
-  if (cases.length >= 15) score += 2;
+  if (args.cases.length >= 15) score += 2;
 
-  return Math.min(15, score);
+  // M12.19 WHY:
+  // Breadth signals should not reach the top of the band when many obligations
+  // are still unresolved. This prevents keyword-rich suites from flattering
+  // the total score while requirement coverage is still partial.
+  const cappedScore = Math.min(
+    score,
+    args.uncoveredUnits > 0 ? 11 : args.partialUnits >= 3 ? 13 : 15
+  );
+
+  return Math.min(15, cappedScore);
 }
 
 function buildDiagnosticValueScore(args: {
   totalCases: number;
   orphanCount: number;
   duplicateGroupCount: number;
+  uncoveredUnits: number;
+  partialUnits: number;
 }): number {
   if (args.totalCases === 0) return 0;
 
@@ -527,6 +619,17 @@ function buildDiagnosticValueScore(args: {
     score -= Math.min(6, args.duplicateGroupCount * 2);
   }
 
+  // M12.19 WHY:
+  // If many units remain partial/uncovered, the suite is not yet delivering
+  // fully diagnostic signal, even if it is cleanly structured.
+  if (args.uncoveredUnits > 0) {
+    score -= Math.min(3, args.uncoveredUnits);
+  } else if (args.partialUnits >= 3) {
+    score -= 2;
+  } else if (args.partialUnits > 0) {
+    score -= 1;
+  }
+
   return Math.max(0, score);
 }
 
@@ -534,27 +637,44 @@ function buildBreakdown(
   details: DeterministicReviewDetails,
   cases: TestCase[]
 ): ReviewBreakdown {
+  const totalUnits = details.requirementUnits.length;
+  const uncoveredUnits = details.uncoveredUnits.length;
+  const partialUnits = details.partiallyCoveredUnits.length;
+
   return {
     businessRelevance: buildBusinessRelevanceScore({
       coveragePoints: details.coveragePoints,
       maximumCoveragePoints: details.maximumCoveragePoints,
+      totalUnits,
+      uncoveredUnits,
+      partialUnits,
     }),
     riskCoverage: buildRiskCoverageScore({
       coveragePoints: details.coveragePoints,
       maximumCoveragePoints: details.maximumCoveragePoints,
       orphanCount: details.orphanCaseIds.length,
       totalCases: details.totalCases,
+      totalUnits,
+      uncoveredUnits,
+      partialUnits,
     }),
     designQuality: buildDesignQualityScore({
       duplicateGroupCount: details.duplicateGroupCount,
       totalCases: details.totalCases,
       orphanCount: details.orphanCaseIds.length,
+      uncoveredUnits,
     }),
-    levelAndScope: buildLevelAndScopeScore(cases),
+    levelAndScope: buildLevelAndScopeScore({
+      cases,
+      uncoveredUnits,
+      partialUnits,
+    }),
     diagnosticValue: buildDiagnosticValueScore({
       totalCases: details.totalCases,
       orphanCount: details.orphanCaseIds.length,
       duplicateGroupCount: details.duplicateGroupCount,
+      uncoveredUnits,
+      partialUnits,
     }),
   };
 }
@@ -644,6 +764,27 @@ function buildImprovements(details: DeterministicReviewDetails): string[] {
   return improvements.slice(0, 12);
 }
 
+function getFinalScoreCap(details: DeterministicReviewDetails): number {
+  const uncoveredUnits = details.uncoveredUnits.length;
+  const partialUnits = details.partiallyCoveredUnits.length;
+  const totalUnits = details.requirementUnits.length;
+
+  if (totalUnits === 0) return 0;
+
+  // M12.19 WHY:
+  // Final-score gating should reflect unresolved obligation burden, not suite size.
+  // This prevents "excellent" results while the review still lists many partials.
+  if (uncoveredUnits >= 3) return 74;
+  if (uncoveredUnits > 0) return 84;
+
+  if (partialUnits >= Math.max(6, Math.ceil(totalUnits * 0.35))) return 86;
+  if (partialUnits >= 4) return 89;
+  if (partialUnits >= 2) return 92;
+  if (partialUnits === 1) return 94;
+
+  return 100;
+}
+
 function buildVerdict(score: number): string {
   if (score >= 85) return "Strong - artifact coverage is aligned";
   if (score >= 70) return "Good - minor coverage gaps remain";
@@ -707,7 +848,7 @@ export function buildDeterministicReviewResult(args: {
 
   const breakdown = buildBreakdown(details, cases);
 
-  const score =
+  const rawScore =
     details.requirementUnits.length === 0
       ? 0
       : breakdown.businessRelevance +
@@ -715,6 +856,8 @@ export function buildDeterministicReviewResult(args: {
         breakdown.designQuality +
         breakdown.levelAndScope +
         breakdown.diagnosticValue;
+
+  const score = Math.min(rawScore, getFinalScoreCap(details));
 
   return {
     score,
