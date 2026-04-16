@@ -27,6 +27,13 @@
 //   * businessRules
 //   * edgeCases
 // - remove objective / integration / risk-focus driven coverage mapping
+//
+// M12.19 CHANGE:
+// - harden compound requirement decomposition into deterministic sub-obligations
+// - distinguish none / partial / strong coverage instead of binary-only matching
+// - reduce false orphan signals by treating partial requirement alignment as mapped
+// - calibrate business relevance and risk coverage from explicit coverage strength
+// - remove the blunt small-suite score cap in favor of explainable rule outputs
 
 import type {
   RefinedRequirement,
@@ -48,18 +55,25 @@ type RequirementUnit = {
   tokens: string[];
 };
 
+type CoverageStrength = "none" | "partial" | "strong";
+
 type RequirementCoverage = {
   unit: RequirementUnit;
   matchedCaseIds: string[];
+  strength: CoverageStrength;
+  strongestCaseMatchCount: number;
 };
 
 type DeterministicReviewDetails = {
   requirementUnits: RequirementUnit[];
   coveredUnits: RequirementCoverage[];
+  partiallyCoveredUnits: RequirementCoverage[];
   uncoveredUnits: RequirementUnit[];
   orphanCaseIds: string[];
   duplicateGroupCount: number;
   totalCases: number;
+  coveragePoints: number;
+  maximumCoveragePoints: number;
 };
 
 const STOP_WORDS = new Set([
@@ -127,6 +141,37 @@ function tokenize(value: string): string[] {
   );
 }
 
+function splitCompoundRequirementText(value: string): string[] {
+  const raw = String(value ?? "").trim();
+  if (!raw) return [];
+
+  // M12.19 WHY:
+  // Split only on explicit structural separators.
+  // This is deterministic and explainable, unlike fuzzy semantic splitting.
+  const normalized = raw
+    .replace(/\s*;\s*/g, " | ")
+    .replace(/\s*,\s*/g, " | ")
+    .replace(/\s+\band\b\s+/gi, " | ")
+    .replace(/\s+\bor\b\s+/gi, " | ")
+    .replace(/\s+\bwhile\b\s+/gi, " | ")
+    .replace(/\s+\bbefore\b\s+/gi, " | ")
+    .replace(/\s+\bafter\b\s+/gi, " | ")
+    .replace(/\s+\bif\b\s+/gi, " | ")
+    .replace(/\s+\bwhen\b\s+/gi, " | ");
+
+  const parts = normalized
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  // WHY:
+  // Avoid exploding short phrases into meaningless fragments.
+  // If splitting produces only tiny pieces, keep the original intact.
+  const usefulParts = parts.filter((part) => tokenize(part).length >= 2);
+
+  return usefulParts.length >= 2 ? usefulParts : [raw];
+}
+
 function buildRequirementUnits(
   requirement: RefinedRequirement | null | undefined
 ): RequirementUnit[] {
@@ -143,17 +188,30 @@ function buildRequirementUnits(
     const raw = String(value ?? "").trim();
     if (!raw) return;
 
-    const tokens = tokenize(raw);
-    if (!tokens.length) return;
+    const fragments = splitCompoundRequirementText(raw);
 
-    const suffix = typeof index === "number" ? `-${index + 1}` : "";
-    units.push({
-      key: `${source}${suffix}`,
-      label: `${labelPrefix}${typeof index === "number" ? ` ${index + 1}` : ""}: ${raw}`,
-      source,
-      normalizedText: normalizeText(raw),
-      tokens,
-    });
+    for (let fragmentIndex = 0; fragmentIndex < fragments.length; fragmentIndex++) {
+      const fragment = fragments[fragmentIndex];
+      const tokens = tokenize(fragment);
+      if (!tokens.length) continue;
+
+      const baseSuffix = typeof index === "number" ? `-${index + 1}` : "";
+      const fragmentSuffix =
+        fragments.length > 1 ? `-part-${fragmentIndex + 1}` : "";
+
+      units.push({
+        key: `${source}${baseSuffix}${fragmentSuffix}`,
+        // M12.19 WHY:
+        // Keep labels traceable back to the original source item while showing
+        // that a compound line has been decomposed into explicit sub-obligations.
+        label:
+          `${labelPrefix}${typeof index === "number" ? ` ${index + 1}` : ""}` +
+          `${fragments.length > 1 ? ` (part ${fragmentIndex + 1})` : ""}: ${fragment}`,
+        source,
+        normalizedText: normalizeText(fragment),
+        tokens,
+      });
+    }
   };
 
   (requirement.acceptanceCriteria ?? []).forEach((item, index) => {
@@ -250,48 +308,92 @@ function hasPhraseSignal(unit: RequirementUnit, haystack: string): boolean {
   return haystack.includes(compactPhrase);
 }
 
-function isUnitCoveredByCase(unit: RequirementUnit, testCase: TestCase): boolean {
-  const haystack = buildCaseSearchText(testCase);
+function getCoverageStrength(args: {
+  unit: RequirementUnit;
+  testCase: TestCase;
+}): CoverageStrength {
+  const haystack = buildCaseSearchText(args.testCase);
   const haystackTokens = buildTokenSet(haystack);
-  const tokenMatchCount = countExactTokenMatches(unit.tokens, haystackTokens);
-  const requiredMatches = getRequiredTokenMatches(unit);
+  const tokenMatchCount = countExactTokenMatches(args.unit.tokens, haystackTokens);
+  const requiredMatches = getRequiredTokenMatches(args.unit);
+
+  if (tokenMatchCount === 0) {
+    return "none";
+  }
 
   if (tokenMatchCount < requiredMatches) {
-    return false;
+    return "partial";
   }
 
-  if (unit.tokens.length >= 4) {
-    return (
-      hasPhraseSignal(unit, haystack) ||
-      tokenMatchCount >= Math.min(3, unit.tokens.length)
-    );
+  if (args.unit.tokens.length >= 4) {
+    // M12.19 WHY:
+    // Long requirement units need either a phrase signal or sufficiently deep
+    // token overlap to count as strong coverage. Otherwise they stay partial.
+    if (
+      hasPhraseSignal(args.unit, haystack) ||
+      tokenMatchCount >= Math.min(3, args.unit.tokens.length)
+    ) {
+      return "strong";
+    }
+
+    return "partial";
   }
 
-  return true;
+  return "strong";
 }
 
 function mapRequirementCoverage(
   requirementUnits: RequirementUnit[],
   cases: TestCase[]
 ): RequirementCoverage[] {
-  return requirementUnits.map((unit) => ({
-    unit,
-    matchedCaseIds: cases
-      .filter((testCase) => isUnitCoveredByCase(unit, testCase))
-      .map((testCase) => testCase.id),
-  }));
+  return requirementUnits.map((unit) => {
+    let strongestMatchCount = 0;
+    let strength: CoverageStrength = "none";
+    const matchedCaseIds: string[] = [];
+
+    for (const testCase of cases) {
+      const caseStrength = getCoverageStrength({
+        unit,
+        testCase,
+      });
+
+      if (caseStrength === "none") {
+        continue;
+      }
+
+      const haystack = buildCaseSearchText(testCase);
+      const haystackTokens = buildTokenSet(haystack);
+      const tokenMatchCount = countExactTokenMatches(unit.tokens, haystackTokens);
+
+      strongestMatchCount = Math.max(strongestMatchCount, tokenMatchCount);
+      matchedCaseIds.push(testCase.id);
+
+      if (caseStrength === "strong") {
+        strength = "strong";
+      } else if (strength === "none") {
+        strength = "partial";
+      }
+    }
+
+    return {
+      unit,
+      matchedCaseIds,
+      strength,
+      strongestCaseMatchCount: strongestMatchCount,
+    };
+  });
 }
 
 function findOrphanCaseIds(
   requirementCoverage: RequirementCoverage[],
   cases: TestCase[]
 ): string[] {
-  const coveredCaseIds = new Set(
+  const mappedCaseIds = new Set(
     requirementCoverage.flatMap((coverage) => coverage.matchedCaseIds)
   );
 
   return cases
-    .filter((testCase) => !coveredCaseIds.has(testCase.id))
+    .filter((testCase) => !mappedCaseIds.has(testCase.id))
     .map((testCase) => testCase.id);
 }
 
@@ -305,34 +407,56 @@ function hasScenarioSignal(cases: TestCase[], pattern: RegExp): boolean {
   );
 }
 
+function buildCoveragePoints(requirementCoverage: RequirementCoverage[]): {
+  earned: number;
+  maximum: number;
+} {
+  let earned = 0;
+  let maximum = 0;
+
+  for (const coverage of requirementCoverage) {
+    maximum += 2;
+
+    if (coverage.strength === "strong") {
+      earned += 2;
+      continue;
+    }
+
+    if (coverage.strength === "partial") {
+      earned += 1;
+    }
+  }
+
+  return { earned, maximum };
+}
+
 function buildRiskCoverageScore(args: {
-  totalUnits: number;
-  coveredUnits: number;
+  coveragePoints: number;
+  maximumCoveragePoints: number;
   orphanCount: number;
   totalCases: number;
 }): number {
-  if (args.totalUnits === 0) {
+  if (args.maximumCoveragePoints === 0) {
     return args.totalCases > 0 ? 10 : 0;
   }
 
-  const coverageRatio = args.coveredUnits / args.totalUnits;
+  const coverageRatio = args.coveragePoints / args.maximumCoveragePoints;
   const orphanPenalty =
     args.totalCases > 0
-      ? Math.min(0.05, args.orphanCount / (args.totalCases * 2))
+      ? Math.min(0.08, args.orphanCount / (args.totalCases * 1.5))
       : 0;
 
-    const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
-    return Math.round(adjustedRatio * 25);
-    }
+  const adjustedRatio = Math.max(0, coverageRatio - orphanPenalty);
+  return Math.round(adjustedRatio * 25);
+}
 
 function buildBusinessRelevanceScore(args: {
-  totalPrimaryAndSecondaryUnits: number;
-  coveredPrimaryAndSecondaryUnits: number;
+  coveragePoints: number;
+  maximumCoveragePoints: number;
 }): number {
-  if (args.totalPrimaryAndSecondaryUnits === 0) return 0;
+  if (args.maximumCoveragePoints === 0) return 0;
 
-  const ratio =
-    args.coveredPrimaryAndSecondaryUnits / args.totalPrimaryAndSecondaryUnits;
+  const ratio = args.coveragePoints / args.maximumCoveragePoints;
 
   return Math.round(Math.min(1, ratio) * 25);
 }
@@ -412,12 +536,12 @@ function buildBreakdown(
 ): ReviewBreakdown {
   return {
     businessRelevance: buildBusinessRelevanceScore({
-      totalPrimaryAndSecondaryUnits: details.requirementUnits.length,
-      coveredPrimaryAndSecondaryUnits: details.coveredUnits.length,
+      coveragePoints: details.coveragePoints,
+      maximumCoveragePoints: details.maximumCoveragePoints,
     }),
     riskCoverage: buildRiskCoverageScore({
-      totalUnits: details.requirementUnits.length,
-      coveredUnits: details.coveredUnits.length,
+      coveragePoints: details.coveragePoints,
+      maximumCoveragePoints: details.maximumCoveragePoints,
       orphanCount: details.orphanCaseIds.length,
       totalCases: details.totalCases,
     }),
@@ -440,6 +564,10 @@ function buildRiskGaps(details: DeterministicReviewDetails): string[] {
 
   for (const uncovered of details.uncoveredUnits) {
     gaps.push(`Uncovered requirement unit: ${uncovered.label}`);
+  }
+
+  for (const partial of details.partiallyCoveredUnits) {
+    gaps.push(`Partially covered requirement unit: ${partial.unit.label}`);
   }
 
   if (details.requirementUnits.length === 0) {
@@ -470,6 +598,7 @@ function buildAntiPatterns(details: DeterministicReviewDetails): string[] {
 
   if (
     !details.coveredUnits.length &&
+    !details.partiallyCoveredUnits.length &&
     details.totalCases > 0 &&
     details.requirementUnits.length > 0
   ) {
@@ -486,6 +615,12 @@ function buildImprovements(details: DeterministicReviewDetails): string[] {
     improvements.push("Add test cases for each uncovered requirement unit");
   }
 
+  if (details.partiallyCoveredUnits.length > 0) {
+    improvements.push(
+      "Strengthen partially covered requirement units with more specific or complementary cases"
+    );
+  }
+
   if (details.orphanCaseIds.length > 0) {
     improvements.push("Align orphan test cases to requirement intent or remove them");
   }
@@ -497,7 +632,7 @@ function buildImprovements(details: DeterministicReviewDetails): string[] {
   if (
     !improvements.length &&
     details.totalCases > 0 &&
-    details.coveredUnits.length > 0
+    (details.coveredUnits.length > 0 || details.partiallyCoveredUnits.length > 0)
   ) {
     improvements.push("Maintain requirement-to-test traceability as the suite evolves");
   }
@@ -535,23 +670,30 @@ function buildReviewDetails(args: {
 
   const requirementCoverage = mapRequirementCoverage(requirementUnits, cases);
   const coveredUnits = requirementCoverage.filter(
-    (item) => item.matchedCaseIds.length > 0
+    (item) => item.strength === "strong"
+  );
+  const partiallyCoveredUnits = requirementCoverage.filter(
+    (item) => item.strength === "partial"
   );
   const uncoveredUnits = requirementCoverage
-    .filter((item) => item.matchedCaseIds.length === 0)
+    .filter((item) => item.strength === "none")
     .map((item) => item.unit);
 
   const orphanCaseIds = findOrphanCaseIds(requirementCoverage, cases);
   const validation = validateTestSuite(normalizedSuite);
+  const coveragePoints = buildCoveragePoints(requirementCoverage);
 
   return {
     details: {
       requirementUnits,
       coveredUnits,
+      partiallyCoveredUnits,
       uncoveredUnits,
       orphanCaseIds,
       duplicateGroupCount: validation.duplicateGroups.length,
       totalCases: cases.length,
+      coveragePoints: coveragePoints.earned,
+      maximumCoveragePoints: coveragePoints.maximum,
     },
     cases,
   };
@@ -565,7 +707,7 @@ export function buildDeterministicReviewResult(args: {
 
   const breakdown = buildBreakdown(details, cases);
 
-  const rawScore =
+  const score =
     details.requirementUnits.length === 0
       ? 0
       : breakdown.businessRelevance +
@@ -573,9 +715,6 @@ export function buildDeterministicReviewResult(args: {
         breakdown.designQuality +
         breakdown.levelAndScope +
         breakdown.diagnosticValue;
-
-  const score =
-    details.totalCases < 15 ? Math.min(rawScore, 92) : rawScore;
 
   return {
     score,
