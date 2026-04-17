@@ -2,11 +2,24 @@
 // M10 extraction:
 // Centralize prompt construction for coach / cases / review modes.
 // This keeps AI prompt assembly out of the API route.
+//
+// M13 AI Abstraction CHANGE:
+// - align prompt output messages with the provider-neutral AIChatMessage contract
+// - keep prompt construction separate from provider execution
+// - do not introduce prompt hardening yet; provider boundary stabilization comes first
 
-import { QA_SYSTEM_PROMPT, CASES_SYSTEM_PROMPT } from "@/lib/framework/systemPrompt";
-import { artifactToContextText, getTestSuite, type SessionArtifact } from "@/lib/chat/artifact";
+import {
+  QA_SYSTEM_PROMPT,
+  CASES_SYSTEM_PROMPT,
+} from "@/lib/framework/systemPrompt";
+import {
+  artifactToContextText,
+  getTestSuite,
+  type SessionArtifact,
+} from "@/lib/chat/artifact";
 import { hasMeaningfulRefinedRequirement } from "@/lib/server/chat/coachFormatting";
 import { buildExistingSuiteBaselineFromArtifact } from "@/lib/server/chat/testSuiteService";
+import type { AIChatMessage } from "@/lib/ai/schemas/aiExecution";
 
 type BuildPromptArgs = {
   message: string;
@@ -18,7 +31,14 @@ type BuildPromptArgs = {
   sessionArtifact: SessionArtifact | null;
 };
 
-type ModelMessage = {
+/**
+ * M13 containment:
+ * PromptBuilder may define the roles it currently emits,
+ * but the message shape must remain compatible with the provider-neutral AI layer.
+ *
+ * Provider-specific SDK message types must not be imported here.
+ */
+type ModelMessage = AIChatMessage & {
   role: "system" | "user";
   content: string;
 };
@@ -47,7 +67,9 @@ export function buildPromptPayload(args: BuildPromptArgs): BuildPromptResult {
   let existingCasesCount = 0;
 
   const existingTestSuite =
-    wantCases && !explicitRegenerationRequest ? getTestSuite(sessionArtifact) : null;
+    wantCases && !explicitRegenerationRequest
+      ? getTestSuite(sessionArtifact)
+      : null;
 
   if (wantCases && existingTestSuite) {
     const baseline = buildExistingSuiteBaselineFromArtifact(existingTestSuite);
@@ -70,7 +92,9 @@ export function buildPromptPayload(args: BuildPromptArgs): BuildPromptResult {
           ? "SESSION_CONTINUITY: true"
           : "SESSION_CONTINUITY: false",
         existingCasesCount > 0 && !explicitRegenerationRequest
-          ? `NEXT_AVAILABLE_TEST_CASE_ID: TC-${String(nextAvailableCaseNumber).padStart(3, "0")}`
+          ? `NEXT_AVAILABLE_TEST_CASE_ID: TC-${String(
+              nextAvailableCaseNumber
+            ).padStart(3, "0")}`
           : "NEXT_AVAILABLE_TEST_CASE_ID: TC-001",
         existingCasesCount > 0 && !explicitRegenerationRequest
           ? "Treat the persisted session test suite as the baseline suite."
@@ -192,7 +216,7 @@ export function buildPromptPayload(args: BuildPromptArgs): BuildPromptResult {
     { role: "user", content: message },
   ];
 
-    return {
+  return {
     systemPrompt,
     modeInstruction,
     messagesForModel,
