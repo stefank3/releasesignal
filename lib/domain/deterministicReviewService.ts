@@ -39,6 +39,11 @@
 // - reduce partial-credit inflation
 // - cap top-band category scores when unresolved requirement units remain
 // - gate final score bands using unresolved obligation counts, not suite size
+//
+// M12.19 CONSISTENCY PASS:
+// - align verdict wording with unresolved requirement burden
+// - prevent "Strong" language while many partial/uncovered units remain
+// - keep review score, verdict, and risk gaps telling the same Design Quality story
 
 import type {
   RefinedRequirement,
@@ -764,32 +769,127 @@ function buildImprovements(details: DeterministicReviewDetails): string[] {
   return improvements.slice(0, 12);
 }
 
-function getFinalScoreCap(details: DeterministicReviewDetails): number {
+function getUnresolvedRequirementBurden(details: DeterministicReviewDetails): {
+  totalUnits: number;
+  uncoveredUnits: number;
+  partialUnits: number;
+  unresolvedUnits: number;
+  unresolvedRatio: number;
+} {
+  const totalUnits = details.requirementUnits.length;
   const uncoveredUnits = details.uncoveredUnits.length;
   const partialUnits = details.partiallyCoveredUnits.length;
-  const totalUnits = details.requirementUnits.length;
+  const unresolvedUnits = uncoveredUnits + partialUnits;
 
-  if (totalUnits === 0) return 0;
+  return {
+    totalUnits,
+    uncoveredUnits,
+    partialUnits,
+    unresolvedUnits,
+    unresolvedRatio: totalUnits > 0 ? unresolvedUnits / totalUnits : 0,
+  };
+}
+
+function getFinalScoreCap(details: DeterministicReviewDetails): number {
+  const burden = getUnresolvedRequirementBurden(details);
+
+  if (burden.totalUnits === 0) return 0;
 
   // M12.19 WHY:
   // Final-score gating should reflect unresolved obligation burden, not suite size.
   // This prevents "excellent" results while the review still lists many partials.
-  if (uncoveredUnits >= 3) return 74;
-  if (uncoveredUnits > 0) return 84;
+  if (burden.uncoveredUnits >= 3) return 74;
+  if (burden.uncoveredUnits > 0) return 82;
 
-  if (partialUnits >= Math.max(6, Math.ceil(totalUnits * 0.35))) return 86;
-  if (partialUnits >= 4) return 89;
-  if (partialUnits >= 2) return 92;
-  if (partialUnits === 1) return 94;
+  // M12.19 CONSISTENCY WHY:
+  // Many partial units are still open requirement obligations.
+  // They should not produce a "Strong" or high-80s result simply because
+  // structural categories are clean.
+  if (
+    burden.partialUnits >= Math.max(8, Math.ceil(burden.totalUnits * 0.4))
+  ) {
+    return 82;
+  }
+
+  if (
+    burden.partialUnits >= Math.max(6, Math.ceil(burden.totalUnits * 0.3))
+  ) {
+    return 84;
+  }
+
+  if (burden.partialUnits >= 4) return 87;
+  if (burden.partialUnits >= 2) return 91;
+  if (burden.partialUnits === 1) return 94;
 
   return 100;
 }
 
-function buildVerdict(score: number): string {
-  if (score >= 85) return "Strong - artifact coverage is aligned";
-  if (score >= 70) return "Good - minor coverage gaps remain";
-  if (score >= 50) return "Moderate - meaningful gaps require attention";
-  if (score >= 30) return "Weak - requirement coverage is incomplete";
+function buildVerdict(
+  score: number,
+  details: DeterministicReviewDetails
+): string {
+  const burden = getUnresolvedRequirementBurden(details);
+
+  if (burden.totalUnits === 0) {
+    return "Poor - no structured requirement units are available for review";
+  }
+
+  if (details.totalCases === 0) {
+    return "Poor - no test suite is available for requirement coverage review";
+  }
+
+  // M12.19 CONSISTENCY WHY:
+  // Verdict language must follow the same unresolved-obligation evidence shown
+  // in Top Risk Gaps. This prevents a score/verdict from claiming alignment
+  // while the review lists many partial or uncovered units.
+  if (burden.uncoveredUnits >= 3) {
+    return "Weak - multiple requirement obligations are not covered";
+  }
+
+  if (burden.uncoveredUnits > 0) {
+    return "Moderate - uncovered requirement obligations remain";
+  }
+
+  if (
+    burden.partialUnits >= Math.max(8, Math.ceil(burden.totalUnits * 0.4))
+  ) {
+    return "Moderate - many requirement obligations remain only partially covered";
+  }
+
+  if (
+    burden.partialUnits >= Math.max(6, Math.ceil(burden.totalUnits * 0.3))
+  ) {
+    return "Good - coverage is useful but several obligations remain partial";
+  }
+
+  if (burden.partialUnits >= 4) {
+    return "Good - coverage is progressing but partial obligations remain";
+  }
+
+  if (burden.partialUnits > 0) {
+    return "Strong - coverage is mostly aligned with minor partial gaps";
+  }
+
+  if (score >= 93) {
+    return "Excellent - requirement coverage is strongly aligned";
+  }
+
+  if (score >= 85) {
+    return "Strong - requirement coverage is aligned";
+  }
+
+  if (score >= 70) {
+    return "Good - requirement coverage is usable with remaining gaps";
+  }
+
+  if (score >= 50) {
+    return "Moderate - meaningful coverage gaps require attention";
+  }
+
+  if (score >= 30) {
+    return "Weak - requirement coverage is incomplete";
+  }
+
   return "Poor - review artifacts are not sufficiently aligned";
 }
 
@@ -861,7 +961,7 @@ export function buildDeterministicReviewResult(args: {
 
   return {
     score,
-    verdict: buildVerdict(score),
+    verdict: buildVerdict(score, details),
     breakdown,
     riskGaps: buildRiskGaps(details),
     antiPatterns: buildAntiPatterns(details),
