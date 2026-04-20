@@ -20,6 +20,11 @@
 // - preserve existing suite on requirement refinement, but make lineage mismatch explicit
 // - clear stale review/release-health artifacts when the requirement materially changes
 // - keep the route thin and keep workflow integrity decisions in service code
+//
+// M13 AI Abstraction CHECK:
+// - this service intentionally receives raw model output only
+// - no provider SDK, model selection, usage accounting, or execution behavior belongs here
+// - artifact persistence and stale-review invalidation remain outside the AI/provider layer
 
 import type {
   RefinedRequirement,
