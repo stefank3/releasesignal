@@ -65,13 +65,13 @@ export async function repairJsonOnce(args: {
     { role: "user", content: `Fix this into valid JSON only:\n\n${args.raw}` },
   ];
 
-  const repaired = await executeOpenAIRequest({
-    messages,
-    executionMode: args.mode === "review" ? "review" : "coach",
-    temperature: 0,
-    maxTokens: 900,
-    responseFormat: "json_object",
-  });
+ const repaired = await executeOpenAIRequest({
+  messages,
+  executionMode: args.mode === "review" ? "review" : "coach",
+  temperature: 0,
+  maxTokens: 900,
+  responseFormat: "json_object",
+});
 
-  return repaired.rawReply || args.raw;
+return repaired.rawReply || args.raw;
 }
