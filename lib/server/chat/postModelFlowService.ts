@@ -42,6 +42,11 @@
 // - parse execution-shaped input only when workflow action requests it
 // - return structured execution result upward for persistence/response shaping
 // - keep execution flow separate from coach/review/cases behavior
+//
+// M13 NARROW WIRING CHANGE:
+// - thread sessionId into review flow
+// - allow optional, non-authoritative review explanation wiring
+// - keep post-model orchestration authoritative only over flow branching
 
 import type {
   ExecutionIntelligenceArtifact,
@@ -160,6 +165,7 @@ export async function runPostModelFlow(args: {
 
     const reviewFlow = await runReviewFlow({
       rawReply: args.rawReply,
+      sessionId: args.sessionId,
       sessionArtifact,
     });
 
