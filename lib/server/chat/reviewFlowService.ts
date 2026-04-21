@@ -26,6 +26,12 @@
 // BUG FIX (M12.8): prevent null deterministic review results from being
 // serialized and stored as the literal string "null"; keep persistence and
 // telemetry aligned with actual review result presence.
+//
+// M13 NARROW WIRING CHANGE:
+// - add optional, non-authoritative review explanation support
+// - derive explanation only after deterministic review succeeds
+// - fail open: explanation failure must never fail review flow
+// - keep persisted review artifact authoritative and unchanged
 
 import type { ClientMode, RateMeta } from "@/lib/chat/chatTypes";
 import type { SessionArtifact } from "@/lib/chat/artifact";
@@ -37,6 +43,7 @@ import {
   buildReviewParseFailureResponse,
   buildReviewSuccessResponse,
 } from "@/lib/server/chat/responseBuilder";
+import { buildOptionalReviewExplanation } from "@/lib/server/chat/reviewExplanationService";
 
 type UsagePayload = {
   promptTokens: number;
@@ -74,14 +81,35 @@ function classifyReviewContext(args: {
   return "raw_only";
 }
 
+function buildReviewAssistantContent(args: {
+  reviewStoredJson: string;
+  explanationText: string | null;
+}): string {
+  if (!args.explanationText) {
+    return args.reviewStoredJson;
+  }
+
+  return [
+    args.reviewStoredJson,
+    "",
+    "Review Explanation:",
+    args.explanationText,
+  ].join("\n");
+}
+
 export async function runReviewFlow(args: {
   rawReply: string;
+  sessionId: string;
   sessionArtifact?: SessionArtifact | null;
 }): Promise<{
   reviewObj: ReviewResult | null;
   reviewStoredJson: string | null;
   reviewRepaired: boolean;
   assistantContentToStore: string;
+
+  // M13:
+  // Supplemental only. Never authoritative.
+  reviewExplanationText: string | null;
 
   // M11:
   // Structured review outcome classification.
@@ -121,14 +149,40 @@ export async function runReviewFlow(args: {
     },
   };
 
+  // M13 narrow wiring:
+  // Generate optional explanatory text only after deterministic review exists.
+  // This must not affect review truth or failure behavior.
+  let reviewExplanationText: string | null = null;
+
+  if (reviewObj) {
+    reviewExplanationText = await buildOptionalReviewExplanation({
+      sessionId: args.sessionId,
+      sessionArtifact: args.sessionArtifact ?? null,
+      review: {
+        score: reviewObj.score,
+        verdict: reviewObj.verdict,
+        riskGaps: Array.isArray(reviewObj.riskGaps) ? reviewObj.riskGaps : [],
+        improvements: Array.isArray(reviewObj.improvements)
+          ? reviewObj.improvements
+          : [],
+      },
+    });
+  }
+
   return {
     reviewObj,
     reviewStoredJson,
     reviewRepaired: false,
+    reviewExplanationText,
 
     // BUG FIX (M12.8): never persist "null" as assistant review content.
     // Deterministic review storage must contain valid review JSON or be empty.
-    assistantContentToStore: reviewStoredJson ?? "",
+    assistantContentToStore: reviewStoredJson
+      ? buildReviewAssistantContent({
+          reviewStoredJson,
+          explanationText: reviewExplanationText,
+        })
+      : "",
     reviewTelemetry,
   };
 }
