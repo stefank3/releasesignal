@@ -32,6 +32,11 @@
 // - derive explanation only after deterministic review succeeds
 // - fail open: explanation failure must never fail review flow
 // - keep persisted review artifact authoritative and unchanged
+//
+// M13 BUG FIX:
+// - do NOT mix review explanation text into assistantContentToStore
+// - keep stored assistant review content as clean deterministic review JSON only
+// - avoid raw JSON leakage into replayed chat content
 
 import type { ClientMode, RateMeta } from "@/lib/chat/chatTypes";
 import type { SessionArtifact } from "@/lib/chat/artifact";
@@ -79,22 +84,6 @@ function classifyReviewContext(args: {
   }
 
   return "raw_only";
-}
-
-function buildReviewAssistantContent(args: {
-  reviewStoredJson: string;
-  explanationText: string | null;
-}): string {
-  if (!args.explanationText) {
-    return args.reviewStoredJson;
-  }
-
-  return [
-    args.reviewStoredJson,
-    "",
-    "Review Explanation:",
-    args.explanationText,
-  ].join("\n");
 }
 
 export async function runReviewFlow(args: {
@@ -175,14 +164,11 @@ export async function runReviewFlow(args: {
     reviewRepaired: false,
     reviewExplanationText,
 
-    // BUG FIX (M12.8): never persist "null" as assistant review content.
-    // Deterministic review storage must contain valid review JSON or be empty.
-    assistantContentToStore: reviewStoredJson
-      ? buildReviewAssistantContent({
-          reviewStoredJson,
-          explanationText: reviewExplanationText,
-        })
-      : "",
+    // M13 BUG FIX:
+    // Keep stored assistant content as clean review JSON only.
+    // Explanation text is supplemental runtime-only content and must not pollute
+    // persisted assistant review payloads used by replay/render logic.
+    assistantContentToStore: reviewStoredJson ?? "",
     reviewTelemetry,
   };
 }
