@@ -6,7 +6,13 @@
 // M13 AI Abstraction CHANGE:
 // - align prompt output messages with the provider-neutral AIChatMessage contract
 // - keep prompt construction separate from provider execution
-// - do not introduce prompt hardening yet; provider boundary stabilization comes first
+//
+// M13 PROMPT HARDENING CHANGE:
+// - strengthen risk-based QA reasoning in coach/cases flows
+// - reduce agreeable / happy-path bias
+// - improve ambiguity detection and bounded assumption handling
+// - increase negative-path / edge-case pressure without changing output contracts
+// - preserve deterministic parsing safety by keeping schemas and response formats stable
 
 import {
   QA_SYSTEM_PROMPT,
@@ -51,6 +57,123 @@ export type BuildPromptResult = {
   nextAvailableCaseNumber: number;
 };
 
+function buildCasesModeInstruction(args: {
+  weakInput: boolean;
+  existingCasesCount: number;
+  explicitRegenerationRequest: boolean;
+  nextAvailableCaseNumber: number;
+}): string {
+  const continuityActive =
+    args.existingCasesCount > 0 && !args.explicitRegenerationRequest;
+
+  return [
+    `INPUT_QUALITY: ${args.weakInput ? "weak" : "ok"}`,
+    continuityActive ? "SESSION_CONTINUITY: true" : "SESSION_CONTINUITY: false",
+    continuityActive
+      ? `NEXT_AVAILABLE_TEST_CASE_ID: TC-${String(
+          args.nextAvailableCaseNumber
+        ).padStart(3, "0")}`
+      : "NEXT_AVAILABLE_TEST_CASE_ID: TC-001",
+    continuityActive
+      ? "Treat the persisted session test suite as the baseline suite."
+      : "Generate a fresh test suite for the user's feature.",
+    continuityActive
+      ? "Generate ONLY missing tests requested by the user or implied by missing coverage."
+      : "Generate the initial structured test suite for the user's feature.",
+    "Follow the OUTPUT CONTRACT exactly.",
+    "Avoid both exact duplicates and semantic duplicates.",
+    "Do NOT repeat, rephrase, or renumber existing tests when continuity is active.",
+    "Prioritize business-critical paths, negative paths, edge cases, retries, partial failures, invalid inputs, and integration failure behavior.",
+    "Do NOT default to a happy-path-heavy suite.",
+    "If the requirement is ambiguous, make bounded assumptions and convert those assumptions into concrete, testable cases.",
+    "Pressure-test idempotency, state transitions, downstream side effects, and recovery behavior where relevant.",
+    "Prefer fewer high-signal cases over filler cases.",
+    "Each generated test must add meaningful coverage, not cosmetic variation.",
+  ].join("\n");
+}
+
+function buildReviewModeInstruction(): string {
+  return [
+    "MODE: REVIEW & SCORING",
+    "Return ONLY valid JSON. No markdown. No prose outside JSON.",
+    "Schema:",
+    "{",
+    '  "score": number (0-100),',
+    '  "verdict": string,',
+    '  "breakdown": {',
+    '    "businessRelevance": number (0-25),',
+    '    "riskCoverage": number (0-25),',
+    '    "designQuality": number (0-20),',
+    '    "levelAndScope": number (0-15),',
+    '    "diagnosticValue": number (0-15)',
+    "  },",
+    '  "riskGaps": string[],',
+    '  "antiPatterns": string[],',
+    '  "improvements": string[]',
+    "}",
+    "Rules:",
+    "- Ensure breakdown is consistent with score.",
+    "- riskGaps and improvements must be actionable and specific.",
+    "- Keep each list <= 6 items.",
+    "- Do not inflate quality for suite size alone.",
+    "- Prefer concrete, requirement-linked observations over generic praise.",
+  ].join("\n");
+}
+
+function buildCoachModeInstruction(args: {
+  weakInput: boolean;
+  guidedAnswer: boolean;
+  explicitRegenerationRequest: boolean;
+}): string {
+  return [
+    "MODE: COACH (REFINED REQUIREMENT)",
+    "Return ONLY valid JSON. No markdown. No prose outside JSON.",
+    `INPUT_QUALITY: ${args.weakInput ? "weak" : "ok"}`,
+    args.explicitRegenerationRequest
+      ? "SESSION_CONTINUITY_RESET: true"
+      : "SESSION_CONTINUITY: true",
+    args.explicitRegenerationRequest
+      ? "Treat this Strategy request as a fresh analysis and ignore prior refined requirement context for this response."
+      : "Treat the user's new message as a refinement to the current session requirement unless they explicitly asked to regenerate.",
+    args.explicitRegenerationRequest
+      ? "Do a clean re-analysis from the current user message."
+      : "Update and extend the evolving requirement when new scope, constraints, or risks are introduced.",
+    "Primary rule: Do NOT start by asking questions.",
+    "If input is weak or ambiguous: make reasonable bounded assumptions and proceed.",
+    "Encode assumptions and constraints inside the requirement context instead of returning advisory sections.",
+    "Do NOT be overly agreeable or optimistic about unclear requirements.",
+    "Identify ambiguity, missing decision points, hidden dependencies, and testability risks inside the structured requirement fields.",
+    "Strengthen negative paths, failure handling, state integrity, retries, duplicates, and integration risks where relevant.",
+    "Prefer precise, testable requirement language over broad product prose.",
+    "Do not invent extra workflow state, release decisions, or scoring logic.",
+    ...(args.guidedAnswer
+      ? [
+          "GUIDED_CLARIFICATION_ANSWER: true",
+          "Rule: The user has provided clarification answers. Incorporate them into the requirement fields directly.",
+        ]
+      : []),
+    "Schema:",
+    "{",
+    '  "objective": string,',
+    '  "context": string,',
+    '  "inScope": string[],',
+    '  "outOfScope": string[],',
+    '  "integrations": string[],',
+    '  "acceptanceCriteria": string[],',
+    '  "riskFocus": string[]',
+    "}",
+    "Rules:",
+    "- objective: one concise statement.",
+    "- context: include assumptions, constraints, ambiguity notes, and relevant background.",
+    "- inScope: explicit required capability only.",
+    "- outOfScope: exclusions and deferred areas.",
+    "- integrations: external systems, roles, or dependencies.",
+    "- acceptanceCriteria: concrete verifiable expected behavior.",
+    "- riskFocus: highest-priority failure areas that downstream tests must emphasize.",
+    "- Keep all fields concise, deterministic, and free of duplicates.",
+  ].join("\n");
+}
+
 export function buildPromptPayload(args: BuildPromptArgs): BuildPromptResult {
   const {
     message,
@@ -86,92 +209,19 @@ export function buildPromptPayload(args: BuildPromptArgs): BuildPromptResult {
       : sessionArtifact;
 
   const modeInstruction = wantCases
-    ? [
-        `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
-        existingCasesCount > 0 && !explicitRegenerationRequest
-          ? "SESSION_CONTINUITY: true"
-          : "SESSION_CONTINUITY: false",
-        existingCasesCount > 0 && !explicitRegenerationRequest
-          ? `NEXT_AVAILABLE_TEST_CASE_ID: TC-${String(
-              nextAvailableCaseNumber
-            ).padStart(3, "0")}`
-          : "NEXT_AVAILABLE_TEST_CASE_ID: TC-001",
-        existingCasesCount > 0 && !explicitRegenerationRequest
-          ? "Treat the persisted session test suite as the baseline suite."
-          : "Generate a fresh test suite for the user's feature.",
-        existingCasesCount > 0 && !explicitRegenerationRequest
-          ? "Generate ONLY missing tests requested by the user or implied by missing coverage."
-          : "Generate the initial structured test suite for the user's feature.",
-        "Avoid both exact duplicates and semantic duplicates.",
-        "Do NOT repeat, rephrase, or renumber existing tests when continuity is active.",
-        "Follow the OUTPUT CONTRACT exactly.",
-      ].join("\n")
+    ? buildCasesModeInstruction({
+        weakInput,
+        existingCasesCount,
+        explicitRegenerationRequest,
+        nextAvailableCaseNumber,
+      })
     : executionMode === "review"
-      ? [
-          "MODE: REVIEW & SCORING",
-          "Return ONLY valid JSON. No markdown. No prose outside JSON.",
-          "Schema:",
-          "{",
-          '  "score": number (0-100),',
-          '  "verdict": string,',
-          '  "breakdown": {',
-          '    "businessRelevance": number (0-25),',
-          '    "riskCoverage": number (0-25),',
-          '    "designQuality": number (0-20),',
-          '    "levelAndScope": number (0-15),',
-          '    "diagnosticValue": number (0-15)',
-          "  },",
-          '  "riskGaps": string[],',
-          '  "antiPatterns": string[],',
-          '  "improvements": string[]',
-          "}",
-          "Rules:",
-          "- Ensure breakdown is consistent with score.",
-          "- riskGaps and improvements must be actionable and specific.",
-          "- Keep each list <= 6 items.",
-        ].join("\n")
-      : [
-          "MODE: COACH (REFINED REQUIREMENT)",
-          "Return ONLY valid JSON. No markdown. No prose outside JSON.",
-          `INPUT_QUALITY: ${weakInput ? "weak" : "ok"}`,
-          explicitRegenerationRequest
-            ? "SESSION_CONTINUITY_RESET: true"
-            : "SESSION_CONTINUITY: true",
-          explicitRegenerationRequest
-            ? "Treat this Strategy request as a fresh analysis and ignore prior refined requirement context for this response."
-            : "Treat the user's new message as a refinement to the current session requirement unless they explicitly asked to regenerate.",
-          explicitRegenerationRequest
-            ? "Do a clean re-analysis from the current user message."
-            : "Update and extend the evolving requirement when new scope, constraints, or risks are introduced.",
-          "Primary rule: Do NOT start by asking questions.",
-          "If input is weak: make reasonable assumptions and proceed.",
-          "Encode assumptions and constraints inside the requirement context instead of returning advisory sections.",
-          ...(guidedAnswer
-            ? [
-                "GUIDED_CLARIFICATION_ANSWER: true",
-                "Rule: The user has provided clarification answers. Incorporate them into the requirement fields directly.",
-              ]
-            : []),
-          "Schema:",
-          "{",
-          '  "objective": string,',
-          '  "context": string,',
-          '  "inScope": string[],',
-          '  "outOfScope": string[],',
-          '  "integrations": string[],',
-          '  "acceptanceCriteria": string[],',
-          '  "riskFocus": string[]',
-          "}",
-          "Rules:",
-          "- objective: one concise statement.",
-          "- context: include assumptions, constraints, and relevant background.",
-          "- inScope: explicit required capability only.",
-          "- outOfScope: exclusions and deferred areas.",
-          "- integrations: external systems, roles, or dependencies.",
-          "- acceptanceCriteria: concrete verifiable expected behavior.",
-          "- riskFocus: highest-priority failure areas that downstream tests must emphasize.",
-          "- Keep all fields concise, deterministic, and free of duplicates.",
-        ].join("\n");
+      ? buildReviewModeInstruction()
+      : buildCoachModeInstruction({
+          weakInput,
+          guidedAnswer,
+          explicitRegenerationRequest,
+        });
 
   const hasArtifact = hasMeaningfulRefinedRequirement(
     wantCases ? sessionArtifact : effectiveArtifactForCoach
