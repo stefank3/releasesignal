@@ -35,6 +35,12 @@
 // - preserve backward-compatible body rendering
 // - keep body-driven UI labels for Type/Priority unchanged
 // - only persist type/priority when they already match the locked artifact enum
+//
+// M14 CHANGE:
+// - add explicit uploaded-suite ingestion helpers
+// - support only locked initial file formats: txt, md, csv
+// - keep uploaded suite parsing separate from requirement truth
+// - return explicit invalid-suite failures instead of silently accepting malformed files
 
 import type {
   SessionArtifact,
@@ -47,6 +53,7 @@ import {
   normalizeTestCase,
   normalizeWhitespace,
 } from "@/lib/chat/artifact";
+import type { UploadedSuiteFormat } from "@/lib/chat/chatTypes";
 
 export type TestSuiteDiffSummary = {
   previousVersion: number | null;
@@ -111,6 +118,34 @@ export type RegenerateSuiteResult =
   | {
       ok: false;
       kind: "invalid_prerequisites" | "generation_failed";
+      message: string;
+    };
+
+export type UploadedSuiteParseResult =
+  | {
+      ok: true;
+      format: UploadedSuiteFormat;
+      parsedCases: ParsedGeneratedCase[];
+    }
+  | {
+      ok: false;
+      format: UploadedSuiteFormat;
+      reason: "unsupported_format" | "invalid_suite";
+      message: string;
+    };
+
+export type UploadedSuiteIngestionResult =
+  | {
+      ok: true;
+      format: UploadedSuiteFormat;
+      nextSuite: TestSuiteArtifact;
+      parsedCount: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      format: UploadedSuiteFormat;
+      reason: "unsupported_format" | "invalid_suite";
       message: string;
     };
 
@@ -347,6 +382,253 @@ export function parseGeneratedTestCases(text: string): ParsedGeneratedCase[] {
   }
 
   return out;
+}
+
+/**
+ * M14:
+ * Keep CSV support narrow and deterministic.
+ * We only accept CSV rows that can be mapped into the locked suite structure.
+ * This avoids pretending an arbitrary spreadsheet is a trustworthy suite.
+ */
+function splitCsvRow(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const next = line[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+        continue;
+      }
+
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current);
+  return cells.map((cell) => normalizeMultilineText(cell));
+}
+
+function normalizeCsvHeader(value: string): string {
+  return normalizeWhitespace(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function findCsvColumnIndex(headers: string[], aliases: string[]): number {
+  const normalizedAliases = new Set(aliases.map((alias) => normalizeCsvHeader(alias)));
+  return headers.findIndex((header) => normalizedAliases.has(normalizeCsvHeader(header)));
+}
+
+function getCsvCell(row: string[], index: number): string {
+  if (index < 0) return "";
+  return normalizeMultilineText(row[index] ?? "");
+}
+
+function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
+  const normalized = String(text ?? "").replace(/\r/g, "").trim();
+  if (!normalized) return [];
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const headerRow = splitCsvRow(lines[0]);
+  const titleIndex = findCsvColumnIndex(headerRow, ["title", "test case", "testcase", "name"]);
+  const typeIndex = findCsvColumnIndex(headerRow, ["type"]);
+  const priorityIndex = findCsvColumnIndex(headerRow, ["priority"]);
+  const preconditionsIndex = findCsvColumnIndex(headerRow, [
+    "preconditions",
+    "precondition",
+  ]);
+  const stepsIndex = findCsvColumnIndex(headerRow, ["test steps", "steps", "procedure"]);
+  const expectedIndex = findCsvColumnIndex(headerRow, [
+    "expected results",
+    "expected result",
+    "expected",
+  ]);
+  const tagsIndex = findCsvColumnIndex(headerRow, ["tags", "labels"]);
+  const notesIndex = findCsvColumnIndex(headerRow, ["notes", "comments"]);
+
+  // M14:
+  // CSV is accepted only when it can map into the locked case structure.
+  if (
+    titleIndex < 0 ||
+    typeIndex < 0 ||
+    priorityIndex < 0 ||
+    preconditionsIndex < 0 ||
+    stepsIndex < 0 ||
+    expectedIndex < 0
+  ) {
+    return [];
+  }
+
+  const out: ParsedGeneratedCase[] = [];
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const row = splitCsvRow(lines[i]);
+
+    const title = getCsvCell(row, titleIndex);
+    const typeValue = getCsvCell(row, typeIndex);
+    const priorityValue = getCsvCell(row, priorityIndex);
+    const preconditionsValue = getCsvCell(row, preconditionsIndex);
+    const stepsValue = getCsvCell(row, stepsIndex);
+    const expectedValue = getCsvCell(row, expectedIndex);
+    const tagsValue = getCsvCell(row, tagsIndex);
+    const notesValue = getCsvCell(row, notesIndex);
+
+    if (
+      !title ||
+      !typeValue ||
+      !priorityValue ||
+      !preconditionsValue ||
+      !stepsValue ||
+      !expectedValue
+    ) {
+      continue;
+    }
+
+    const bodyLines = [
+      `TC-000 - ${title}`,
+      `Type: ${typeValue}`,
+      `Priority: ${priorityValue}`,
+      `Preconditions: ${preconditionsValue}`,
+      `Test Steps: ${stepsValue}`,
+      `Expected Results: ${expectedValue}`,
+      ...(tagsValue ? [`Tags: ${tagsValue}`] : []),
+      ...(notesValue ? [`Notes: ${notesValue}`] : []),
+    ];
+
+    out.push({
+      title,
+      body: bodyLines.join("\n"),
+
+      // WHY:
+      // Preserve non-enum values in body, but only persist locked enum-safe values.
+      ...(normalizeCaseType(typeValue)
+        ? { type: normalizeCaseType(typeValue) }
+        : {}),
+      ...(normalizePriority(priorityValue)
+        ? { priority: normalizePriority(priorityValue) }
+        : {}),
+
+      preconditions: splitInlineOrBulletedValue(preconditionsValue),
+      steps: splitInlineOrBulletedValue(stepsValue),
+      expectedResults: splitInlineOrBulletedValue(expectedValue),
+      ...(tagsValue ? { tags: splitInlineOrBulletedValue(tagsValue) } : {}),
+      ...(notesValue ? { notes: notesValue } : {}),
+    });
+  }
+
+  return out;
+}
+
+/**
+ * M14:
+ * Format-aware uploaded suite parsing boundary.
+ * This keeps upload handling deterministic and narrow without promoting any
+ * uploaded content into requirement truth.
+ */
+export function parseUploadedSuiteContent(args: {
+  format: UploadedSuiteFormat;
+  content: string;
+}): UploadedSuiteParseResult {
+  const normalizedContent = String(args.content ?? "").replace(/\r/g, "").trim();
+  if (!normalizedContent) {
+    return {
+      ok: false,
+      format: args.format,
+      reason: "invalid_suite",
+      message: "Uploaded suite content was empty.",
+    };
+  }
+
+  let parsedCases: ParsedGeneratedCase[] = [];
+
+  if (args.format === "txt" || args.format === "md") {
+    parsedCases = parseGeneratedTestCases(normalizedContent);
+  } else if (args.format === "csv") {
+    parsedCases = parseCsvUploadedSuiteText(normalizedContent);
+  } else {
+    return {
+      ok: false,
+      format: args.format,
+      reason: "unsupported_format",
+      message: `Uploaded suite format '${args.format}' is not supported.`,
+    };
+  }
+
+  if (!parsedCases.length) {
+    return {
+      ok: false,
+      format: args.format,
+      reason: "invalid_suite",
+      message:
+        args.format === "csv"
+          ? "Uploaded CSV could not be mapped into the required test case structure."
+          : "Uploaded suite did not contain valid test cases in the locked TC format.",
+    };
+  }
+
+  return {
+    ok: true,
+    format: args.format,
+    parsedCases,
+  };
+}
+
+/**
+ * M14:
+ * Build a fresh suite artifact from uploaded file content.
+ * This is intentionally suite-only ingestion. It does not infer or persist
+ * any requirement truth from the uploaded file.
+ */
+export function ingestUploadedSuiteContent(args: {
+  format: UploadedSuiteFormat;
+  content: string;
+}): UploadedSuiteIngestionResult {
+  const parsed = parseUploadedSuiteContent(args);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const nowIso = new Date().toISOString();
+  const freshCases = parsed.parsedCases.map((parsedCase, idx) => {
+    const caseId = `TC-${String(idx + 1).padStart(3, "0")}`;
+    return buildStructuredCase(caseId, parsedCase);
+  });
+
+  return {
+    ok: true,
+    format: parsed.format,
+    nextSuite: {
+      version: 1,
+      cases: freshCases,
+      createdAt: nowIso,
+      lastUpdatedAt: nowIso,
+    },
+    parsedCount: freshCases.length,
+    message: `Parsed ${freshCases.length} test case${
+      freshCases.length === 1 ? "" : "s"
+    } from uploaded ${parsed.format.toUpperCase()} suite content.`,
+  };
 }
 
 /**
