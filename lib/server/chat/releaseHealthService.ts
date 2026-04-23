@@ -123,15 +123,29 @@ function deriveOverallStatus(args: {
   coverageStatus: ReleaseHealthCoverageStatus;
   executionStatus: ReleaseHealthExecutionStatus;
   failureBurden: ReleaseHealthFailureBurden;
+  reviewScore: number | null;
 }): ReleaseHealthOverallStatus {
-  const { coverageStatus, executionStatus, failureBurden } = args;
+  const { coverageStatus, executionStatus, failureBurden, reviewScore } = args;
 
   if (coverageStatus === "missing_requirement") return "not_ready";
   if (coverageStatus === "requirement_only") return "not_ready";
   if (coverageStatus === "suite_ready") return "needs_review";
 
-  if (executionStatus === "not_started") return "ready_for_execution";
   if (executionStatus === "blocked") return "blocked";
+
+  if (executionStatus === "not_started") {
+    if (typeof reviewScore !== "number") {
+      return "needs_review";
+    }
+
+    // M14 honesty:
+    // pre-execution readiness must not look positive when review quality is weak
+    if (reviewScore < 60) {
+      return "needs_review";
+    }
+
+    return "ready_for_execution";
+  }
 
   if (
     executionStatus === "failed" ||
@@ -239,11 +253,16 @@ export function buildReleaseHealthArtifact(
     execution,
     failureSummary,
   });
+  const reviewScore =
+    typeof artifact?.reviewResult?.score === "number"
+      ? artifact.reviewResult.score
+      : null;
 
   const overallStatus = deriveOverallStatus({
     coverageStatus,
     executionStatus,
     failureBurden,
+    reviewScore,
   });
 
   return {
