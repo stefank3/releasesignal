@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth0 } from "@/lib/auth0";
 import { prisma } from "@/lib/prisma";
+import { extractJsonObject } from "@/lib/chat/json";
+import { isReviewResult } from "@/lib/framework/reviewSchema";
 
 export const runtime = "nodejs";
 
@@ -17,7 +19,9 @@ type Ctx =
  * or as a Promise depending on runtime / build output.
  * We normalize it here to avoid `any` casts and keep lint clean.
  */
-async function resolveParams(ctx: Ctx): Promise<{ sessionId: string } | undefined> {
+async function resolveParams(
+  ctx: Ctx
+): Promise<{ sessionId: string } | undefined> {
   const rawParams = ctx.params instanceof Promise ? await ctx.params : ctx.params;
   return rawParams;
 }
@@ -64,22 +68,38 @@ function looksLikeCasesPlainText(text: string): boolean {
   return false;
 }
 
-function looksLikeReviewJson(text: string): boolean {
-  try {
-    const obj = JSON.parse(String(text ?? ""));
+function tryExtractReviewResult(text: string): boolean {
+  const raw = String(text ?? "").trim();
+  if (!raw) return false;
 
-    return !!(
-      obj &&
-      typeof obj.score === "number" &&
-      obj.breakdown &&
-      typeof obj.breakdown.businessRelevance === "number" &&
-      Array.isArray(obj.riskGaps) &&
-      Array.isArray(obj.antiPatterns) &&
-      Array.isArray(obj.improvements)
-    );
+  try {
+    const direct = JSON.parse(raw) as unknown;
+    if (isReviewResult(direct)) return true;
+  } catch {
+    // fall through
+  }
+
+  try {
+    const extracted = JSON.parse(extractJsonObject(raw)) as unknown;
+    return isReviewResult(extracted);
   } catch {
     return false;
   }
+}
+
+/**
+ * M13 history fix:
+ * Treat polluted stored review assistant messages as review-shaped content too.
+ * These may contain:
+ * - raw deterministic review JSON
+ * - JSON + appended explanation text
+ *
+ * We must detect them for:
+ * - effectiveMode inference
+ * - history item suppression
+ */
+function looksLikeStoredReviewAssistantContent(text: string): boolean {
+  return tryExtractReviewResult(text);
 }
 
 /**
@@ -101,7 +121,10 @@ function computeEffectiveMode(args: {
   // the UI back to persisted review/cases mode. Restore mode from the latest
   // assistant content signal first, and fall back to coach when content is
   // not explicitly review/cases.
-  if (last?.role === "assistant" && looksLikeReviewJson(last.content)) {
+  if (
+    last?.role === "assistant" &&
+    looksLikeStoredReviewAssistantContent(last.content)
+  ) {
     return "review";
   }
 
@@ -154,7 +177,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
    * Default = 120, hard cap = 200.
    */
   const limitRaw = Number(url.searchParams.get("limit") ?? 120);
-  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 120;
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(limitRaw, 1), 200)
+    : 120;
 
   const cursor = url.searchParams.get("cursor");
 
@@ -201,7 +226,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
   const effectiveMode = computeEffectiveMode({
     persistedMode,
-    lastMessage: lastMessage ? { role: lastMessage.role, content: lastMessage.content ?? "" } : null,
+    lastMessage: lastMessage
+      ? { role: lastMessage.role, content: lastMessage.content ?? "" }
+      : null,
   });
 
   /**
@@ -209,10 +236,22 @@ export async function GET(req: NextRequest, ctx: Ctx) {
    * Client renders messages oldest → newest.
    * We query DESC for pagination efficiency,
    * then reverse for display.
+   *
+   * M13 history fix:
+   * Suppress polluted stored review assistant messages from chat history.
+   * The authoritative review should come from the review artifact/card, not
+   * from legacy stored assistant JSON blobs or JSON+explanation composites.
    */
   const items = page
     .slice()
     .reverse()
+    .filter(
+      (m) =>
+        !(
+          m.role === "assistant" &&
+          looksLikeStoredReviewAssistantContent(m.content ?? "")
+        )
+    )
     .map((m) => ({
       id: m.id,
       role: m.role,
@@ -231,7 +270,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     // CHANGE (M7.7): surface artifact for the pinned requirement card.
     // NOTE: return it as `artifact` (not artifactJson) to keep API stable even if DB field changes later.
     artifact: readArtifact(session.artifactJson),
-    artifactUpdatedAt: session.artifactUpdatedAt ? session.artifactUpdatedAt.toISOString() : null,
+    artifactUpdatedAt: session.artifactUpdatedAt
+      ? session.artifactUpdatedAt.toISOString()
+      : null,
 
     items,
 
@@ -326,7 +367,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const artifact = (body as any)?.artifact;
+  const artifact = (body as { artifact?: unknown })?.artifact;
 
   if (!artifact || typeof artifact !== "object") {
     return NextResponse.json(

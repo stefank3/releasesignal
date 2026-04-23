@@ -2,6 +2,12 @@
 // M10 extraction:
 // Centralize replay lookup + replay response shaping so route.ts
 // stays focused on request orchestration.
+//
+// M13 BUG FIX:
+// - prefer authoritative review artifact over stored assistant review text
+// - never replay raw stored review assistant content back to the client
+// - tolerate legacy polluted review assistant messages that contain JSON plus decoration
+// - fail closed for review replay: return no replay hit instead of exposing raw JSON
 
 import { NextResponse } from "next/server";
 
@@ -38,7 +44,29 @@ type ReplayResult =
       artifactUpdatedAtIso: string | null;
     };
 
-export async function tryReplayExistingAssistant(args: ReplayArgs): Promise<ReplayResult> {
+function buildReplayResponse(args: {
+  requestId: string;
+  rateMeta: RateMeta | null;
+  body: Record<string, unknown>;
+}): NextResponse {
+  return NextResponse.json(args.body, {
+    status: 200,
+    headers: responseHeaders(args.requestId, args.rateMeta ?? undefined),
+  });
+}
+
+function tryParseStoredReview(raw: string): ReviewResult | null {
+  try {
+    const parsed = JSON.parse(extractJsonObject(raw)) as unknown;
+    return isReviewResult(parsed) ? (parsed as ReviewResult) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function tryReplayExistingAssistant(
+  args: ReplayArgs
+): Promise<ReplayResult> {
   const existingAssistant = await prisma.chatMessage.findFirst({
     where: {
       sessionId: args.sessionId,
@@ -74,61 +102,71 @@ export async function tryReplayExistingAssistant(args: ReplayArgs): Promise<Repl
   const usage = {
     promptTokens: existingAssistant.tokensIn ?? 0,
     completionTokens: existingAssistant.tokensOut ?? 0,
-    totalTokens: (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
+    totalTokens:
+      (existingAssistant.tokensIn ?? 0) + (existingAssistant.tokensOut ?? 0),
   };
 
   if (args.executionMode === "review") {
     const raw = existingAssistant.content ?? "";
 
-    try {
-      const parsed = JSON.parse(extractJsonObject(raw)) as unknown;
-      if (isReviewResult(parsed)) {
-        return {
-          hit: true,
-          response: NextResponse.json(
-            {
-              ok: true,
-              mode: args.clientMode,
-              review: parsed as ReviewResult,
-              sessionId: args.sessionId,
-              usage,
-              rate: args.rateMeta,
-              replay: true,
-              artifact: sessionArtifact,
-              artifactUpdatedAt: artifactUpdatedAtIso,
-            },
-            {
-              status: 200,
-              headers: responseHeaders(args.requestId, args.rateMeta ?? undefined),
-            }
-          ),
-          sessionArtifact,
-          artifactUpdatedAtIso,
-        };
-      }
-    } catch {
-      // fall through to raw replay response
+    // M13 bug fix:
+    // authoritative replay source for review is the persisted artifact first,
+    // not potentially polluted assistant message content.
+    const artifactReview = sessionArtifact?.reviewResult ?? null;
+    if (artifactReview && isReviewResult(artifactReview)) {
+      return {
+        hit: true,
+        response: buildReplayResponse({
+          requestId: args.requestId,
+          rateMeta: args.rateMeta,
+          body: {
+            ok: true,
+            mode: args.clientMode,
+            review: artifactReview,
+            sessionId: args.sessionId,
+            usage,
+            rate: args.rateMeta,
+            replay: true,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
+          },
+        }),
+        sessionArtifact,
+        artifactUpdatedAtIso,
+      };
     }
 
+    // Backward compatibility:
+    // tolerate legacy stored review assistant content only if a clean review
+    // object can still be extracted from it.
+    const storedReview = tryParseStoredReview(raw);
+    if (storedReview) {
+      return {
+        hit: true,
+        response: buildReplayResponse({
+          requestId: args.requestId,
+          rateMeta: args.rateMeta,
+          body: {
+            ok: true,
+            mode: args.clientMode,
+            review: storedReview,
+            sessionId: args.sessionId,
+            usage,
+            rate: args.rateMeta,
+            replay: true,
+            artifact: sessionArtifact,
+            artifactUpdatedAt: artifactUpdatedAtIso,
+          },
+        }),
+        sessionArtifact,
+        artifactUpdatedAtIso,
+      };
+    }
+
+    // Fail closed:
+    // do not surface raw stored review text/json back to the client.
     return {
-      hit: true,
-      response: NextResponse.json(
-        {
-          ok: true,
-          mode: args.clientMode,
-          raw,
-          sessionId: args.sessionId,
-          usage,
-          rate: args.rateMeta,
-          replay: true,
-          artifact: sessionArtifact,
-          artifactUpdatedAt: artifactUpdatedAtIso,
-        },
-        {
-          status: 200,
-          headers: responseHeaders(args.requestId, args.rateMeta ?? undefined),
-        }
-      ),
+      hit: false,
       sessionArtifact,
       artifactUpdatedAtIso,
     };
@@ -136,8 +174,10 @@ export async function tryReplayExistingAssistant(args: ReplayArgs): Promise<Repl
 
   return {
     hit: true,
-    response: NextResponse.json(
-      {
+    response: buildReplayResponse({
+      requestId: args.requestId,
+      rateMeta: args.rateMeta,
+      body: {
         ok: true,
         mode: args.clientMode,
         reply: existingAssistant.content,
@@ -148,11 +188,7 @@ export async function tryReplayExistingAssistant(args: ReplayArgs): Promise<Repl
         artifact: sessionArtifact,
         artifactUpdatedAt: artifactUpdatedAtIso,
       },
-      {
-        status: 200,
-        headers: responseHeaders(args.requestId, args.rateMeta ?? undefined),
-      }
-    ),
+    }),
     sessionArtifact,
     artifactUpdatedAtIso,
   };
