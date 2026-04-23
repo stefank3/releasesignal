@@ -14,6 +14,12 @@
 // - recognize refine_requirement as a valid workflow action
 // - treat next-batch as cases/coaching execution without requiring message
 // - treat refine_requirement as coach/non-cases execution without requiring message
+//
+// M14 CHANGE:
+// - recognize explicit uploadedSuite request payloads
+// - keep file-based suite ingestion distinct from ordinary chat transport
+// - validate narrow uploaded suite formats before orchestration
+// - do not apply normal freeform-message size rules to uploaded suites
 
 import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
@@ -28,6 +34,7 @@ import {
   type ClientMode,
   type ExecutionMode,
   type RateMeta,
+  type UploadedSuitePayload,
 } from "@/lib/chat/chatTypes";
 import { isWeakInput } from "@/lib/chat/inputQuality";
 import {
@@ -58,7 +65,7 @@ type WorkflowAction =
   | "review_test_suite"
   | "refine_requirement"
   | "regenerate_suite";
-  
+
 type AuthResult =
   | {
       ok: false;
@@ -132,6 +139,47 @@ function getWorkflowAction(body: ChatBody): WorkflowAction | null {
   }
 
   return null;
+}
+
+/**
+ * M14:
+ * Keep upload detection narrow and explicit.
+ * We only accept the locked initial formats and require actual content.
+ */
+function getValidatedUploadedSuite(
+  body: ChatBody
+): UploadedSuitePayload | null {
+  const candidate = body?.uploadedSuite;
+  if (!candidate || typeof candidate !== "object") return null;
+
+  const filename = candidate.filename;
+  const format = candidate.format;
+  const content = candidate.content;
+
+  if (
+    typeof filename !== "string" ||
+    typeof format !== "string" ||
+    typeof content !== "string"
+  ) {
+    return null;
+  }
+
+  const normalizedFilename = filename.trim();
+  const normalizedContent = content.replace(/\r/g, "").trim();
+
+  if (!normalizedFilename || !normalizedContent) {
+    return null;
+  }
+
+  if (format !== "txt" && format !== "md" && format !== "csv") {
+    return null;
+  }
+
+  return {
+    filename: normalizedFilename,
+    format,
+    content: normalizedContent,
+  };
 }
 
 export async function requireAuthenticatedUser(args: {
@@ -232,18 +280,63 @@ export async function parseAndValidateChatRequest(args: {
         ? "review"
         : normalizeClientMode(body?.mode);
 
-const wantCases =
-  workflowAction === "generate_tests_from_requirement" ||
-  workflowAction === "generate_next_batch_of_tests" ||
-  workflowAction === "regenerate_suite";
+    // M12.9:
+    // Action-based cases flow remains explicit and independent of freeform text.
+    const wantCases =
+      workflowAction === "generate_tests_from_requirement" ||
+      workflowAction === "generate_next_batch_of_tests" ||
+      workflowAction === "regenerate_suite";
 
-const wantReview = workflowAction === "review_test_suite";
-const executionMode: ExecutionMode = wantReview ? "review" : "coach";
+    const wantReview = workflowAction === "review_test_suite";
+    const executionMode: ExecutionMode = wantReview ? "review" : "coach";
 
     return {
       ok: true,
       body,
       message: "",
+      clientMode,
+      wantCases,
+      wantReview,
+      executionMode,
+      weakInput: false,
+      explicitRegenerationRequest: false,
+    };
+  }
+
+  const uploadedSuite = getValidatedUploadedSuite(body);
+
+  // M14:
+  // Uploaded suite content is accepted through its own typed request path.
+  // We surface the normalized content through `message` for downstream
+  // orchestration compatibility, but the original body retains uploadedSuite
+  // so later route logic can branch honestly on file-based ingestion.
+  if (body?.uploadedSuite) {
+    if (!uploadedSuite) {
+      await args.recordChatMetric({
+        nowMs: Date.now(),
+        mode: args.modeForMetric,
+        status: 400,
+        latencyMs: Date.now() - args.startTime,
+      });
+
+      return {
+        ok: false,
+        response: buildInvalidJsonBodyResponse(args.requestId),
+      };
+    }
+
+    const clientMode: ClientMode = normalizeClientMode(body?.mode);
+    const wantCases = clientMode === "cases";
+    const wantReview = clientMode === "review";
+    const executionMode: ExecutionMode = wantReview ? "review" : "coach";
+
+    return {
+      ok: true,
+      body: {
+        ...body,
+        uploadedSuite,
+      },
+      message: uploadedSuite.content,
       clientMode,
       wantCases,
       wantReview,
