@@ -7,7 +7,10 @@ import { type CoachResult, type ReviewResult } from "@/lib/framework/reviewSchem
 
 import { recordChatMetric, type ChatMetricMode } from "@/lib/metrics/chatMetrics";
 
-import { type RateMeta } from "@/lib/chat/chatTypes";
+import {
+  type RateMeta,
+  type UploadedSuitePayload,
+} from "@/lib/chat/chatTypes";
 
 import { emitTelemetryEvent } from "@/lib/server/telemetry/telemetryService";
 import type { CasesFlowTelemetry } from "@/lib/server/chat/casesFlowService";
@@ -121,6 +124,33 @@ function getWorkflowAction(body: unknown): WorkflowAction | null {
   }
 
   return null;
+}
+
+/**
+ * M14:
+ * Uploaded suites must travel through an explicit file-ingestion path, not as
+ * ordinary freeform chat. We still allow downstream model orchestration to use
+ * the parsed content, but persistence/logging should remain upload-aware.
+ */
+
+function getUploadedSuite(
+  body: { uploadedSuite?: UploadedSuitePayload } | null | undefined
+): UploadedSuitePayload | null {
+  return body?.uploadedSuite ?? null;
+}
+
+/**
+ * M14:
+ * Store a compact user-visible marker instead of the full uploaded file body.
+ * This avoids polluting chat history with large suite content while keeping a
+ * truthful record that the request came from file-based ingestion.
+ */
+function buildUploadedSuiteUserMessage(uploadedSuite: UploadedSuitePayload): string {
+  return [
+    `Uploaded test suite file: ${uploadedSuite.filename}`,
+    `Format: ${uploadedSuite.format}`,
+    "Purpose: file-based large suite ingestion",
+  ].join("\n");
 }
 
 function hasPersistedTestSuiteArtifact(
@@ -415,7 +445,7 @@ export async function POST(req: Request) {
       return parsedRequest.response;
     }
 
-    const {
+      const {
       body,
       message,
       clientMode,
@@ -425,12 +455,25 @@ export async function POST(req: Request) {
       explicitRegenerationRequest,
     } = parsedRequest;
 
+    // M14:
+    // Distinguish upload-based suite ingestion from ordinary chat transport.
+    const uploadedSuite = getUploadedSuite(body);
+    const hasUploadedSuite = !!uploadedSuite;
+
     const workflowAction = getWorkflowAction(body);
-    const shouldBypassReplay = !!workflowAction;
+
+    // M14:
+    // Uploaded suites must bypass replay just like explicit workflow actions.
+    // Replaying an older assistant message for a new uploaded file would be dishonest.
+    const shouldBypassReplay = !!workflowAction || hasUploadedSuite;
 
     modeForMetric = clientMode;
 
+    // M14:
+    // File uploads are not guided clarification answers and must not trigger
+    // guided artifact behavior based on raw uploaded content.
     const guidedAnswer =
+      !hasUploadedSuite &&
       executionMode === "coach" &&
       !wantCases &&
       isGuidedClarificationAnswer(message);
@@ -534,7 +577,7 @@ export async function POST(req: Request) {
       orgId,
       sessionId,
       mode: clientMode,
-      meta: {
+     meta: {
         messageChars: message.length,
         weakInput,
         clientMode,
@@ -544,6 +587,11 @@ export async function POST(req: Request) {
         hasTestSuite: !!getTestSuite(sessionArtifact),
         workflowAction,
         replayBypassed: shouldBypassReplay,
+
+        // M14:
+        hasUploadedSuite,
+        uploadedSuiteFormat: uploadedSuite?.format,
+        uploadedSuiteFilename: uploadedSuite?.filename,
       },
     });
 
@@ -560,6 +608,11 @@ export async function POST(req: Request) {
         hasTestSuite: !!getTestSuite(sessionArtifact),
         workflowAction,
         replayBypassed: shouldBypassReplay,
+      
+        // M14:
+        hasUploadedSuite,
+        uploadedSuiteFormat: uploadedSuite?.format,
+        uploadedSuiteFilename: uploadedSuite?.filename,
       },
     });
 
@@ -1109,11 +1162,17 @@ export async function POST(req: Request) {
     PERSIST USER MESSAGE
     ---------------------------------------------------------
     */
+    // M14:
+    // Persist a compact upload marker instead of the full uploaded suite body.
+    const persistedUserContent = uploadedSuite
+      ? buildUploadedSuiteUserMessage(uploadedSuite)
+      : message;
+
     await persistUserMessageIdempotent({
       sessionId,
       auth0Sub,
       requestId,
-      content: message,
+      content: persistedUserContent,
     });
 
     /*
@@ -1121,28 +1180,35 @@ export async function POST(req: Request) {
     GUIDED ARTIFACT PATCH
     ---------------------------------------------------------
     */
-    const guidedArtifactResult = await applyGuidedArtifactPatch({
-      sessionId,
-      sessionArtifact,
-      artifactUpdatedAtIso,
-      message,
-      guidedAnswer,
-    });
+    let requirementTelemetry: RequirementRefinedTelemetry | null = null;
 
-    sessionArtifact = guidedArtifactResult.sessionArtifact;
-    artifactUpdatedAtIso = guidedArtifactResult.artifactUpdatedAtIso;
+    // M14:
+    // Uploaded suites must not flow through guided requirement patching.
+    // They are file-ingestion inputs, not clarification answers.
+    if (!uploadedSuite) {
+      const guidedArtifactResult = await applyGuidedArtifactPatch({
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        message,
+        guidedAnswer,
+      });
 
-  const guidedReleaseHealthPersistResult = await persistReleaseHealthArtifact({
-      sessionId,
-      sessionArtifact,
-      artifactUpdatedAtIso,
-      releaseHealth: buildReleaseHealthArtifact(sessionArtifact),
-    });
+      sessionArtifact = guidedArtifactResult.sessionArtifact;
+      artifactUpdatedAtIso = guidedArtifactResult.artifactUpdatedAtIso;
 
-    sessionArtifact = guidedReleaseHealthPersistResult.sessionArtifact;
-    artifactUpdatedAtIso = guidedReleaseHealthPersistResult.artifactUpdatedAtIso;
-    const requirementTelemetry: RequirementRefinedTelemetry | null =
-      guidedArtifactResult.requirementTelemetry;
+      const guidedReleaseHealthPersistResult = await persistReleaseHealthArtifact({
+        sessionId,
+        sessionArtifact,
+        artifactUpdatedAtIso,
+        releaseHealth: buildReleaseHealthArtifact(sessionArtifact),
+      });
+
+      sessionArtifact = guidedReleaseHealthPersistResult.sessionArtifact;
+      artifactUpdatedAtIso = guidedReleaseHealthPersistResult.artifactUpdatedAtIso;
+
+      requirementTelemetry = guidedArtifactResult.requirementTelemetry;
+    }
 
     if (requirementTelemetry) {
       await emitTelemetryEvent({
@@ -1461,6 +1527,9 @@ export async function POST(req: Request) {
         suiteMissingAreasCount: suiteAnalysis?.missingAreas.length ?? 0,
         workflowRecommendedAction: workflowGuidance?.recommendedAction,
         workflowGuidanceMessage: workflowGuidance?.message,
+        hasUploadedSuite,
+        uploadedSuiteFormat: uploadedSuite?.format,
+        uploadedSuiteFilename: uploadedSuite?.filename,
       },
     });
 
