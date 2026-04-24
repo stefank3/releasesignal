@@ -93,6 +93,13 @@ import {
   readArtifactFromResponse,
 } from "./useChatSession.net";
 
+import type { PendingUploadedSuite } from "./helpers/uploadedSuiteRequest";
+
+import {
+  buildChatSendRequestBody,
+  buildUploadedSuiteMarkerMessage,
+} from "./helpers/uploadedSuiteRequest";
+
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
 
@@ -117,6 +124,8 @@ export type UseChatSessionReturn = {
 
   input: string;
   setInput: (v: string) => void;
+  pendingUploadedSuite: PendingUploadedSuite | null;
+  setPendingUploadedSuite: Dispatch<SetStateAction<PendingUploadedSuite | null>>;
 
   items: ChatItem[];
   setItems: Dispatch<SetStateAction<ChatItem[]>>;
@@ -320,6 +329,8 @@ function pruneLiveStaleReviewItems(args: {
 export function useChatSession(): UseChatSessionReturn {
   const [mode, setMode] = useState<Mode>("coach");
   const [input, setInput] = useState("");
+  const [pendingUploadedSuite, setPendingUploadedSuite] =
+  useState<PendingUploadedSuite | null>(null); 
   const [items, setItems] = useState<ChatItem[]>([]);
   const [isSending, setIsSending] = useState(false);
 
@@ -1248,7 +1259,9 @@ export function useChatSession(): UseChatSessionReturn {
     const replay = opts?.replay ?? false;
 
     const text = replay ? lastPending?.text ?? "" : input.trim();
-    if (!text || isSending) return;
+    const hasPendingUploadedSuite = !replay && !!pendingUploadedSuite;
+
+if ((!text && !hasPendingUploadedSuite) || isSending) return;
 
     const requestId = replay
       ? lastPending?.requestId ?? ""
@@ -1257,7 +1270,7 @@ export function useChatSession(): UseChatSessionReturn {
 
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
 
-    if (text.length > MAX_MESSAGE_CHARS) {
+if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
       setLastRequestId(requestId);
       setItems((prev) => [
         ...prev,
@@ -1298,10 +1311,15 @@ export function useChatSession(): UseChatSessionReturn {
     }
 
     if (!replay) {
+      const optimisticUserText = pendingUploadedSuite
+        ? buildUploadedSuiteMarkerMessage(pendingUploadedSuite)
+        : text;
+
       setItems((prev) => [
         ...prev,
-        { kind: "text", role: "user", text, requestId },
+        { kind: "text", role: "user", text: optimisticUserText, requestId },
       ]);
+
       setInput("");
       shouldAutoScrollRef.current = true;
     }
@@ -1310,7 +1328,9 @@ export function useChatSession(): UseChatSessionReturn {
 
     setLastPending({
       requestId,
-      text,
+      text: pendingUploadedSuite
+        ? buildUploadedSuiteMarkerMessage(pendingUploadedSuite)
+        : text,
       mode: effectiveMode,
       sessionId: sessionIdForRequest ?? null,
       sessionClientId: sessionClientIdForRequest,
@@ -1325,12 +1345,15 @@ export function useChatSession(): UseChatSessionReturn {
             "Content-Type": "application/json",
             "x-request-id": requestId,
           },
-          body: JSON.stringify({
-            message: text,
-            mode: effectiveMode,
-            sessionId: sessionIdForRequest ?? undefined,
-            sessionClientId: sessionClientIdForRequest ?? undefined,
-          }),
+          body: JSON.stringify(
+            buildChatSendRequestBody({
+              text,
+              mode: effectiveMode,
+              sessionId: sessionIdForRequest ?? undefined,
+              sessionClientId: sessionClientIdForRequest ?? undefined,
+              pendingUploadedSuite,
+            })
+          ),
         }
       );
 
@@ -1343,23 +1366,26 @@ export function useChatSession(): UseChatSessionReturn {
 
       const artifactPayload = readArtifactFromResponse(data);
       const nextArtifact = artifactPayload?.artifact ?? null;
+          if (artifactPayload) {
+            // M12.14 / M12.15:
+            // Reuse the existing authoritative artifact response path so execution
+            // classification state and release-health state rehydrate exactly like
+            // requirement/suite/review state.
+            setSessionArtifact(artifactPayload.artifact);
+            setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
 
-      if (artifactPayload) {
-        // M12.14 / M12.15:
-        // Reuse the existing authoritative artifact response path so execution
-        // classification state and release-health state rehydrate exactly like
-        // requirement/suite/review state.
-        setSessionArtifact(artifactPayload.artifact);
-        setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
+            // M12.18:
+            // Apply live stale-review cleanup for freeform coach refinements too.
+            setItems((prev) =>
+              pruneLiveStaleReviewItems({
+                items: prev,
+                nextArtifact: artifactPayload.artifact,
+              })
+            );
+          }
 
-        // M12.18:
-        // Apply live stale-review cleanup for freeform coach refinements too.
-        setItems((prev) =>
-          pruneLiveStaleReviewItems({
-            items: prev,
-            nextArtifact: artifactPayload.artifact,
-          })
-        );
+      if (!replay && pendingUploadedSuite) {
+        setPendingUploadedSuite(null);
       }
 
       if (
@@ -1627,8 +1653,9 @@ export function useChatSession(): UseChatSessionReturn {
     setMode,
 
     input,
-    setInput,
-
+  setInput,
+  pendingUploadedSuite,
+  setPendingUploadedSuite,
     items,
     setItems,
 

@@ -386,22 +386,24 @@ export function parseGeneratedTestCases(text: string): ParsedGeneratedCase[] {
 
 /**
  * M14:
- * Keep CSV support narrow and deterministic.
- * We only accept CSV rows that can be mapped into the locked suite structure.
- * This avoids pretending an arbitrary spreadsheet is a trustworthy suite.
+ * Parse CSV text into rows while respecting quoted commas and quoted newlines.
+ * This is intentionally narrow and deterministic.
  */
-function splitCsvRow(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
+function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    const next = line[i + 1];
+  const normalized = String(text ?? "").replace(/\r/g, "");
+
+  for (let i = 0; i < normalized.length; i += 1) {
+    const char = normalized[i];
+    const next = normalized[i + 1];
 
     if (char === '"') {
       if (inQuotes && next === '"') {
-        current += '"';
+        currentCell += '"';
         i += 1;
         continue;
       }
@@ -411,16 +413,35 @@ function splitCsvRow(line: string): string[] {
     }
 
     if (char === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
+      currentRow.push(normalizeMultilineText(currentCell));
+      currentCell = "";
       continue;
     }
 
-    current += char;
+    if (char === "\n" && !inQuotes) {
+      currentRow.push(normalizeMultilineText(currentCell));
+      currentCell = "";
+
+      const hasMeaningfulCell = currentRow.some((cell) => String(cell ?? "").trim());
+      if (hasMeaningfulCell) {
+        rows.push(currentRow);
+      }
+
+      currentRow = [];
+      continue;
+    }
+
+    currentCell += char;
   }
 
-  cells.push(current);
-  return cells.map((cell) => normalizeMultilineText(cell));
+  currentRow.push(normalizeMultilineText(currentCell));
+
+  const hasMeaningfulCell = currentRow.some((cell) => String(cell ?? "").trim());
+  if (hasMeaningfulCell) {
+    rows.push(currentRow);
+  }
+
+  return rows;
 }
 
 function normalizeCsvHeader(value: string): string {
@@ -441,16 +462,13 @@ function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
   const normalized = String(text ?? "").replace(/\r/g, "").trim();
   if (!normalized) return [];
 
-  const lines = normalized
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const rows = parseCsvRows(normalized);
 
-  if (lines.length < 2) {
+  if (rows.length < 2) {
     return [];
   }
 
-  const headerRow = splitCsvRow(lines[0]);
+  const headerRow = rows[0];
   const titleIndex = findCsvColumnIndex(headerRow, ["title", "test case", "testcase", "name"]);
   const typeIndex = findCsvColumnIndex(headerRow, ["type"]);
   const priorityIndex = findCsvColumnIndex(headerRow, ["priority"]);
@@ -482,8 +500,8 @@ function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
 
   const out: ParsedGeneratedCase[] = [];
 
-  for (let i = 1; i < lines.length; i += 1) {
-    const row = splitCsvRow(lines[i]);
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i];
 
     const title = getCsvCell(row, titleIndex);
     const typeValue = getCsvCell(row, typeIndex);
