@@ -387,7 +387,11 @@ export function parseGeneratedTestCases(text: string): ParsedGeneratedCase[] {
 /**
  * M14:
  * Parse CSV text into rows while respecting quoted commas and quoted newlines.
- * This is intentionally narrow and deterministic.
+ * Keep this parser deterministic and narrow.
+ *
+ * IMPORTANT:
+ * Do not normalize cell content while scanning characters.
+ * Parse first, normalize later.
  */
 function parseCsvRows(text: string): string[][] {
   const rows: string[][] = [];
@@ -413,32 +417,40 @@ function parseCsvRows(text: string): string[][] {
     }
 
     if (char === "," && !inQuotes) {
-      currentRow.push(normalizeMultilineText(currentCell));
+      currentRow.push(currentCell);
       currentCell = "";
       continue;
     }
 
     if (char === "\n" && !inQuotes) {
-      currentRow.push(normalizeMultilineText(currentCell));
-      currentCell = "";
+      currentRow.push(currentCell);
 
-      const hasMeaningfulCell = currentRow.some((cell) => String(cell ?? "").trim());
+      const normalizedRow = currentRow.map((cell) =>
+        normalizeWhitespace(String(cell ?? ""))
+      );
+
+      const hasMeaningfulCell = normalizedRow.some((cell) => cell.trim().length > 0);
       if (hasMeaningfulCell) {
-        rows.push(currentRow);
+        rows.push(normalizedRow);
       }
 
       currentRow = [];
+      currentCell = "";
       continue;
     }
 
     currentCell += char;
   }
 
-  currentRow.push(normalizeMultilineText(currentCell));
+  currentRow.push(currentCell);
 
-  const hasMeaningfulCell = currentRow.some((cell) => String(cell ?? "").trim());
+  const normalizedRow = currentRow.map((cell) =>
+    normalizeWhitespace(String(cell ?? ""))
+  );
+
+  const hasMeaningfulCell = normalizedRow.some((cell) => cell.trim().length > 0);
   if (hasMeaningfulCell) {
-    rows.push(currentRow);
+    rows.push(normalizedRow);
   }
 
   return rows;
@@ -449,13 +461,22 @@ function normalizeCsvHeader(value: string): string {
 }
 
 function findCsvColumnIndex(headers: string[], aliases: string[]): number {
-  const normalizedAliases = new Set(aliases.map((alias) => normalizeCsvHeader(alias)));
-  return headers.findIndex((header) => normalizedAliases.has(normalizeCsvHeader(header)));
+  const normalizedAliases = new Set(
+    aliases.map((alias) => normalizeCsvHeader(alias))
+  );
+
+  return headers.findIndex((header) =>
+    normalizedAliases.has(normalizeCsvHeader(header))
+  );
 }
 
 function getCsvCell(row: string[], index: number): string {
   if (index < 0) return "";
-  return normalizeMultilineText(row[index] ?? "");
+
+  const raw = String(row[index] ?? "").trim();
+  if (!raw) return "";
+
+  return normalizeWhitespace(raw);
 }
 
 function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
@@ -463,20 +484,29 @@ function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
   if (!normalized) return [];
 
   const rows = parseCsvRows(normalized);
-
   if (rows.length < 2) {
     return [];
   }
 
   const headerRow = rows[0];
-  const titleIndex = findCsvColumnIndex(headerRow, ["title", "test case", "testcase", "name"]);
+
+  const titleIndex = findCsvColumnIndex(headerRow, [
+    "title",
+    "test case",
+    "testcase",
+    "name",
+  ]);
   const typeIndex = findCsvColumnIndex(headerRow, ["type"]);
   const priorityIndex = findCsvColumnIndex(headerRow, ["priority"]);
   const preconditionsIndex = findCsvColumnIndex(headerRow, [
     "preconditions",
     "precondition",
   ]);
-  const stepsIndex = findCsvColumnIndex(headerRow, ["test steps", "steps", "procedure"]);
+  const stepsIndex = findCsvColumnIndex(headerRow, [
+    "test steps",
+    "steps",
+    "procedure",
+  ]);
   const expectedIndex = findCsvColumnIndex(headerRow, [
     "expected results",
     "expected result",
@@ -512,13 +542,15 @@ function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
     const tagsValue = getCsvCell(row, tagsIndex);
     const notesValue = getCsvCell(row, notesIndex);
 
+    // M14:
+    // Skip only rows that truly fail the locked minimum structure.
     if (
-      !title ||
-      !typeValue ||
-      !priorityValue ||
-      !preconditionsValue ||
-      !stepsValue ||
-      !expectedValue
+      !title.trim() ||
+      !typeValue.trim() ||
+      !priorityValue.trim() ||
+      !preconditionsValue.trim() ||
+      !stepsValue.trim() ||
+      !expectedValue.trim()
     ) {
       continue;
     }
@@ -537,16 +569,12 @@ function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
     out.push({
       title,
       body: bodyLines.join("\n"),
-
-      // WHY:
-      // Preserve non-enum values in body, but only persist locked enum-safe values.
       ...(normalizeCaseType(typeValue)
         ? { type: normalizeCaseType(typeValue) }
         : {}),
       ...(normalizePriority(priorityValue)
         ? { priority: normalizePriority(priorityValue) }
         : {}),
-
       preconditions: splitInlineOrBulletedValue(preconditionsValue),
       steps: splitInlineOrBulletedValue(stepsValue),
       expectedResults: splitInlineOrBulletedValue(expectedValue),
@@ -557,7 +585,6 @@ function parseCsvUploadedSuiteText(text: string): ParsedGeneratedCase[] {
 
   return out;
 }
-
 /**
  * M14:
  * Format-aware uploaded suite parsing boundary.
