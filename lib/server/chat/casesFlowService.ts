@@ -32,6 +32,11 @@
 // M12.17 CHANGE:
 // - preserve artifact-enriched suite flows without changing body-driven UI behavior
 // - keep changed-but-invalid suite outcomes explicit instead of looking like silent no-ops
+//
+// M14 CHANGE:
+// - wire uploaded suite ingestion through the cases flow
+// - allow txt/md/csv uploaded suites to persist as authoritative testSuite artifacts
+// - keep upload ingestion separate from generated-text merge/regenerate paths
 
 import type {
   SessionArtifact,
@@ -42,6 +47,7 @@ import { getTestSuite, validateTestSuite } from "@/lib/chat/artifact";
 import type { TelemetryEventType } from "@/lib/server/telemetry/telemetryTypes";
 
 import {
+  ingestUploadedSuiteContent,
   mergeGeneratedCasesIntoSuite,
   mergeNextBatchIntoSuite,
   regenerateSuiteFromGeneratedText,
@@ -183,6 +189,13 @@ export async function runCasesFlow(args: {
   sessionArtifact: SessionArtifact | null;
   explicitRegenerationRequest: boolean;
   workflowAction?: CasesWorkflowAction;
+  uploadedSuite?:
+    | {
+        filename: string;
+        format: "txt" | "md" | "csv";
+        content: string;
+      }
+    | null;
 }): Promise<{
   replyTextForUser: string;
   nextTestSuiteArtifact: TestSuiteArtifact | null;
@@ -194,6 +207,68 @@ export async function runCasesFlow(args: {
   const workflowAction = args.workflowAction ?? null;
 
   const existingSuite = getTestSuite(args.sessionArtifact);
+
+  // M14:
+  // Uploaded suite ingestion must happen before any generated-text merge or
+  // regenerate path. This is the real file-based ingestion path for txt/md/csv.
+  if (args.uploadedSuite) {
+    const ingested = ingestUploadedSuiteContent({
+      format: args.uploadedSuite.format,
+      content: args.uploadedSuite.content,
+    });
+
+    if (!ingested.ok) {
+      const analysis = analyzeTestSuite(existingSuite);
+      const guidance = buildWorkflowGuidance(analysis);
+
+      return {
+        replyTextForUser: ingested.message,
+        nextTestSuiteArtifact: existingSuite,
+        testSuiteAddedCount: 0,
+        telemetry: null,
+        analysis,
+        guidance,
+      };
+    }
+
+    const validation = validateTestSuite(ingested.nextSuite);
+    const analysis = analyzeTestSuite(ingested.nextSuite);
+    const guidance = buildWorkflowGuidance(analysis);
+
+    const shouldRenderChangedButInvalidSuite = validation.hasDuplicates;
+
+    const replyTextForUser = shouldRenderChangedButInvalidSuite
+      ? buildChangedButInvalidReply({
+          nextSuite: ingested.nextSuite,
+          validation,
+        })
+      : renderTestSuiteForUser(ingested.nextSuite);
+
+    return {
+      replyTextForUser,
+      nextTestSuiteArtifact: ingested.nextSuite,
+      testSuiteAddedCount: ingested.parsedCount,
+      telemetry: {
+        eventType: existingSuite ? "test_suite_extended" : "test_suite_generated",
+        artifactType: "testSuite",
+        artifactVersion: ingested.nextSuite.version,
+        metadata: {
+          suiteSize: ingested.nextSuite.cases.length,
+          newCasesGenerated: ingested.parsedCount,
+          duplicateGroups: validation.duplicateGroups.length,
+          duplicateSkippedCount: 0,
+          addedCaseIds: ingested.nextSuite.cases.map((c) => c.id),
+          previousVersion: existingSuite?.version ?? null,
+          nextVersion: ingested.nextSuite.version,
+          unchanged: false,
+          workflowAction,
+          validationBlockedRender: shouldRenderChangedButInvalidSuite,
+        },
+      },
+      analysis,
+      guidance,
+    };
+  }
 
   let nextTestSuiteArtifact: TestSuiteArtifact | null = null;
   let testSuiteAddedCount = 0;
