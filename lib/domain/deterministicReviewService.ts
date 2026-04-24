@@ -44,6 +44,13 @@
 // - align verdict wording with unresolved requirement burden
 // - prevent "Strong" language while many partial/uncovered units remain
 // - keep review score, verdict, and risk gaps telling the same Design Quality story
+//
+// M14 CHANGE:
+// - add explicit standalone suite review mode when authoritative requirement truth
+//   is missing
+// - keep requirement-aligned deterministic review unchanged when requirement units exist
+// - standalone scoring evaluates intrinsic suite quality only
+// - standalone review must not claim requirement alignment or release readiness
 
 import type {
   RefinedRequirement,
@@ -684,6 +691,279 @@ function buildBreakdown(
   };
 }
 
+/**
+ * M14:
+ * Standalone suite review must evaluate only intrinsic suite quality.
+ * It must not reuse requirement-aligned penalties like orphan mapping, because
+ * without requirement truth every case would look "orphaned" by definition.
+ */
+function hasStructuredCaseSections(testCase: TestCase): boolean {
+  const body = normalizeText(testCase.body);
+
+  return (
+    body.includes("type") &&
+    body.includes("priority") &&
+    body.includes("preconditions") &&
+    (body.includes("test steps") || body.includes("steps")) &&
+    body.includes("expected results")
+  );
+}
+
+function buildStandaloneBreakdown(args: {
+  cases: TestCase[];
+  duplicateGroupCount: number;
+}): ReviewBreakdown {
+  const { cases, duplicateGroupCount } = args;
+  const totalCases = cases.length;
+
+  if (!totalCases) {
+    return {
+      businessRelevance: 0,
+      riskCoverage: 0,
+      designQuality: 0,
+      levelAndScope: 0,
+      diagnosticValue: 0,
+    };
+  }
+
+  const hasPositive = hasScenarioSignal(cases, /\b(valid|success|happy)\b/);
+  const hasNegative = hasScenarioSignal(
+    cases,
+    /\b(invalid|error|fail|negative|unauthori[sz]ed|forbidden|denied)\b/
+  );
+  const hasEdge = hasScenarioSignal(
+    cases,
+    /\b(edge|boundary|limit|max|min|empty|null|blank|expired|duplicate)\b/
+  );
+  const hasSecurity = hasScenarioSignal(
+    cases,
+    /\b(security|auth|authentication|authorization|unauthori[sz]ed|permission|role)\b/
+  );
+
+  const structuredCaseCount = cases.filter(hasStructuredCaseSections).length;
+  const structuredRatio = structuredCaseCount / Math.max(1, totalCases);
+
+  let businessRelevance = 3;
+  if (hasPositive) businessRelevance += 3;
+  if (hasNegative) businessRelevance += 3;
+  if (hasSecurity) businessRelevance += 2;
+  if (totalCases >= 5) businessRelevance += 1;
+  businessRelevance = Math.min(12, businessRelevance);
+
+  let riskCoverage = 3;
+  if (hasNegative) riskCoverage += 3;
+  if (hasEdge) riskCoverage += 4;
+  if (hasSecurity) riskCoverage += 2;
+  if (totalCases >= 6) riskCoverage += 1;
+  riskCoverage = Math.min(13, riskCoverage);
+
+  let designQuality = Math.round(structuredRatio * 10) + 2;
+  if (duplicateGroupCount > 0) {
+    designQuality -= Math.min(5, duplicateGroupCount * 2);
+  }
+  designQuality = Math.max(0, Math.min(12, designQuality));
+
+  let levelAndScope = 1;
+  if (hasPositive) levelAndScope += 3;
+  if (hasNegative) levelAndScope += 4;
+  if (hasEdge) levelAndScope += 3;
+  if (hasSecurity) levelAndScope += 1;
+  if (totalCases >= 8) levelAndScope += 1;
+  levelAndScope = Math.min(13, levelAndScope);
+
+  let diagnosticValue = 6;
+  if (structuredRatio >= 0.9) {
+    diagnosticValue += 5;
+  } else if (structuredRatio >= 0.75) {
+    diagnosticValue += 3;
+  } else if (structuredRatio >= 0.5) {
+    diagnosticValue += 1;
+  }
+
+  if (totalCases >= 4) diagnosticValue += 2;
+  if (totalCases >= 8) diagnosticValue += 1;
+
+  if (duplicateGroupCount > 0) {
+    diagnosticValue -= Math.min(4, duplicateGroupCount * 2);
+  }
+
+  diagnosticValue = Math.max(0, Math.min(15, diagnosticValue));
+
+  return {
+    businessRelevance,
+    riskCoverage,
+    designQuality,
+    levelAndScope,
+    diagnosticValue,
+  };
+}
+
+function buildStandaloneVerdict(score: number, totalCases: number): string {
+  if (totalCases === 0) {
+    return "Poor - no test suite is available for standalone review";
+  }
+
+  if (score >= 55) {
+    return "Good - standalone suite is well-structured but not requirement-aligned";
+  }
+
+  if (score >= 35) {
+    return "Moderate - standalone suite is usable but lacks requirement context";
+  }
+
+  return "Weak - standalone suite quality is limited";
+}
+
+function buildStandaloneRiskGaps(args: {
+  cases: TestCase[];
+  duplicateGroupCount: number;
+}): string[] {
+  const { cases, duplicateGroupCount } = args;
+  const gaps: string[] = [
+    "Requirement alignment unavailable: no authoritative requirement artifact is present",
+  ];
+
+  if (!cases.length) {
+    gaps.push("No test cases are available in the current test suite");
+    return gaps.slice(0, 12);
+  }
+
+  const hasNegative = hasScenarioSignal(
+    cases,
+    /\b(invalid|error|fail|negative|unauthori[sz]ed|forbidden|denied)\b/
+  );
+  const hasEdge = hasScenarioSignal(
+    cases,
+    /\b(edge|boundary|limit|max|min|empty|null|blank|expired|duplicate)\b/
+  );
+  const hasSecurity = hasScenarioSignal(
+    cases,
+    /\b(security|auth|authentication|authorization|unauthori[sz]ed|permission|role)\b/
+  );
+
+  if (!hasNegative) {
+    gaps.push("Negative-path coverage is not clearly visible from the standalone suite");
+  }
+
+  if (!hasEdge) {
+    gaps.push("Edge-case coverage is not clearly visible from the standalone suite");
+  }
+
+  if (!hasSecurity) {
+    gaps.push("Security or authorization-oriented coverage is not clearly visible");
+  }
+
+  if (duplicateGroupCount > 0) {
+    gaps.push(
+      `Duplicate coverage reduces intrinsic suite signal across ${duplicateGroupCount} test case group(s)`
+    );
+  }
+
+  return gaps.slice(0, 12);
+}
+
+function buildStandaloneAntiPatterns(args: {
+  cases: TestCase[];
+  duplicateGroupCount: number;
+}): string[] {
+  const { cases, duplicateGroupCount } = args;
+  const antiPatterns: string[] = [];
+
+  if (duplicateGroupCount > 0) {
+    antiPatterns.push(
+      `Duplicate coverage detected across ${duplicateGroupCount} test case group(s)`
+    );
+  }
+
+  if (cases.length > 0 && cases.every((testCase) => !hasStructuredCaseSections(testCase))) {
+    antiPatterns.push("Standalone suite cases are missing consistent locked test structure");
+  }
+
+  return antiPatterns.slice(0, 12);
+}
+
+function buildStandaloneImprovements(args: {
+  cases: TestCase[];
+  duplicateGroupCount: number;
+}): string[] {
+  const { cases, duplicateGroupCount } = args;
+  const improvements: string[] = [
+    "Add or confirm an authoritative requirement artifact to enable requirement-aligned review",
+  ];
+
+  if (!cases.length) {
+    improvements.push("Upload or generate an initial suite before standalone review");
+    return improvements.slice(0, 12);
+  }
+
+  const hasNegative = hasScenarioSignal(
+    cases,
+    /\b(invalid|error|fail|negative|unauthori[sz]ed|forbidden|denied)\b/
+  );
+  const hasEdge = hasScenarioSignal(
+    cases,
+    /\b(edge|boundary|limit|max|min|empty|null|blank|expired|duplicate)\b/
+  );
+
+  if (!hasNegative) {
+    improvements.push("Add explicit negative-path cases to improve standalone suite resilience");
+  }
+
+  if (!hasEdge) {
+    improvements.push("Add edge and boundary scenarios to improve standalone breadth");
+  }
+
+  if (duplicateGroupCount > 0) {
+    improvements.push("Deduplicate overlapping cases to improve standalone suite signal quality");
+  }
+
+  if (cases.some((testCase) => !hasStructuredCaseSections(testCase))) {
+    improvements.push("Normalize cases to the locked TC structure for stronger diagnostic value");
+  }
+
+  return improvements.slice(0, 12);
+}
+
+function buildStandaloneSuiteReviewResult(args: {
+  details: DeterministicReviewDetails;
+  cases: TestCase[];
+}): ReviewResult {
+  const breakdown = buildStandaloneBreakdown({
+    cases: args.cases,
+    duplicateGroupCount: args.details.duplicateGroupCount,
+  });
+
+  // M14:
+  // Intrinsic standalone review is intentionally capped below top requirement-
+  // aligned bands because requirement truth is unavailable.
+  const score = Math.min(
+    breakdown.businessRelevance +
+      breakdown.riskCoverage +
+      breakdown.designQuality +
+      breakdown.levelAndScope +
+      breakdown.diagnosticValue,
+    65
+  );
+
+  return {
+    score,
+    verdict: buildStandaloneVerdict(score, args.details.totalCases),
+    breakdown,
+    riskGaps: buildStandaloneRiskGaps({
+      cases: args.cases,
+      duplicateGroupCount: args.details.duplicateGroupCount,
+    }),
+    antiPatterns: buildStandaloneAntiPatterns({
+      cases: args.cases,
+      duplicateGroupCount: args.details.duplicateGroupCount,
+    }),
+    improvements: buildStandaloneImprovements({
+      cases: args.cases,
+      duplicateGroupCount: args.details.duplicateGroupCount,
+    }),
+  };
+}
+
 function buildRiskGaps(details: DeterministicReviewDetails): string[] {
   const gaps: string[] = [];
 
@@ -946,16 +1226,21 @@ export function buildDeterministicReviewResult(args: {
 }): ReviewResult {
   const { details, cases } = buildReviewDetails(args);
 
+  // M14:
+  // If no authoritative requirement units exist, switch to intrinsic standalone
+  // suite review instead of forcing a requirement-missing zero result.
+  if (details.requirementUnits.length === 0) {
+    return buildStandaloneSuiteReviewResult({ details, cases });
+  }
+
   const breakdown = buildBreakdown(details, cases);
 
   const rawScore =
-    details.requirementUnits.length === 0
-      ? 0
-      : breakdown.businessRelevance +
-        breakdown.riskCoverage +
-        breakdown.designQuality +
-        breakdown.levelAndScope +
-        breakdown.diagnosticValue;
+    breakdown.businessRelevance +
+    breakdown.riskCoverage +
+    breakdown.designQuality +
+    breakdown.levelAndScope +
+    breakdown.diagnosticValue;
 
   const score = Math.min(rawScore, getFinalScoreCap(details));
 
