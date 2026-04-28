@@ -59,6 +59,7 @@ import { runCoachFlow } from "@/lib/server/chat/coachFlowService";
 import {
   runCasesFlow,
   type CasesFlowTelemetry,
+  type CasesWorkflowAction,
 } from "@/lib/server/chat/casesFlowService";
 import { parseExecutionResponse } from "@/lib/server/chat/modelResponseParser";
 import type { SuiteAnalysis } from "@/lib/server/chat/suiteAnalysisService";
@@ -96,6 +97,21 @@ function buildExecutionReplyText(
     .join(" ");
 }
 
+function toCasesWorkflowAction(
+  workflowAction: PostModelWorkflowAction | null | undefined
+): CasesWorkflowAction {
+  if (
+    workflowAction === "generate_tests_from_requirement" ||
+    workflowAction === "generate_next_batch_of_tests" ||
+    workflowAction === "regenerate_suite" ||
+    workflowAction === "review_test_suite"
+  ) {
+    return workflowAction;
+  }
+
+  return null;
+}
+
 export async function runPostModelFlow(args: {
   rawReply: string;
   executionMode: "coach" | "review";
@@ -107,6 +123,14 @@ export async function runPostModelFlow(args: {
   guidedAnswer: boolean;
   weakInput: boolean;
   explicitRegenerationRequest: boolean;
+  uploadedSuite:
+    | {
+        filename: string;
+        format: "txt" | "md" | "csv";
+        content: string;
+      }
+    | null
+    | undefined;
   workflowAction?: PostModelWorkflowAction;
 }): Promise<{
   coachParsed: CoachResult | null;
@@ -229,7 +253,8 @@ export async function runPostModelFlow(args: {
       rawReply: args.rawReply,
       sessionArtifact,
       explicitRegenerationRequest: args.explicitRegenerationRequest,
-      workflowAction: casesWorkflowAction,
+      workflowAction: toCasesWorkflowAction(args.workflowAction),
+      uploadedSuite: args.uploadedSuite ?? null,
     });
 
     replyTextForUser = casesFlow.replyTextForUser;

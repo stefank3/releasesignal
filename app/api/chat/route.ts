@@ -920,6 +920,7 @@ export async function POST(req: Request) {
         guidedAnswer: false,
         weakInput: false,
         explicitRegenerationRequest: false,
+        uploadedSuite: uploadedSuite ?? null,
         workflowAction,
       });
 
@@ -1286,6 +1287,9 @@ export async function POST(req: Request) {
       weakInput,
       explicitRegenerationRequest,
       workflowAction,
+      uploadedSuite: uploadedSuite ?? null,
+
+      
     });
 
     const coachParsed: CoachResult | null = postModel.coachParsed;
