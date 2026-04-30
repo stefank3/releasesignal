@@ -1122,7 +1122,6 @@ export function useChatSession(): UseChatSessionReturn {
           title: "Upload blocked by workspace rules",
           details:
             "This workspace already contains a persisted test suite. A session represents a single test target. Start a new session to review this suite separately.",
-          action: "start_new_session",
           requestId: blockRequestId,
         },
       ]);

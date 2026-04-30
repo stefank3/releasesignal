@@ -127,12 +127,15 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
       const content = await file.text();
 
       if (!content || !content.trim()) {
-        window.alert("The uploaded file is empty. Please upload a valid test suite.");
-        event.target.value = "";
+        onPendingUploadedSuiteChangeAction?.(null);
+        setUploadError(
+          "The selected file is empty. Upload a .txt, .md, or .csv file that contains a test suite."
+        );
+        clearFileInput();
         return;
       }
 
-    const pendingUpload = buildPendingUploadedSuite({
+      const pendingUpload = buildPendingUploadedSuite({
         filename: file.name,
         content,
       });
