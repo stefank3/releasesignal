@@ -550,6 +550,7 @@ export default function ChatPanel({
               }}
               canReviewTestSuite={chat.canReviewTestSuite}
               isReviewingTestSuite={chat.isRunningWorkflowAction}
+              lastSuiteUploadFailed={chat.lastSuiteUploadFailed}
             />
           </div>
 
@@ -592,6 +593,8 @@ export default function ChatPanel({
               value={chat.input}
               disabled={isBusy}
               resolvedTheme={resolvedTheme}
+              pendingUploadedSuite={chat.pendingUploadedSuite}
+              onPendingUploadedSuiteChangeAction={chat.setPendingUploadedSuite}
               onChangeAction={(next: string) => chat.setInput(next)}
               onSendAction={() => {
                 void (async () => {
@@ -599,7 +602,7 @@ export default function ChatPanel({
                   onAfterSendAction?.();
                 })();
               }}
-            />
+/>
           </div>
         </div>
       </div>

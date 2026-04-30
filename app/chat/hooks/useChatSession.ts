@@ -127,13 +127,13 @@ export type UseChatSessionReturn = {
   pendingUploadedSuite: PendingUploadedSuite | null;
   setPendingUploadedSuite: Dispatch<SetStateAction<PendingUploadedSuite | null>>;
 
+  lastSuiteUploadFailed: boolean;
+
   items: ChatItem[];
   setItems: Dispatch<SetStateAction<ChatItem[]>>;
 
   isSending: boolean;
 
-  // M12.9 CHANGE:
-  // explicit action execution state for artifact-driven workspace actions
   isRunningWorkflowAction: boolean;
   workflowActionError: string | null;
   canGenerateTests: boolean;
@@ -207,12 +207,8 @@ export type UseChatSessionReturn = {
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
 
-  // M12 Step 4B:
-  // explicit editable-suite persistence path
   updateTestSuite: (cases: TestCase[]) => Promise<void>;
 
-  // M12.9 CHANGE:
-  // artifact-driven workspace action paths
   generateTestsFromRequirement: () => Promise<void>;
   reviewTestSuite: () => Promise<void>;
 
@@ -261,15 +257,6 @@ function shouldApplyIncomingArtifact(args: {
   return incomingMs >= currentMs;
 }
 
-/**
- * M12.18:
- * Reset-time history replay may still contain old review chat items.
- * Those are valid as history, but when no persisted review artifact exists
- * they must not keep rendering as the current/latest review workspace state.
- *
- * We downgrade them to plain text history items so chat continuity remains
- * visible without letting old review cards impersonate artifact truth.
- */
 function pruneStaleReviewItems(args: {
   mapped: ChatItem[];
   effectiveHistoryArtifact: SessionArtifact | null;
@@ -296,12 +283,6 @@ function pruneStaleReviewItems(args: {
   });
 }
 
-/**
- * M12.18:
- * Apply the same stale-review cleanup immediately during live session updates.
- * This prevents the user from needing a refresh before the old review stops
- * appearing as current state after a material requirement change.
- */
 function pruneLiveStaleReviewItems(args: {
   items: ChatItem[];
   nextArtifact: SessionArtifact | null;
@@ -330,12 +311,11 @@ export function useChatSession(): UseChatSessionReturn {
   const [mode, setMode] = useState<Mode>("coach");
   const [input, setInput] = useState("");
   const [pendingUploadedSuite, setPendingUploadedSuite] =
-  useState<PendingUploadedSuite | null>(null); 
+    useState<PendingUploadedSuite | null>(null);
+  const [lastSuiteUploadFailed, setLastSuiteUploadFailed] = useState(false);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [isSending, setIsSending] = useState(false);
 
-  // M12.9 CHANGE:
-  // separate workspace action execution state from freeform send() state
   const [isRunningWorkflowAction, setIsRunningWorkflowAction] = useState(false);
   const [workflowActionError, setWorkflowActionError] = useState<string | null>(
     null
@@ -395,12 +375,6 @@ export function useChatSession(): UseChatSessionReturn {
     currentArtifactUpdatedAtRef.current = artifactUpdatedAt;
   }, [artifactUpdatedAt]);
 
-  /*
-  ---------------------------------------------------------
-  LOCAL PERSISTENCE
-  ---------------------------------------------------------
-  */
-
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SIDEBAR_KEY);
@@ -437,12 +411,6 @@ export function useChatSession(): UseChatSessionReturn {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }, [mode, items, input]);
 
-  /*
-  ---------------------------------------------------------
-  TRANSIENT UI MESSAGES
-  ---------------------------------------------------------
-  */
-
   useEffect(() => {
     if (!rateLimitMsg) return;
     const t = setTimeout(() => setRateLimitMsg(null), 4000);
@@ -454,12 +422,6 @@ export function useChatSession(): UseChatSessionReturn {
     const t = setTimeout(() => setModeLockMsg(null), 6000);
     return () => clearTimeout(t);
   }, [modeLockMsg]);
-
-  /*
-  ---------------------------------------------------------
-  SESSION LIST
-  ---------------------------------------------------------
-  */
 
   const loadSessions = async (reset: boolean) => {
     if (sessionsLoading) return;
@@ -490,12 +452,6 @@ export function useChatSession(): UseChatSessionReturn {
     void loadSessions(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  /*
-  ---------------------------------------------------------
-  SESSION HISTORY
-  ---------------------------------------------------------
-  */
 
   const loadSessionMessages = async (
     sessionId: string,
@@ -546,10 +502,6 @@ export function useChatSession(): UseChatSessionReturn {
           : historyArtifactUpdatedAt;
 
       if (reset) {
-        // M12.14 / M12.15:
-        // Classification-aware execution state and release-health state stay
-        // inside the artifact. Rehydration remains timestamp-guarded and
-        // artifact-owned.
         setSessionArtifact(effectiveHistoryArtifact);
         setArtifactUpdatedAt(effectiveHistoryArtifactUpdatedAt);
         setWorkflowActionError(null);
@@ -578,13 +530,13 @@ export function useChatSession(): UseChatSessionReturn {
         : mapped;
 
       if (reset) {
-        // BUG FIX (M12.10):
-        // Preserve the selected/restored visible mode for the workspace.
         setActiveSessionMode(sessionMode);
         setMode(sessionMode);
       }
 
-      setItems((prev) => (reset ? nextMappedItems : [...nextMappedItems, ...prev]));
+      setItems((prev) =>
+        reset ? nextMappedItems : [...nextMappedItems, ...prev]
+      );
       setMessagesCursor(data.nextCursor);
     } catch (e) {
       console.error("Failed to load messages", e);
@@ -605,6 +557,8 @@ export function useChatSession(): UseChatSessionReturn {
 
     setItems([]);
     setInput("");
+    setPendingUploadedSuite(null);
+    setLastSuiteUploadFailed(false);
 
     setRate(null);
     setRateLimitMsg(null);
@@ -617,12 +571,6 @@ export function useChatSession(): UseChatSessionReturn {
     await loadSessionMessages(sessionId, true, sessionMode);
   };
 
-  /*
-  ---------------------------------------------------------
-  SESSION CREATION / MODE CONTROL
-  ---------------------------------------------------------
-  */
-
   const newChat = () => {
     setModeLockMsg(null);
     setWorkflowActionError(null);
@@ -634,6 +582,8 @@ export function useChatSession(): UseChatSessionReturn {
 
     setItems([]);
     setInput("");
+    setPendingUploadedSuite(null);
+    setLastSuiteUploadFailed(false);
 
     setRate(null);
     setRateLimitMsg(null);
@@ -660,7 +610,9 @@ export function useChatSession(): UseChatSessionReturn {
 
     setItems([]);
     setInput("");
+    setPendingUploadedSuite(null);
     setMessagesCursor(null);
+    setLastSuiteUploadFailed(false);
 
     setRate(null);
     setRateLimitMsg(null);
@@ -681,12 +633,6 @@ export function useChatSession(): UseChatSessionReturn {
       setActiveSessionMode(next);
     }
   };
-
-  /*
-  ---------------------------------------------------------
-  SESSION TITLE / DELETE
-  ---------------------------------------------------------
-  */
 
   const renameSession = async (sessionId: string, title: string) => {
     const nextTitle = title.trim();
@@ -726,6 +672,8 @@ export function useChatSession(): UseChatSessionReturn {
         setActiveSessionId(null);
         setItems([]);
         setInput("");
+        setPendingUploadedSuite(null);
+        setLastSuiteUploadFailed(false);
         setMessagesCursor(null);
         setRate(null);
         setRateLimitMsg(null);
@@ -747,12 +695,6 @@ export function useChatSession(): UseChatSessionReturn {
     }
   };
 
-  /*
-  ---------------------------------------------------------
-  M12 STEP 4B: EDITABLE TEST SUITE PERSISTENCE
-  ---------------------------------------------------------
-  */
-
   const updateTestSuite = async (cases: TestCase[]) => {
     if (!activeSessionId) return;
 
@@ -771,9 +713,6 @@ export function useChatSession(): UseChatSessionReturn {
         },
       };
 
-      // M12.14 / M12.15:
-      // Keep existing execution/classification state and release-health state
-      // intact when suite edits are saved.
       setSessionArtifact(nextArtifact);
       setArtifactUpdatedAt(nowIso);
 
@@ -799,12 +738,6 @@ export function useChatSession(): UseChatSessionReturn {
       console.error("Failed to update test suite", err);
     }
   };
-
-  /*
-  ---------------------------------------------------------
-  M12.9: WORKFLOW ACTIONS
-  ---------------------------------------------------------
-  */
 
   const appendWorkflowActionError = (
     title: string,
@@ -937,16 +870,9 @@ export function useChatSession(): UseChatSessionReturn {
       const nextArtifact = artifactPayload?.artifact ?? null;
 
       if (artifactPayload) {
-        // M12.14 / M12.15:
-        // Classification-aware execution data and release-health data enter
-        // client state through the same authoritative artifact response path
-        // as all other persisted state.
         setSessionArtifact(artifactPayload.artifact);
         setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
 
-        // M12.18:
-        // Apply live stale-review cleanup as soon as the authoritative artifact
-        // says no persisted review exists.
         setItems((prev) =>
           pruneLiveStaleReviewItems({
             items: prev,
@@ -1008,7 +934,11 @@ export function useChatSession(): UseChatSessionReturn {
 
       const reply = typeof data?.reply === "string" ? data.reply : "";
 
-      if (action === "generate_tests_from_requirement") {
+      if (
+        action === "generate_tests_from_requirement" ||
+        action === "generate_next_batch_of_tests" ||
+        action === "regenerate_suite"
+      ) {
         const hasSuiteArtifact =
           !!nextArtifact?.testSuite &&
           Array.isArray(nextArtifact.testSuite.cases) &&
@@ -1019,99 +949,11 @@ export function useChatSession(): UseChatSessionReturn {
 
         if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
           appendWorkflowActionError(
-            "Generate Tests failed",
-            "The action completed without producing a persisted test suite artifact or a valid suite response.",
-            serverRequestId
-          );
-          return;
-        }
-
-        setMode("cases");
-        setActiveSessionMode("cases");
-        setRateLimitMsg(null);
-
-        setItems((prev) => [
-          ...prev,
-          shouldRenderAsCasesText
-            ? ({
-                kind: "casesText",
-                role: "bot",
-                text: reply || "No reply returned",
-                requestId: serverRequestId,
-                ...(data?.workflowGuidance
-                  ? { workflowGuidance: data.workflowGuidance }
-                  : {}),
-              } as ChatItem)
-            : ({
-                kind: "text",
-                role: "bot",
-                text: reply || "No reply returned",
-                requestId: serverRequestId,
-              } as ChatItem),
-        ]);
-
-        await loadSessions(true);
-        return;
-      }
-
-      if (action === "generate_next_batch_of_tests") {
-        const hasSuiteArtifact =
-          !!nextArtifact?.testSuite &&
-          Array.isArray(nextArtifact.testSuite.cases) &&
-          nextArtifact.testSuite.cases.length > 0;
-
-        const shouldRenderAsCasesText =
-          hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
-
-        if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
-          appendWorkflowActionError(
-            "Generate Next Batch failed",
-            "The action completed without producing a persisted test suite artifact or a valid suite response.",
-            serverRequestId
-          );
-          return;
-        }
-
-        setMode("cases");
-        setActiveSessionMode("cases");
-        setRateLimitMsg(null);
-
-        setItems((prev) => [
-          ...prev,
-          shouldRenderAsCasesText
-            ? ({
-                kind: "casesText",
-                role: "bot",
-                text: reply || "No reply returned",
-                requestId: serverRequestId,
-                ...(data?.workflowGuidance
-                  ? { workflowGuidance: data.workflowGuidance }
-                  : {}),
-              } as ChatItem)
-            : ({
-                kind: "text",
-                role: "bot",
-                text: reply || "No reply returned",
-                requestId: serverRequestId,
-              } as ChatItem),
-        ]);
-
-        await loadSessions(true);
-        return;
-      }
-
-      if (action === "regenerate_suite") {
-        const hasSuiteArtifact =
-          !!nextArtifact?.testSuite &&
-          Array.isArray(nextArtifact.testSuite.cases) &&
-          nextArtifact.testSuite.cases.length > 0;
-
-        const shouldRenderAsCasesText =
-          hasSuiteArtifact || looksLikePersistedTestSuiteText(reply);
-
-        if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
-          appendWorkflowActionError(
-            "Improve / Regenerate Suite failed",
+            action === "regenerate_suite"
+              ? "Improve / Regenerate Suite failed"
+              : action === "generate_next_batch_of_tests"
+                ? "Generate Next Batch failed"
+                : "Generate Tests failed",
             "The action completed without producing a persisted test suite artifact or a valid suite response.",
             serverRequestId
           );
@@ -1249,19 +1091,47 @@ export function useChatSession(): UseChatSessionReturn {
     await runWorkflowAction("review_test_suite");
   };
 
-  /*
-  ---------------------------------------------------------
-  SEND FLOW
-  ---------------------------------------------------------
-  */
-
   const send = async (opts?: { replay?: boolean }) => {
     const replay = opts?.replay ?? false;
 
     const text = replay ? lastPending?.text ?? "" : input.trim();
     const hasPendingUploadedSuite = !replay && !!pendingUploadedSuite;
+    const requestHadUploadedSuite = hasPendingUploadedSuite;
 
-if ((!text && !hasPendingUploadedSuite) || isSending) return;
+        // M14 WORKSPACE INTEGRITY:
+    // One review workspace should represent one coherent test target.
+    // Do not silently append/replace an uploaded suite when a persisted suite already exists.
+    if (
+      hasPendingUploadedSuite &&
+      sessionArtifact?.testSuite &&
+      Array.isArray(sessionArtifact.testSuite.cases) &&
+      sessionArtifact.testSuite.cases.length > 0
+    ) {
+      const blockRequestId = createRequestId();
+      if (!blockRequestId) return;
+
+      setLastRequestId(blockRequestId);
+      setLastSuiteUploadFailed(false);
+      setPendingUploadedSuite(null);
+
+      setItems((prev) => [
+        ...prev,
+        {
+          kind: "error",
+          role: "bot",
+          title: "Upload blocked by workspace rules",
+          details:
+            "This workspace already contains a persisted test suite. A session represents a single test target. Start a new session to review this suite separately.",
+          action: "start_new_session",
+          requestId: blockRequestId,
+        },
+      ]);
+
+      shouldAutoScrollRef.current = true;
+      return;
+    }
+
+    if ((!text && !hasPendingUploadedSuite) || isSending) return;
 
     const requestId = replay
       ? lastPending?.requestId ?? ""
@@ -1270,7 +1140,7 @@ if ((!text && !hasPendingUploadedSuite) || isSending) return;
 
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
 
-if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
+    if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
       setLastRequestId(requestId);
       setItems((prev) => [
         ...prev,
@@ -1366,23 +1236,18 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
 
       const artifactPayload = readArtifactFromResponse(data);
       const nextArtifact = artifactPayload?.artifact ?? null;
-          if (artifactPayload) {
-            // M12.14 / M12.15:
-            // Reuse the existing authoritative artifact response path so execution
-            // classification state and release-health state rehydrate exactly like
-            // requirement/suite/review state.
-            setSessionArtifact(artifactPayload.artifact);
-            setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
 
-            // M12.18:
-            // Apply live stale-review cleanup for freeform coach refinements too.
-            setItems((prev) =>
-              pruneLiveStaleReviewItems({
-                items: prev,
-                nextArtifact: artifactPayload.artifact,
-              })
-            );
-          }
+      if (artifactPayload) {
+        setSessionArtifact(artifactPayload.artifact);
+        setArtifactUpdatedAt(artifactPayload.artifactUpdatedAt);
+
+        setItems((prev) =>
+          pruneLiveStaleReviewItems({
+            items: prev,
+            nextArtifact: artifactPayload.artifact,
+          })
+        );
+      }
 
       if (!replay && pendingUploadedSuite) {
         setPendingUploadedSuite(null);
@@ -1423,6 +1288,10 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
       }
 
       if (status === 401) {
+        if (requestHadUploadedSuite) {
+          setLastSuiteUploadFailed(true);
+        }
+
         setItems((prev) => [
           ...prev,
           {
@@ -1439,6 +1308,10 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
       }
 
       if (!(status >= 200 && status < 300) || data?.ok === false) {
+        if (requestHadUploadedSuite) {
+          setLastSuiteUploadFailed(true);
+        }
+
         setItems((prev) => [
           ...prev,
           {
@@ -1460,6 +1333,39 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
       }
 
       setRateLimitMsg(null);
+
+      const emptySuiteFallbackReview =
+        data?.mode === "review" &&
+        !!data?.review &&
+        data.review.score === 0 &&
+        /no test suite is available for standalone review/i.test(
+          String(data.review.verdict ?? "")
+        );
+
+      if (requestHadUploadedSuite && emptySuiteFallbackReview) {
+        // Upload failure must be explicit state, not inferred from rendered chat.
+        setLastSuiteUploadFailed(true);
+
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "error",
+            role: "bot",
+            title: "Suite upload failed",
+            details:
+              "The uploaded file could not be converted into a valid persisted test suite. The earlier review remains the current workspace review.",
+            requestId: serverRequestId,
+          },
+        ]);
+
+        void loadSessions(true);
+        setLastPending(null);
+        return;
+      }
+
+      if (requestHadUploadedSuite) {
+        setLastSuiteUploadFailed(false);
+      }
 
       if (data?.mode === "review" && data?.review) {
         setItems((prev) => [
@@ -1551,6 +1457,10 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
 
+      if (requestHadUploadedSuite) {
+        setLastSuiteUploadFailed(true);
+      }
+
       setLastRequestId(requestId);
       setItems((prev) => [
         ...prev,
@@ -1566,12 +1476,6 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
       setIsSending(false);
     }
   };
-
-  /*
-  ---------------------------------------------------------
-  DERIVED SESSION STATE
-  ---------------------------------------------------------
-  */
 
   const latestCoachSuggestions: CoachSuggestions | null = useMemo(() => {
     for (let i = items.length - 1; i >= 0; i--) {
@@ -1591,11 +1495,9 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
 
   const hasPersistentTestSuite =
     !!sessionArtifact?.testSuite &&
-    Array.isArray(sessionArtifact.testSuite.cases);
+    Array.isArray(sessionArtifact.testSuite.cases) &&
+    sessionArtifact.testSuite.cases.length > 0;
 
-  // M12.18:
-  // Current workspace truth must come from persisted artifact state only.
-  // Historical review chat items must not re-create current review state.
   const hasReviewArtifact = artifactHasReviewSignal(sessionArtifact);
 
   const canGenerateTests =
@@ -1653,9 +1555,12 @@ if (!hasPendingUploadedSuite && text.length > MAX_MESSAGE_CHARS) {
     setMode,
 
     input,
-  setInput,
-  pendingUploadedSuite,
-  setPendingUploadedSuite,
+    setInput,
+    pendingUploadedSuite,
+    setPendingUploadedSuite,
+
+    lastSuiteUploadFailed,
+
     items,
     setItems,
 

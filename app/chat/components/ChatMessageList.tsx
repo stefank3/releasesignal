@@ -52,6 +52,10 @@
 // - improve first-run empty-state clarity inside the message area
 // - add lightweight presentational onboarding labels for assistant artifacts
 // - keep all action visibility and workflow state parent-driven
+//
+// M12.18 FOLLOW-UP:
+// - pass failed-upload stale-review state into review rendering
+// - do not label an earlier saved review as latest when a suite upload failed
 
 "use client";
 
@@ -451,7 +455,9 @@ function EmptyStateCard(args: {
       <ContextLabel label="Empty state" resolvedTheme={args.resolvedTheme} />
       <div style={{ fontSize: 13, fontWeight: 950 }}>{title}</div>
       <div style={{ fontSize: 12, lineHeight: 1.5, opacity: 0.8 }}>{body}</div>
-      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>{footer}</div>
+      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>
+        {footer}
+      </div>
     </div>
   );
 }
@@ -482,6 +488,8 @@ type Props = {
   onRegenerateSuiteAction?: () => void;
   canRegenerateSuite?: boolean;
   isRegeneratingSuite?: boolean;
+
+  lastSuiteUploadFailed?: boolean;
 };
 
 export default function ChatMessageList({
@@ -509,6 +517,8 @@ export default function ChatMessageList({
   onRegenerateSuiteAction,
   canRegenerateSuite = false,
   isRegeneratingSuite = false,
+
+  lastSuiteUploadFailed = false,
 }: Props) {
   const isDark = resolvedTheme === "dark";
 
@@ -653,19 +663,35 @@ export default function ChatMessageList({
 
         if (it.kind === "review") {
           const isLatestReview = idx === latestReviewIndex;
+          const reviewIsStaleDueToFailedUpload =
+            isLatestReview && lastSuiteUploadFailed;
 
           return (
             <div key={key} style={{ display: "grid", gap: 10 }}>
-              <ContextLabel label="Review artifact" resolvedTheme={resolvedTheme} />
-              <ArtifactStatusPill
-                label={isLatestReview ? "Latest review result" : "Earlier review result"}
+              <ContextLabel
+                label="Review artifact"
                 resolvedTheme={resolvedTheme}
-                tone={isLatestReview ? "latest" : "previous"}
+              />
+              <ArtifactStatusPill
+                label={
+                  reviewIsStaleDueToFailedUpload
+                    ? "Earlier review result"
+                    : isLatestReview
+                      ? "Latest review result"
+                      : "Earlier review result"
+                }
+                resolvedTheme={resolvedTheme}
+                tone={
+                  reviewIsStaleDueToFailedUpload || !isLatestReview
+                    ? "previous"
+                    : "latest"
+                }
               />
 
               <ReviewCard
                 review={it.review as ReviewResult}
                 resolvedTheme={resolvedTheme}
+                isStaleDueToFailedUpload={reviewIsStaleDueToFailedUpload}
               />
             </div>
           );

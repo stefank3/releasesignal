@@ -18,6 +18,10 @@
 // - make the current review result easier to scan in long sessions
 // - align review card structure with requirement and suite cards
 // - preserve existing review rendering behavior and empty-state handling
+//
+// M12.18 FOLLOW-UP:
+// - allow caller to mark review as stale when latest suite upload failed
+// - prevent failed-upload path from visually presenting an older review as latest truth
 
 "use client";
 
@@ -25,12 +29,10 @@ import React, { useEffect, useState } from "react";
 import type { ReviewResult } from "../chat.types";
 import { clamp } from "../components/ChatUI";
 
-/** Minimal markdown safety for list items (Jira/Confluence paste). */
 function mdSafe(s: string) {
   return String(s ?? "").replace(/\r/g, "").trim();
 }
 
-/** Convert review result to Markdown so it can be pasted into Jira/Confluence. */
 function reviewToMarkdown(r: ReviewResult) {
   const b = r.breakdown;
 
@@ -66,7 +68,6 @@ function reviewToJson(r: ReviewResult) {
   return JSON.stringify(r, null, 2);
 }
 
-/** Small button used inside cards (Copy MD / Copy JSON). */
 function SmallButton({
   children,
   onClick,
@@ -116,13 +117,7 @@ function SectionLabel(args: {
   const isDark = args.resolvedTheme === "dark";
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gap: 2,
-        marginBottom: 8,
-      }}
-    >
+    <div style={{ display: "grid", gap: 2, marginBottom: 8 }}>
       <div
         style={{
           fontSize: 11,
@@ -152,7 +147,6 @@ function SectionLabel(args: {
   );
 }
 
-/** Breakdown row with a progress bar (simple MVP UI, no external libs). */
 function BarRow({
   label,
   value,
@@ -177,13 +171,7 @@ function BarRow({
         alignItems: "center",
       }}
     >
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 600,
-          color: isDark ? "#fff" : "#111",
-        }}
-      >
+      <div style={{ fontSize: 13, fontWeight: 600, color: isDark ? "#fff" : "#111" }}>
         {label}
       </div>
 
@@ -207,20 +195,13 @@ function BarRow({
         />
       </div>
 
-      <div
-        style={{
-          fontSize: 13,
-          textAlign: "right",
-          color: isDark ? "#fff" : "#111",
-        }}
-      >
+      <div style={{ fontSize: 13, textAlign: "right", color: isDark ? "#fff" : "#111" }}>
         {safeValue}/{max}
       </div>
     </div>
   );
 }
 
-/** Reusable list section for gaps/anti-patterns/improvements. */
 function Section({
   title,
   items,
@@ -234,16 +215,18 @@ function Section({
 
   return (
     <div>
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 800,
-          marginBottom: 8,
-          color: isDark ? "#fff" : "#111",
-        }}
-      >
-        {title}
-      </div>
+      {title ? (
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 800,
+            marginBottom: 8,
+            color: isDark ? "#fff" : "#111",
+          }}
+        >
+          {title}
+        </div>
+      ) : null}
 
       {items.length === 0 ? (
         <div
@@ -275,11 +258,6 @@ function Section({
   );
 }
 
-/**
- * M8.11:
- * Detects "empty review" scenarios returned by the backend when the user did not
- * actually paste a test suite for evaluation.
- */
 function isEmptyReview(review: ReviewResult): boolean {
   const verdict = String(review.verdict ?? "").toLowerCase().trim();
 
@@ -386,9 +364,11 @@ function ReviewEmptyState({
 export default function ReviewCard({
   review,
   resolvedTheme = "light",
+  isStaleDueToFailedUpload = false,
 }: {
   review: ReviewResult;
   resolvedTheme?: "light" | "dark";
+  isStaleDueToFailedUpload?: boolean;
 }) {
   const [toast, setToast] = useState<string | null>(null);
 
@@ -415,6 +395,14 @@ export default function ReviewCard({
           : score >= 40
             ? "Weak"
             : "Poor";
+
+  const artifactBadgeText = isStaleDueToFailedUpload
+    ? "Earlier review artifact"
+    : "Review artifact";
+
+  const scoreSummaryDescription = isStaleDueToFailedUpload
+    ? "Earlier persisted review score. Latest suite upload failed and did not replace saved review state."
+    : "Current persisted review score and grade.";
 
   const copyText = async (text: string, label: string) => {
     try {
@@ -483,7 +471,7 @@ export default function ReviewCard({
               : "rgba(15,23,42,0.82)",
           }}
         >
-          Review artifact
+          {artifactBadgeText}
         </div>
       </div>
 
@@ -526,7 +514,7 @@ export default function ReviewCard({
       >
         <SectionLabel
           title="Score summary"
-          description="Current persisted review score and grade."
+          description={scoreSummaryDescription}
           resolvedTheme={resolvedTheme}
         />
 

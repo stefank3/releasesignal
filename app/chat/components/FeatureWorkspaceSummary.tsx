@@ -159,8 +159,8 @@ function getToneStyles(
           ? "rgba(255,255,255,0.05)"
           : "rgba(15,23,42,0.04)",
       };
-    }
   }
+}
 
 function DashboardTile(args: {
   label: string;
@@ -582,13 +582,43 @@ export default function FeatureWorkspaceSummary({
     : "No persisted suite yet";
 
   const reviewStrength = toRelativeStrength(reviewScore);
+  const reviewIsEarlierBecauseUploadFailed = chat.lastSuiteUploadFailed;
+
   const reviewEmphasis = reviewReady
-    ? reviewStrength
-      ? `${reviewStrength} review result${
-          typeof reviewScore === "number" ? ` (${reviewScore}/100)` : ""
-        }`
-      : "Latest review result is available"
+    ? reviewIsEarlierBecauseUploadFailed
+      ? reviewStrength
+        ? `${reviewStrength} earlier review result${
+            typeof reviewScore === "number" ? ` (${reviewScore}/100)` : ""
+          }`
+        : "Earlier review result is available"
+      : reviewStrength
+        ? `${reviewStrength} review result${
+            typeof reviewScore === "number" ? ` (${reviewScore}/100)` : ""
+          }`
+        : "Latest review result is available"
     : "No persisted review yet";
+
+  const reviewDescription = reviewReady
+    ? reviewIsEarlierBecauseUploadFailed
+      ? "A persisted earlier review result is still available. The latest suite upload failed and did not replace the saved workspace state."
+      : "A persisted review result is available for the current suite."
+    : "Coverage review has not yet been completed for this suite.";
+
+  const reviewHelpText = reviewReady
+    ? reviewIsEarlierBecauseUploadFailed
+      ? "The latest suite upload failed, so this remains the earlier saved review outcome. It should not be treated as a review of the failed upload."
+      : "This reflects the latest saved review outcome for the current suite."
+    : "Run review after a suite exists to evaluate coverage, gaps, and improvement areas.";
+
+  const reviewMeta = reviewReady
+    ? reviewIsEarlierBecauseUploadFailed
+      ? `Earlier review score: ${
+          typeof reviewScore === "number" ? `${reviewScore}/100` : "available"
+        }`
+      : `Review score: ${
+          typeof reviewScore === "number" ? `${reviewScore}/100` : "available"
+        }`
+    : "Run Test Review against the current suite";
 
   const releaseHealthEmphasis = releaseHealthReady
     ? `Overall status: ${releaseHealthOverall}`
@@ -732,7 +762,8 @@ export default function FeatureWorkspaceSummary({
           </div>
 
           <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
-            This session is tracked as a QA workspace backed by persisted artifacts.
+            This session is tracked as a QA workspace backed by persisted
+            artifacts.
           </div>
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
@@ -790,7 +821,9 @@ export default function FeatureWorkspaceSummary({
           }
           meta={
             suiteReady
-              ? `${suiteCount} case${suiteCount === 1 ? "" : "s"} in the current persisted suite`
+              ? `${suiteCount} case${
+                  suiteCount === 1 ? "" : "s"
+                } in the current persisted suite`
               : "Generate the suite from the refined requirement"
           }
           resolvedTheme={resolvedTheme}
@@ -800,24 +833,10 @@ export default function FeatureWorkspaceSummary({
           title="Review"
           ready={reviewReady}
           emphasis={reviewEmphasis}
-          description={
-            reviewReady
-              ? "A persisted review result is available for the current suite."
-              : "Coverage review has not yet been completed for this suite."
-          }
+          description={reviewDescription}
           tiles={[...reviewTiles]}
-          helpText={
-            reviewReady
-              ? "This reflects the latest saved review outcome for the current suite."
-              : "Run review after a suite exists to evaluate coverage, gaps, and improvement areas."
-          }
-          meta={
-            reviewReady
-              ? `Review score: ${
-                  typeof reviewScore === "number" ? `${reviewScore}/100` : "available"
-                }`
-              : "Run Test Review against the current suite"
-          }
+          helpText={reviewHelpText}
+          meta={reviewMeta}
           resolvedTheme={resolvedTheme}
         />
 
@@ -858,7 +877,8 @@ export default function FeatureWorkspaceSummary({
         }}
       >
         <div>
-          Current stage: <strong style={{ fontWeight: 900 }}>{currentStage}</strong>
+          Current stage:{" "}
+          <strong style={{ fontWeight: 900 }}>{currentStage}</strong>
         </div>
         <div>
           Next step: <strong style={{ fontWeight: 900 }}>{nextAction}</strong>
