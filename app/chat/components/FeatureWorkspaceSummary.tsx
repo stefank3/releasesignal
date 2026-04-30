@@ -27,6 +27,11 @@
 // - align Requirement / Test Suite / Review with the compact dashboard card style
 // - keep Release Health as the strongest visual card while preserving one shared family
 // - preserve artifact-driven behavior and avoid turning the workspace into a full analytics dashboard
+//
+// M14 FOLLOW-UP:
+// - clarify single-suite workspace ownership in summary copy
+// - do not render blocked-upload state here; blocked upload remains action-level feedback
+// - keep this component read-only and artifact-derived
 
 "use client";
 
@@ -686,9 +691,9 @@ export default function FeatureWorkspaceSummary({
       tone: suiteReady ? "positive" : "warning",
     },
     {
-      label: "Readiness",
-      value: suiteReady ? "Ready" : "Pending",
-      tone: suiteReady ? "positive" : "neutral",
+      label: "Scope",
+      value: suiteReady ? "Single target" : "No target",
+      tone: suiteReady ? "info" : "neutral",
     },
   ] as const;
 
@@ -810,21 +815,21 @@ export default function FeatureWorkspaceSummary({
           emphasis={suiteEmphasis}
           description={
             suiteReady
-              ? "A generated test suite is available for this workspace."
+              ? "A persisted suite is available for this workspace and represents one coherent test target."
               : "No persisted suite exists yet for this feature."
           }
           tiles={[...suiteTiles]}
           helpText={
             suiteReady
-              ? "This is the latest saved suite artifact for the current requirement."
-              : "Generate the suite after the requirement is clear and saved."
+              ? "Upload another suite in a new review session unless explicit merge support is introduced later."
+              : "Generate or upload the suite once the review target is clear."
           }
           meta={
             suiteReady
               ? `${suiteCount} case${
                   suiteCount === 1 ? "" : "s"
                 } in the current persisted suite`
-              : "Generate the suite from the refined requirement"
+              : "Generate or upload one suite for this review target"
           }
           resolvedTheme={resolvedTheme}
         />
