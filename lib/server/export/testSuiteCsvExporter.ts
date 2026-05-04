@@ -11,6 +11,7 @@ import {
   normalizeTestCase,
   type TestSuiteArtifact,
 } from "@/lib/chat/artifact";
+import { parseExportFieldsFromBody } from "@/lib/server/export/testSuiteBodyFieldParser";
 
 const CSV_COLUMNS = [
   "caseId",
@@ -37,6 +38,17 @@ function joinList(values: string[] | undefined): string {
     .join("\n");
 }
 
+function preferStructuredList(
+  structured: string[] | undefined,
+  fallback: string[]
+): string[] {
+  if (Array.isArray(structured) && structured.length > 0) {
+    return structured;
+  }
+
+  return fallback;
+}
+
 function escapeCsvValue(value: string): string {
   const normalized = normalizeMultilineText(value);
 
@@ -52,14 +64,20 @@ function escapeCsvValue(value: string): string {
 }
 
 function buildCsvRow(rawCase: ReturnType<typeof normalizeTestCase>): CsvRow {
+  const fallback = parseExportFieldsFromBody(rawCase.body);
+
   return {
     caseId: rawCase.id,
     title: rawCase.title,
-    type: rawCase.type ?? "",
-    priority: rawCase.priority ?? "",
-    preconditions: joinList(rawCase.preconditions),
-    steps: joinList(rawCase.steps),
-    expectedResults: joinList(rawCase.expectedResults),
+    type: rawCase.type ?? fallback.type ?? "",
+    priority: rawCase.priority ?? fallback.priority ?? "",
+    preconditions: joinList(
+      preferStructuredList(rawCase.preconditions, fallback.preconditions)
+    ),
+    steps: joinList(preferStructuredList(rawCase.steps, fallback.steps)),
+    expectedResults: joinList(
+      preferStructuredList(rawCase.expectedResults, fallback.expectedResults)
+    ),
     tags: Array.isArray(rawCase.tags) ? rawCase.tags.join(", ") : "",
     notes: rawCase.notes ?? "",
   };

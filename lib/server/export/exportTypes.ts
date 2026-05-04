@@ -10,7 +10,7 @@
 // No artifact mutation.
 // No tool-specific schema claims.
 
-import type { TestCase, TestSuiteArtifact } from "@/lib/chat/artifact";
+import type { TestSuiteArtifact } from "@/lib/chat/artifact";
 
 export type TestSuiteExportFormat = "json" | "csv";
 
@@ -27,8 +27,14 @@ export type TestSuiteExportMetadata = {
 export type TestSuiteExportCase = {
   caseId: string;
   title: string;
-  type: TestCase["type"] | null;
-  priority: TestCase["priority"] | null;
+
+  // M15 FIX:
+  // Export type/priority as strings because persisted body text may contain
+  // generic labels such as Positive / Negative / Edge and High / Medium.
+  // The core TestCase artifact enum remains unchanged.
+  type: string | null;
+  priority: string | null;
+
   preconditions: string[];
   steps: string[];
   expectedResults: string[];

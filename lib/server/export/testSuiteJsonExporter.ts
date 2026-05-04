@@ -14,20 +14,39 @@ import type {
   TestSuiteExportMetadata,
   TestSuiteJsonExport,
 } from "@/lib/server/export/exportTypes";
+import { parseExportFieldsFromBody } from "@/lib/server/export/testSuiteBodyFieldParser";
 
 function normalizeOptionalList(values: string[] | undefined): string[] {
   return Array.isArray(values) ? values.filter(Boolean) : [];
 }
 
-function buildExportCase(testCase: ReturnType<typeof normalizeTestCase>): TestSuiteExportCase {
+function preferStructuredList(
+  structured: string[] | undefined,
+  fallback: string[]
+): string[] {
+  const normalized = normalizeOptionalList(structured);
+  return normalized.length ? normalized : fallback;
+}
+
+function buildExportCase(
+  testCase: ReturnType<typeof normalizeTestCase>
+): TestSuiteExportCase {
+  const fallback = parseExportFieldsFromBody(testCase.body);
+
   return {
     caseId: testCase.id,
     title: testCase.title,
-    type: testCase.type ?? null,
-    priority: testCase.priority ?? null,
-    preconditions: normalizeOptionalList(testCase.preconditions),
-    steps: normalizeOptionalList(testCase.steps),
-    expectedResults: normalizeOptionalList(testCase.expectedResults),
+    type: testCase.type ?? fallback.type,
+    priority: testCase.priority ?? fallback.priority,
+    preconditions: preferStructuredList(
+      testCase.preconditions,
+      fallback.preconditions
+    ),
+    steps: preferStructuredList(testCase.steps, fallback.steps),
+    expectedResults: preferStructuredList(
+      testCase.expectedResults,
+      fallback.expectedResults
+    ),
     tags: normalizeOptionalList(testCase.tags),
     notes: testCase.notes ?? null,
     body: testCase.body,
