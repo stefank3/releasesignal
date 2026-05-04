@@ -19,6 +19,11 @@
 // - honor caller-provided sessionId for manual/external workflow action testing
 // - if a provided sessionId does not exist for this user, create that exact id
 // - do not silently replace caller sessionId with a generated DB id
+//
+// M16 CHANGE:
+// - add centralized deterministic artifact persistence helper for non-chat endpoints
+// - keep execution evidence persistence out of /api/chat and UI layers
+// - enforce ownership through auth0Sub + sessionId before writing artifactJson
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -27,6 +32,7 @@ import type { ClientMode, ChatBody, RateMeta } from "./chatTypes";
 import { normalizePersistedMode } from "./chatTypes";
 import { sessionModeMismatchResponse } from "./http";
 import type { SessionArtifact } from "./artifact";
+import { prismaJsonValue } from "./artifact";
 
 // M11:
 // Structured lifecycle classification returned to the caller.
@@ -202,4 +208,29 @@ export async function refreshArtifact(args: {
     : null;
 
   return { artifact, artifactUpdatedAtIso };
+}
+
+// M16:
+// Centralized artifact persistence helper for deterministic non-chat endpoints.
+// Used by execution evidence import so API route logic does not own Prisma JSON
+// write details and does not bypass session ownership checks.
+//
+// Returns false when the session does not exist or does not belong to the user.
+export async function persistArtifact(args: {
+  auth0Sub: string;
+  sessionId: string;
+  artifact: SessionArtifact;
+}): Promise<boolean> {
+  const updated = await prisma.chatSession.updateMany({
+    where: {
+      id: args.sessionId,
+      auth0Sub: args.auth0Sub,
+    },
+    data: {
+      artifactJson: prismaJsonValue(args.artifact),
+      artifactUpdatedAt: new Date(),
+    },
+  });
+
+  return updated.count === 1;
 }
