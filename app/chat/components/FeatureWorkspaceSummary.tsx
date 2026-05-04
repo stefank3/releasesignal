@@ -27,11 +27,17 @@
 // - align Requirement / Test Suite / Review with the compact dashboard card style
 // - keep Release Health as the strongest visual card while preserving one shared family
 // - preserve artifact-driven behavior and avoid turning the workspace into a full analytics dashboard
+//
+// M15 CHANGE:
+// - surface deterministic suite export action from the Test Suite card
+// - keep export formatting in the dedicated server export layer
+// - UI only triggers the export API and does not mutate/read-map artifact content
 
 "use client";
 
 import React from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
+import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
 
 type Props = {
   chat: UseChatSessionReturn;
@@ -159,8 +165,8 @@ function getToneStyles(
           ? "rgba(255,255,255,0.05)"
           : "rgba(15,23,42,0.04)",
       };
-    }
   }
+}
 
 function DashboardTile(args: {
   label: string;
@@ -211,6 +217,7 @@ function DashboardSummaryCard(args: {
   }>;
   helpText?: string;
   meta?: string;
+  actionSlot?: React.ReactNode;
   resolvedTheme: "light" | "dark";
 }) {
   const isDark = args.resolvedTheme === "dark";
@@ -290,6 +297,19 @@ function DashboardSummaryCard(args: {
       {args.meta ? (
         <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
           {args.meta}
+        </div>
+      ) : null}
+
+      {args.actionSlot ? (
+        <div
+          style={{
+            borderTop: isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
+            paddingTop: 8,
+          }}
+        >
+          {args.actionSlot}
         </div>
       ) : null}
     </div>
@@ -455,11 +475,12 @@ function toOverallTone(value: string | null | undefined): Tone {
   const normalized = String(value ?? "").trim().toLowerCase();
 
   if (!normalized || normalized === "unknown") return "neutral";
+  if (normalized.includes("not ready")) return "warning";
   if (normalized.includes("ready")) return "positive";
   if (normalized.includes("healthy")) return "positive";
-  if (normalized.includes("not ready")) return "warning";
   if (normalized.includes("needs")) return "warning";
   if (normalized.includes("degraded")) return "negative";
+  if (normalized.includes("blocked")) return "negative";
 
   return "info";
 }
@@ -471,6 +492,7 @@ function toCoverageTone(value: string | null | undefined): Tone {
   if (normalized.includes("review")) return "positive";
   if (normalized.includes("suite ready")) return "info";
   if (normalized.includes("requirement only")) return "warning";
+  if (normalized.includes("missing")) return "warning";
 
   return "info";
 }
@@ -482,6 +504,8 @@ function toExecutionTone(value: string | null | undefined): Tone {
   if (normalized.includes("passed")) return "positive";
   if (normalized.includes("not started")) return "warning";
   if (normalized.includes("failed")) return "negative";
+  if (normalized.includes("blocked")) return "negative";
+  if (normalized.includes("partial")) return "warning";
 
   return "info";
 }
@@ -551,6 +575,13 @@ export default function FeatureWorkspaceSummary({
   const suiteVersion = chat.sessionArtifact?.testSuite?.version;
   const suiteCount = chat.sessionArtifact?.testSuite?.cases?.length ?? 0;
   const reviewScore = chat.sessionArtifact?.reviewResult?.score;
+
+  // M15:
+  // Export uses the active persisted session id only.
+  // The export menu calls the dedicated export API and does not own export logic.
+  const exportSessionId =
+    ((chat as { activeSessionId?: string | null }).activeSessionId ?? null) ||
+    ((chat as { sessionId?: string | null }).sessionId ?? null);
 
   const releaseHealth = chat.sessionArtifact?.releaseHealth ?? null;
   const releaseHealthReady = !!releaseHealth;
@@ -793,6 +824,14 @@ export default function FeatureWorkspaceSummary({
               ? `${suiteCount} case${suiteCount === 1 ? "" : "s"} in the current persisted suite`
               : "Generate the suite from the refined requirement"
           }
+          actionSlot={
+            suiteReady ? (
+              <TestSuiteExportMenu
+                sessionId={exportSessionId}
+                disabled={!suiteReady}
+              />
+            ) : null
+          }
           resolvedTheme={resolvedTheme}
         />
 
@@ -814,7 +853,9 @@ export default function FeatureWorkspaceSummary({
           meta={
             reviewReady
               ? `Review score: ${
-                  typeof reviewScore === "number" ? `${reviewScore}/100` : "available"
+                  typeof reviewScore === "number"
+                    ? `${reviewScore}/100`
+                    : "available"
                 }`
               : "Run Test Review against the current suite"
           }
