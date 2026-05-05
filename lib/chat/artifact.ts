@@ -137,6 +137,7 @@ export type RefinedRequirement = {
 };
 
 export type ExecutionSource =
+  | "manual"
   | "playwright"
   | "selenium"
   | "postman"
@@ -537,6 +538,7 @@ export function validateTestSuite(
 export function normalizeExecutionSource(value: string): ExecutionSource {
   const normalized = normalizeWhitespace(value).toLowerCase();
 
+  if (normalized === "manual") return "manual";
   if (normalized === "playwright") return "playwright";
   if (normalized === "selenium") return "selenium";
   if (normalized === "postman") return "postman";
