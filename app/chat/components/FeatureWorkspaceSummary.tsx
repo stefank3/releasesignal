@@ -32,11 +32,17 @@
 // - surface deterministic suite export action from the Test Suite card
 // - keep export formatting in the dedicated server export layer
 // - UI only triggers the export API and does not mutate/read-map artifact content
+//
+// M16 CHANGE:
+// - wire persisted execution evidence into the workspace through a dedicated display component
+// - keep execution display read-only and artifact-driven
+// - do not calculate execution truth, review score changes, or release readiness in this file
 
 "use client";
 
 import React from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
+import { ExecutionEvidenceSummary } from "./ExecutionEvidenceSummary";
 import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
 
 type Props = {
@@ -583,6 +589,12 @@ export default function FeatureWorkspaceSummary({
     ((chat as { activeSessionId?: string | null }).activeSessionId ?? null) ||
     ((chat as { sessionId?: string | null }).sessionId ?? null);
 
+  // M16:
+  // Execution evidence is rendered from the persisted artifact only.
+  // The UI does not calculate execution truth, mutate artifacts, or infer release readiness.
+  const executionEvidence = chat.sessionArtifact?.executionIntelligence ?? null;
+  const executionEvidenceReady = !!executionEvidence;
+
   const releaseHealth = chat.sessionArtifact?.releaseHealth ?? null;
   const releaseHealthReady = !!releaseHealth;
   const releaseHealthOverall = releaseHealth
@@ -602,7 +614,11 @@ export default function FeatureWorkspaceSummary({
   const nextAction = chat.workflowStatus.nextAction;
 
   const hasAnyArtifacts =
-    requirementReady || suiteReady || reviewReady || releaseHealthReady;
+    requirementReady ||
+    suiteReady ||
+    reviewReady ||
+    executionEvidenceReady ||
+    releaseHealthReady;
 
   const requirementEmphasis = requirementReady
     ? "Latest refined requirement is available"
@@ -768,7 +784,7 @@ export default function FeatureWorkspaceSummary({
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, review, and release-health state for this workspace."
+              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and release-health state for this workspace."
               : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
           </div>
         </div>
@@ -859,6 +875,11 @@ export default function FeatureWorkspaceSummary({
                 }`
               : "Run Test Review against the current suite"
           }
+          resolvedTheme={resolvedTheme}
+        />
+
+        <ExecutionEvidenceSummary
+          execution={executionEvidence}
           resolvedTheme={resolvedTheme}
         />
 
