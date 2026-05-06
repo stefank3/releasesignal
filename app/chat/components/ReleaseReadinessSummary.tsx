@@ -2,6 +2,10 @@
 // M17 Release Readiness:
 // Read-only UI summary for deterministic release readiness.
 // All readiness logic must stay in lib/server/release-readiness.
+//
+// M17 UI FIX:
+// - make readiness summary span the full workspace grid row
+// - prevent the readiness explanation from being squeezed into one narrow card column
 
 import type { ReleaseReadinessSummary as ReleaseReadinessSummaryModel } from "@/lib/server/release-readiness/releaseReadinessTypes";
 
@@ -75,7 +79,10 @@ export function ReleaseReadinessSummary({
   const factors = readiness.factors;
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm">
+    <section
+      className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm"
+      style={{ gridColumn: "1 / -1" }}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -134,7 +141,9 @@ export function ReleaseReadinessSummary({
             Artifact Inputs
           </div>
           <div className="space-y-1 text-sm text-slate-300">
-            <div>Requirement: {factors.requirementPresent ? "Present" : "Missing"}</div>
+            <div>
+              Requirement: {factors.requirementPresent ? "Present" : "Missing"}
+            </div>
             <div>Test Suite: {factors.suitePresent ? "Present" : "Missing"}</div>
             <div>Review: {factors.reviewPresent ? "Present" : "Missing"}</div>
             <div>
