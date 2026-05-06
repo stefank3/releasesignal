@@ -37,12 +37,20 @@
 // - wire persisted execution evidence into the workspace through a dedicated display component
 // - keep execution display read-only and artifact-driven
 // - do not calculate execution truth, review score changes, or release readiness in this file
+//
+// M17 CHANGE:
+// - wire derived deterministic release readiness into the workspace
+// - keep readiness rules in the dedicated release-readiness service
+// - UI only renders the returned readiness summary
+// - do not mutate requirement, suite, review, execution evidence, or release health
 
 "use client";
 
 import React from "react";
+import { buildReleaseReadinessSummary } from "@/lib/server/release-readiness/releaseReadinessService";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { ExecutionEvidenceSummary } from "./ExecutionEvidenceSummary";
+import { ReleaseReadinessSummary } from "./ReleaseReadinessSummary";
 import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
 
 type Props = {
@@ -595,6 +603,14 @@ export default function FeatureWorkspaceSummary({
   const executionEvidence = chat.sessionArtifact?.executionIntelligence ?? null;
   const executionEvidenceReady = !!executionEvidence;
 
+  // M17:
+  // Release readiness is derived from persisted artifacts through the dedicated
+  // deterministic readiness service. This file only wires the summary into UI.
+  // No source artifact is mutated here.
+  const releaseReadiness = buildReleaseReadinessSummary(
+    chat.sessionArtifact ?? null
+  );
+
   const releaseHealth = chat.sessionArtifact?.releaseHealth ?? null;
   const releaseHealthReady = !!releaseHealth;
   const releaseHealthOverall = releaseHealth
@@ -784,7 +800,7 @@ export default function FeatureWorkspaceSummary({
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and release-health state for this workspace."
+              ? "The cards below show the latest saved requirement, suite, review, execution evidence, release readiness, and release-health state for this workspace."
               : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
           </div>
         </div>
@@ -882,6 +898,8 @@ export default function FeatureWorkspaceSummary({
           execution={executionEvidence}
           resolvedTheme={resolvedTheme}
         />
+
+        <ReleaseReadinessSummary readiness={releaseReadiness} />
 
         <ReleaseHealthCard
           ready={releaseHealthReady}
