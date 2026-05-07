@@ -73,6 +73,11 @@
 // - pass chat artifact context into the workflow banner
 // - allow compact release-health reinforcement in the banner
 // - keep ChatPanel orchestration-only
+//
+// M17 CHANGE:
+// - render ReleaseReadinessPanel below FeatureWorkspaceSummary
+// - keep readiness outside the compact artifact card grid
+// - keep ChatPanel as layout orchestration only
 
 "use client";
 
@@ -84,6 +89,7 @@ import ChatInput from "./ChatInput";
 import ChatMessageList from "./ChatMessageList";
 import ChatWorkflowBanner from "./ChatWorkflowBanner";
 import FeatureWorkspaceSummary from "./FeatureWorkspaceSummary";
+import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import StrategyPanel from "./StrategyPanel";
 
 type Props = {
@@ -483,10 +489,17 @@ export default function ChatPanel({
               }
               resolvedTheme={resolvedTheme}
             />
+
             <FeatureWorkspaceSummary
               chat={chat}
               resolvedTheme={resolvedTheme}
             />
+
+            <ReleaseReadinessPanel
+              sessionArtifact={chat.sessionArtifact}
+              resolvedTheme={resolvedTheme}
+            />
+
             {!hasWorkspaceArtifacts && !isBusy ? (
               <EmptyWorkspaceHint resolvedTheme={resolvedTheme} />
             ) : null}

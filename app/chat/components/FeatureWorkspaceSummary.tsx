@@ -37,6 +37,12 @@
 // - wire persisted execution evidence into the workspace through a dedicated display component
 // - keep execution display read-only and artifact-driven
 // - do not calculate execution truth, review score changes, or release readiness in this file
+//
+// M17 CLEANUP:
+// - remove the large release-readiness report from the compact workspace summary
+// - keep this file focused on artifact summary cards only
+// - release readiness remains available through the dedicated readiness service/component
+// - future M17 reporting should use a separate dashboard surface or collapsed panel
 
 "use client";
 
