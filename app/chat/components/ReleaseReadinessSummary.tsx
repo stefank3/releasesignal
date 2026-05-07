@@ -7,7 +7,7 @@
 // - make readiness summary span the full workspace grid row
 // - prevent the readiness explanation from being squeezed into one narrow card column
 
-import type { ReleaseReadinessSummary as ReleaseReadinessSummaryModel } from "@/lib/server/release-readiness/releaseReadinessTypes";
+import type { ReleaseReadinessSummary as ReleaseReadinessSummaryModel } from "@/lib/release-readiness/releaseReadinessTypes";
 
 type ReleaseReadinessSummaryProps = {
   readiness: ReleaseReadinessSummaryModel;
