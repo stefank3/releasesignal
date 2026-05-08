@@ -1,4 +1,4 @@
-# Release Signal — M18 Release Health vs Release Readiness Decision
+# Release Signal - M18 Release Health vs Release Readiness Decision
 
 Status: Decision Document  
 Milestone: M18 Architecture Cleanup / File Size Reduction / Bug Fixing / AI-Assisted Refactor Pass
