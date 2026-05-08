@@ -1,26 +1,27 @@
 # Release Signal — M18 Release Health vs Release Readiness Decision
 
 Status: Decision Document  
-Milestone: M18 Architecture Cleanup / File Size Reduction / Bug Fixing / AI-Assisted Refactor Pass  
-Branch: feature/m18-release-health-readiness-decision
+Milestone: M18 Architecture Cleanup / File Size Reduction / Bug Fixing / AI-Assisted Refactor Pass
 
----
+## Decision
 
-## Objective
+Release Readiness is the primary V1 release decision/reporting surface.
 
-Clarify the product and architecture boundary between the older **Release Health** signal and the newer **Release Readiness** report introduced in M17.
+Release Health remains temporarily as a compact legacy workspace signal.
 
-This decision is part of M18 stabilization.
+Do not merge Release Health and Release Readiness in M18.
 
-The goal is not to redesign release reporting, not to change scoring, and not to introduce a new dashboard.
+Do not delete Release Health in M18.
 
-The goal is to prevent duplicate/confusing release signals while preserving the deterministic artifact-first architecture.
+Do not change Release Readiness status semantics in M18.
 
----
+Do not change persisted artifact contracts in M18.
 
-## Core Architecture Rule
+## Current Boundary
 
-Release Signal must continue to follow:
+### Release Readiness
+
+Release Readiness answers:
 
 ```text
-AI → parsed → structured artifacts → deterministic system logic → UI
+Are we ready to release?
