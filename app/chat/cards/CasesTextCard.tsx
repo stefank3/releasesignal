@@ -46,6 +46,11 @@
 // - add invalid-only visibility mode for faster operator review
 // - replace weak compact preview with a structured suite overview card
 // - keep all controls UI-local; no workflow or persistence logic moved into the card
+//
+// M18.3 FIX:
+// - preserve full TestCase structure through edit/save
+// - avoid reducing edited cases to id/title/body before persistence
+// - protect type, priority, preconditions, steps, expectedResults, tags, and notes
 
 "use client";
 
@@ -58,11 +63,9 @@ import {
   normalizeWhitespace,
 } from "@/lib/chat/artifact";
 
-type ParsedCase = {
-  id: string;
-  title: string;
-  body: string;
-};
+// M18.3:
+// Keep ParsedCase aligned with TestCase so edit/save does not drop structured fields.
+type ParsedCase = TestCase;
 
 type CaseValidation = {
   duplicateIds: string[];
@@ -354,11 +357,10 @@ function parseCases(text: string): ParsedCase[] {
       body: blockLines.join("\n").trim(),
     });
 
-    cases.push({
-      id: normalizedCase.id,
-      title: normalizedCase.title,
-      body: normalizedCase.body,
-    });
+    // M18.3:
+    // Preserve the full normalized TestCase, not only id/title/body.
+    // This protects structured fields during edit/save persistence.
+    cases.push(normalizedCase);
   }
 
   return cases;
@@ -372,6 +374,7 @@ function rebuildSuiteText(cases: ParsedCase[], fallbackText: string): string {
 function toPersistedCases(cases: ParsedCase[]): TestCase[] {
   return cases.map((c) =>
     normalizeTestCase({
+      ...c,
       id: c.id,
       title: c.title || "Untitled test case",
       body: c.body,
@@ -396,6 +399,7 @@ function validateEditedCases(cases: ParsedCase[]): CaseValidation {
 
   for (const tc of cases) {
     const normalized = normalizeTestCase({
+      ...tc,
       id: tc.id,
       title: tc.title,
       body: tc.body,
@@ -571,14 +575,7 @@ function CasesTextCardContent({
     validation.emptyCaseIds.length > 0;
 
   const renderedText = useMemo(() => {
-    return rebuildSuiteText(
-      persistedCases.map((c) => ({
-        id: c.id,
-        title: c.title,
-        body: c.body,
-      })),
-      text
-    );
+    return rebuildSuiteText(persistedCases, text);
   }, [persistedCases, text]);
 
   const isDirty = useMemo(() => {
