@@ -51,10 +51,14 @@
 // - preserve full TestCase structure through edit/save
 // - avoid reducing edited cases to id/title/body before persistence
 // - protect type, priority, preconditions, steps, expectedResults, tags, and notes
+//
+// M18.1 EXTRACTION:
+// - move reusable presentational controls into cases/CasesCardControls
+// - keep parsing, save behavior, and workflow action behavior unchanged
 
 "use client";
 
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { TestCase } from "@/lib/chat/artifact";
 import {
   ensureTestCaseBodyConsistency,
@@ -62,6 +66,14 @@ import {
   normalizeTestCase,
   normalizeWhitespace,
 } from "@/lib/chat/artifact";
+
+import {
+  SectionLabel,
+  SelectControl,
+  SmallButton,
+  TextInput,
+  ToneBadge,
+} from "./cases/CasesCardControls";
 
 // M18.3:
 // Keep ParsedCase aligned with TestCase so edit/save does not drop structured fields.
@@ -102,224 +114,6 @@ type Props = {
   canRegenerateSuite?: boolean;
   isRegeneratingSuite?: boolean;
 };
-
-function SmallButton(args: {
-  children: React.ReactNode;
-  onClick: () => void | Promise<void>;
-  disabled?: boolean;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        void args.onClick();
-      }}
-      disabled={args.disabled}
-      style={{
-        padding: "6px 10px",
-        borderRadius: 10,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.18)"
-          : "1px solid rgba(15,23,42,0.14)",
-        background: args.disabled
-          ? isDark
-            ? "rgba(255,255,255,0.03)"
-            : "rgba(15,23,42,0.03)"
-          : isDark
-            ? "rgba(255,255,255,0.06)"
-            : "rgba(15,23,42,0.05)",
-        color: args.disabled
-          ? isDark
-            ? "rgba(255,255,255,0.45)"
-            : "rgba(15,23,42,0.45)"
-          : isDark
-            ? "#fff"
-            : "#0f172a",
-        fontWeight: 900,
-        cursor: args.disabled ? "not-allowed" : "pointer",
-      }}
-    >
-      {args.children}
-    </button>
-  );
-}
-
-function SelectControl(args: {
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
-  resolvedTheme: "light" | "dark";
-  disabled?: boolean;
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <div
-      style={{
-        position: "relative",
-        minWidth: 150,
-      }}
-    >
-      <select
-        value={args.value}
-        disabled={args.disabled}
-        onChange={(e) => args.onChange(e.target.value)}
-        style={{
-          width: "100%",
-          appearance: "none",
-          WebkitAppearance: "none",
-          MozAppearance: "none",
-          padding: "8px 34px 8px 10px",
-          borderRadius: 10,
-          border: isDark
-            ? "1px solid rgba(255,255,255,0.14)"
-            : "1px solid rgba(15,23,42,0.14)",
-          background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
-          color: isDark ? "#ffffff" : "#0f172a",
-          fontSize: 12,
-          fontWeight: 700,
-          outline: "none",
-          cursor: args.disabled ? "not-allowed" : "pointer",
-        }}
-      >
-        {args.options.map((option) => (
-          <option
-            key={option.value}
-            value={option.value}
-            style={{
-              color: "#0f172a",
-              background: "#ffffff",
-            }}
-          >
-            {option.label}
-          </option>
-        ))}
-      </select>
-
-      <div
-        aria-hidden="true"
-        style={{
-          position: "absolute",
-          right: 10,
-          top: "50%",
-          transform: "translateY(-50%)",
-          pointerEvents: "none",
-          fontSize: 10,
-          color: isDark ? "rgba(255,255,255,0.78)" : "rgba(15,23,42,0.72)",
-        }}
-      >
-        ▼
-      </div>
-    </div>
-  );
-}
-
-function TextInput(args: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  resolvedTheme: "light" | "dark";
-  disabled?: boolean;
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <input
-      value={args.value}
-      disabled={args.disabled}
-      onChange={(e) => args.onChange(e.target.value)}
-      placeholder={args.placeholder}
-      style={{
-        width: "100%",
-        minWidth: 180,
-        padding: "8px 10px",
-        borderRadius: 10,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.14)"
-          : "1px solid rgba(15,23,42,0.14)",
-        background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
-        color: isDark ? "#fff" : "#0f172a",
-        fontSize: 12,
-        fontWeight: 700,
-        outline: "none",
-      }}
-    />
-  );
-}
-
-function SectionLabel(args: {
-  title: string;
-  description?: string;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gap: 2,
-        marginBottom: 8,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 900,
-          letterSpacing: 0.2,
-          color: isDark ? "#ffffff" : "#0f172a",
-          opacity: 0.92,
-        }}
-      >
-        {args.title}
-      </div>
-
-      {args.description ? (
-        <div
-          style={{
-            fontSize: 11,
-            lineHeight: 1.4,
-            color: isDark
-              ? "rgba(255,255,255,0.68)"
-              : "rgba(15,23,42,0.62)",
-          }}
-        >
-          {args.description}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ToneBadge(args: {
-  label: string;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <div
-      style={{
-        fontSize: 10,
-        fontWeight: 900,
-        padding: "3px 7px",
-        borderRadius: 999,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.14)"
-          : "1px solid rgba(15,23,42,0.12)",
-        background: isDark
-          ? "rgba(255,255,255,0.05)"
-          : "rgba(15,23,42,0.04)",
-        color: isDark ? "rgba(255,255,255,0.86)" : "rgba(15,23,42,0.82)",
-      }}
-    >
-      {args.label}
-    </div>
-  );
-}
 
 function parseCases(text: string): ParsedCase[] {
   const normalized = String(text ?? "").replace(/\r/g, "");
@@ -850,7 +644,7 @@ function CasesTextCardContent({
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {showRegenerateSuiteAction ? (
               <SmallButton
-                onClick={() => {
+                onClickAction={() => {
                   onRegenerateSuiteAction?.();
                 }}
                 disabled={!canRegenerateSuite || isRegeneratingSuite || isSaving}
@@ -862,7 +656,7 @@ function CasesTextCardContent({
 
             {showGenerateNextBatchAction ? (
               <SmallButton
-                onClick={() => {
+                onClickAction={() => {
                   onGenerateNextBatchAction?.();
                 }}
                 disabled={!canGenerateNextBatch || isGeneratingNextBatch || isSaving}
@@ -874,7 +668,7 @@ function CasesTextCardContent({
 
             {showReviewAction ? (
               <SmallButton
-                onClick={() => {
+                onClickAction={() => {
                   onReviewTestSuiteAction?.();
                 }}
                 disabled={!canReviewTestSuite || isReviewingTestSuite || isSaving}
@@ -895,7 +689,7 @@ function CasesTextCardContent({
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <SmallButton
-              onClick={copyText}
+              onClickAction={copyText}
               disabled={isSaving}
               resolvedTheme={resolvedTheme}
             >
@@ -904,7 +698,7 @@ function CasesTextCardContent({
 
             {hasStructuredCases ? (
               <SmallButton
-                onClick={async () => {
+                onClickAction={async () => {
                   await saveSuite();
                 }}
                 disabled={
@@ -939,7 +733,7 @@ function CasesTextCardContent({
             >
               <TextInput
                 value={searchQuery}
-                onChange={setSearchQuery}
+                onChangeAction={setSearchQuery}
                 placeholder="Search by ID, title, or case body"
                 resolvedTheme={resolvedTheme}
                 disabled={isSaving}
@@ -947,7 +741,7 @@ function CasesTextCardContent({
 
               <SelectControl
                 value={filterMode}
-                onChange={(value) => setFilterMode(value as FilterMode)}
+                onChangeAction={(value) => setFilterMode(value as FilterMode)}
                 resolvedTheme={resolvedTheme}
                 disabled={isSaving}
                 options={[
@@ -959,7 +753,7 @@ function CasesTextCardContent({
 
               <SelectControl
                 value={sortMode}
-                onChange={(value) => setSortMode(value as SortMode)}
+                onChangeAction={(value) => setSortMode(value as SortMode)}
                 resolvedTheme={resolvedTheme}
                 disabled={isSaving}
                 options={[
@@ -972,7 +766,7 @@ function CasesTextCardContent({
 
               <SelectControl
                 value={viewMode}
-                onChange={(value) => setViewMode(value as ViewMode)}
+                onChangeAction={(value) => setViewMode(value as ViewMode)}
                 resolvedTheme={resolvedTheme}
                 disabled={isSaving}
                 options={[
@@ -1230,7 +1024,7 @@ function CasesTextCardContent({
                   </div>
 
                   <SmallButton
-                    onClick={() => handleEditToggle(tc.id)}
+                    onClickAction={() => handleEditToggle(tc.id)}
                     disabled={isSaving}
                     resolvedTheme={resolvedTheme}
                   >
