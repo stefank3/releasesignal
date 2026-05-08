@@ -25,7 +25,7 @@
 //
 // M12.15 FOLLOW-UP CHANGE:
 // - align Requirement / Test Suite / Review with the compact dashboard card style
-// - keep Release Health as the strongest visual card while preserving one shared family
+// - keep Workspace Health as the strongest visual card while preserving one shared family
 // - preserve artifact-driven behavior and avoid turning the workspace into a full analytics dashboard
 //
 // M15 CHANGE:
@@ -377,7 +377,7 @@ function ReleaseHealthCard(args: {
             color: isDark ? "#ffffff" : "#0f172a",
           }}
         >
-          Release Health
+          Workspace Health
         </div>
 
         <StatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
@@ -645,7 +645,7 @@ export default function FeatureWorkspaceSummary({
 
   const releaseHealthEmphasis = releaseHealthReady
     ? `Overall status: ${releaseHealthOverall}`
-    : "No release health computed yet";
+    : "No workspace health signal computed yet";
 
   const releaseHealthPartialStateText = releaseHealthReady
     ? releaseHealthOverall === "Not Ready" &&
@@ -667,7 +667,7 @@ export default function FeatureWorkspaceSummary({
       ]
         .filter(Boolean)
         .join(" · ")
-    : "Release health will appear once the dashboard signal is available";
+    : "Workspace health will appear once the compact workspace signal is available";
 
   const requirementTiles = [
     {
@@ -790,7 +790,7 @@ export default function FeatureWorkspaceSummary({
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and release-health state for this workspace."
+              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and workspace-health state for this workspace."
               : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
           </div>
         </div>
@@ -898,13 +898,13 @@ export default function FeatureWorkspaceSummary({
           emphasis={releaseHealthEmphasis}
           description={
             releaseHealthReady
-              ? "A deterministic release-health artifact is available from the latest persisted workspace state."
-              : "Release health has not yet been surfaced for this workspace."
+              ? "A compact deterministic workspace-health signal is available from the latest persisted artifacts."
+              : "Workspace health has not yet been surfaced for this workspace."
           }
           helpText={
             releaseHealthReady
-              ? "This view is read-only and reflects the latest saved health rollup from requirement, suite, review, and execution artifacts."
-              : "This will become visible once release-health data is computed and persisted by the backend."
+              ? "This view is read-only and summarizes persisted artifact state. Use the Release Readiness Report for the release decision view."
+              : "This will become visible once workspace-health data is computed and persisted by the backend."
           }
           partialStateText={releaseHealthPartialStateText}
           meta={releaseHealthMeta}
