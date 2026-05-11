@@ -865,7 +865,7 @@ export function useChatSession(): UseChatSessionReturn {
     ) {
       appendWorkflowActionError(
         action === "regenerate_suite"
-          ? "Improve / Regenerate Suite unavailable"
+          ? "Improve Test Plan unavailable"
           : "Generate Next Batch unavailable",
         "This action requires both a refined requirement artifact and a persisted test suite artifact.",
         requestId
@@ -1100,7 +1100,7 @@ export function useChatSession(): UseChatSessionReturn {
 
         if (!hasSuiteArtifact && !shouldRenderAsCasesText) {
           appendWorkflowActionError(
-            "Improve / Regenerate Suite failed",
+            "Improve Test Plan failed",
             "The action completed without producing a persisted test suite artifact or a valid suite response.",
             serverRequestId
           );
