@@ -72,6 +72,7 @@ export type NextBatchPrerequisiteResult =
 export type NextBatchBaseline = {
   requirementText: string;
   suiteSummary: string;
+  suiteContent: string;
   existingCount: number;
   maxCaseNumber: number;
 };
@@ -521,12 +522,14 @@ export function buildExistingSuiteBaselineFromArtifact(
   suite: TestSuiteArtifact | null
 ): {
   suiteSummary: string | null;
+  suiteContent: string | null;
   maxCaseNumber: number;
   existingCount: number;
 } {
   if (!suite?.cases?.length) {
     return {
       suiteSummary: null,
+      suiteContent: null,
       maxCaseNumber: 0,
       existingCount: 0,
     };
@@ -534,9 +537,14 @@ export function buildExistingSuiteBaselineFromArtifact(
 
   const normalizedCases = suite.cases.map((c) => normalizeTestCase(c));
   const headers = normalizedCases.map((c) => `${c.id} - ${c.title}`);
+  const suiteContent = normalizedCases
+    .map((c) => c.body.trim())
+    .filter(Boolean)
+    .join("\n\n");
 
   return {
     suiteSummary: headers.join("\n"),
+    suiteContent,
     maxCaseNumber: getMaxCaseNumber(normalizedCases),
     existingCount: normalizedCases.length,
   };
@@ -592,6 +600,7 @@ export function buildNextBatchBaseline(args: {
   return {
     requirementText: normalizedRequirementText,
     suiteSummary: suiteBaseline.suiteSummary ?? "",
+    suiteContent: suiteBaseline.suiteContent ?? "",
     existingCount: suiteBaseline.existingCount,
     maxCaseNumber: suiteBaseline.maxCaseNumber,
   };
