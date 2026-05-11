@@ -574,7 +574,7 @@ function CasesTextCardContent({
                 disabled={!canRegenerateSuite || isRegeneratingSuite || isSaving}
                 resolvedTheme={resolvedTheme}
               >
-                {isRegeneratingSuite ? "Regenerating..." : "Improve / Regenerate"}
+                {isRegeneratingSuite ? "Improving..." : "Improve Test Plan"}
               </SmallButton>
             ) : null}
 

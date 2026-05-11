@@ -251,6 +251,9 @@ function buildWorkflowActionMessage(args: {
     const existingSuiteSummary =
       baseline.suiteSummary.trim() || "No existing test case headers available.";
 
+    const existingSuiteContent =
+      baseline.suiteContent.trim() || "No existing test case content available.";
+
     return [
       "Improve and regenerate the persisted test suite from the persisted artifacts for this session.",
       "",
@@ -278,6 +281,9 @@ function buildWorkflowActionMessage(args: {
       `EXISTING SUITE COUNT: ${baseline.existingCount}`,
       "EXISTING TEST CASE HEADERS:",
       existingSuiteSummary,
+      "",
+      "EXISTING TEST SUITE CONTENT:",
+      existingSuiteContent,
     ].join("\n");
   }
 
