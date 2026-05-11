@@ -853,6 +853,17 @@ export function regenerateSuiteFromGeneratedText(args: {
     };
   }
 
+  const existingCaseCount = prerequisite.existingSuite.cases.length;
+  const minimumPreservedCount = Math.ceil(existingCaseCount * 0.8);
+
+  if (cleaned.cases.length < minimumPreservedCount) {
+    return {
+      ok: false,
+      kind: "generation_failed",
+      message: `Improve Test Plan rejected because the generated suite reduced case count from ${existingCaseCount} to ${cleaned.cases.length}, below the preservation threshold of ${minimumPreservedCount}. Existing suite was kept unchanged.`,
+    };
+  }
+
   const nowIso = new Date().toISOString();
 
   const nextSuite: TestSuiteArtifact = {
