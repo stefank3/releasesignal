@@ -50,6 +50,7 @@ import React from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { ExecutionEvidenceSummary } from "./ExecutionEvidenceSummary";
 import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
+import WorkspaceHealthCard from "./workspace/WorkspaceHealthCard";
 
 type Props = {
   chat: UseChatSessionReturn;
@@ -324,138 +325,6 @@ function DashboardSummaryCard(args: {
           {args.actionSlot}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ReleaseHealthCard(args: {
-  ready: boolean;
-  overall: string | null;
-  coverage: string | null;
-  execution: string | null;
-  failureBurden: string | null;
-  emphasis: string;
-  description: string;
-  helpText: string;
-  partialStateText?: string | null;
-  meta: string;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  const overallTone = toOverallTone(args.overall);
-  const coverageTone = toCoverageTone(args.coverage);
-  const executionTone = toExecutionTone(args.execution);
-  const failureTone = toFailureBurdenTone(args.failureBurden);
-
-  const accentBorder = getAccentBorder(overallTone, isDark);
-  const accentBackground = getAccentBackground(overallTone, isDark);
-
-  return (
-    <div
-      style={{
-        border: accentBorder,
-        borderRadius: 14,
-        padding: 12,
-        background: accentBackground,
-        display: "grid",
-        gap: 10,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 950,
-            color: isDark ? "#ffffff" : "#0f172a",
-          }}
-        >
-          Workspace Health
-        </div>
-
-        <StatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
-      </div>
-
-      <div
-        style={{
-          fontSize: 12,
-          fontWeight: 900,
-          lineHeight: 1.4,
-          color: isDark ? "#ffffff" : "#0f172a",
-        }}
-      >
-        {args.emphasis}
-      </div>
-
-      <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.82 }}>
-        {args.description}
-      </div>
-
-      {args.ready ? (
-        <div
-          style={{
-            display: "grid",
-            gap: 8,
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          }}
-        >
-          <DashboardTile
-            label="Overall"
-            value={args.overall ?? "Unknown"}
-            tone={overallTone}
-            resolvedTheme={args.resolvedTheme}
-          />
-          <DashboardTile
-            label="Coverage"
-            value={args.coverage ?? "Unknown"}
-            tone={coverageTone}
-            resolvedTheme={args.resolvedTheme}
-          />
-          <DashboardTile
-            label="Execution"
-            value={args.execution ?? "Unknown"}
-            tone={executionTone}
-            resolvedTheme={args.resolvedTheme}
-          />
-          <DashboardTile
-            label="Failure burden"
-            value={args.failureBurden ?? "Unknown"}
-            tone={failureTone}
-            resolvedTheme={args.resolvedTheme}
-          />
-        </div>
-      ) : null}
-
-      {args.partialStateText ? (
-        <div
-          style={{
-            fontSize: 11,
-            lineHeight: 1.45,
-            opacity: 0.78,
-            borderTop: isDark
-              ? "1px solid rgba(255,255,255,0.08)"
-              : "1px solid rgba(15,23,42,0.08)",
-            paddingTop: 8,
-          }}
-        >
-          {args.partialStateText}
-        </div>
-      ) : null}
-
-      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.74 }}>
-        {args.helpText}
-      </div>
-
-      <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
-        {args.meta}
-      </div>
     </div>
   );
 }
@@ -889,7 +758,7 @@ export default function FeatureWorkspaceSummary({
           resolvedTheme={resolvedTheme}
         />
 
-        <ReleaseHealthCard
+        <WorkspaceHealthCard
           ready={releaseHealthReady}
           overall={releaseHealthOverall}
           coverage={releaseHealthCoverage}
