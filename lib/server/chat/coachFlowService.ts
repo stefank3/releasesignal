@@ -273,14 +273,14 @@ export async function runCoachFlow(args: {
     ? null
     : sessionArtifact;
 
-  const replyTextForUser =
-    shouldReturnTechnicalRequirement({
-      guidedAnswer: args.guidedAnswer,
-      artifact: effectiveArtifactForReply,
-    }) && coachParsed
-      ? coachToTechnicalRequirementText(coachParsed, effectiveArtifactForReply)
-      : "I couldn't build a refined requirement from that input. Please retry.";
+  const shouldRenderRefinedRequirement = shouldReturnTechnicalRequirement({
+    guidedAnswer: args.guidedAnswer,
+    artifact: effectiveArtifactForReply,
+  });
 
+  const replyTextForUser = shouldRenderRefinedRequirement
+    ? coachToTechnicalRequirementText(coachParsed, effectiveArtifactForReply)
+    : "I couldn't build a refined requirement from that input. Please retry.";
   return {
     coachParsed,
     replyTextForUser,
