@@ -898,6 +898,31 @@ export async function POST(req: Request) {
       sessionArtifact = postModel.sessionArtifact;
       artifactUpdatedAtIso = postModel.artifactUpdatedAtIso;
 
+      const refineRequirementFormattingFailed =
+        workflowAction === "refine_requirement" &&
+        (!replyTextForUser ||
+          /couldn't format the coach output|couldn't build a refined requirement/i.test(
+            replyTextForUser
+          ));
+
+      if (refineRequirementFormattingFailed) {
+        await recordChatMetric({
+          nowMs: Date.now(),
+          mode: actionExecutionMode,
+          status: 500,
+          latencyMs: Date.now() - startTime,
+        });
+
+        return buildServerErrorResponse({
+          requestId,
+          errorMessage:
+            "Refine Requirement failed because the model response could not be parsed into a valid refined requirement artifact. Existing requirement was kept unchanged.",
+          rateMeta,
+          artifact: sessionArtifact,
+          artifactUpdatedAt: artifactUpdatedAtIso,
+        });
+      }
+
       const casesFlowTelemetry: CasesFlowTelemetry | null =
         postModel.casesFlowTelemetry;
 

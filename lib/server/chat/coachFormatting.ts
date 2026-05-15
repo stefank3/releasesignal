@@ -234,7 +234,7 @@ export function coachToText(coach: CoachResult): string {
  * existing call sites, but it is no longer used here.
  */
 export function coachToTechnicalRequirementText(
-  _coach: CoachResult,
+  _coach: CoachResult | null,
   artifact: SessionArtifact | null
 ): string {
   const lines: string[] = [];
