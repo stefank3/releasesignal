@@ -11,6 +11,7 @@ export async function middleware(request: NextRequest) {
 
   // Allow public paths (tweak as you want)
   const isPublic =
+    pathname === "/" ||
     pathname.startsWith("/auth") ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico";
