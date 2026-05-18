@@ -1,0 +1,16 @@
+{
+  "name": "release-signal-qa",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.45.0",
+    "dotenv": "^16.4.5"
+  },
+  "scripts": {
+    "smoke": "playwright test tests/smoke.spec.ts",
+    "regression": "playwright test tests/regression.spec.ts",
+    "test:all": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug"
+  }
+}
