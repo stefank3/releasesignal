@@ -5,8 +5,9 @@ import { goToWorkspace, waitForArtifactCard, waitForWorkspaceReady } from '../he
 test.describe('Smoke', () => {
   test('Public app or authenticated workspace loads', async ({ page }) => {
     await page.goto('/');
-    await expect(page).toHaveTitle(/Release Signal|Create Next App/i);
-    await expect(page.getByText(/Release Signal|Feature Workspace/i).first()).toBeVisible();
+    await expect(page).toHaveTitle(/Release Signal/i);
+    await expect(page.getByRole('heading', { name: /Release Signal/i }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /Sign in/i }).first()).toBeVisible();
   });
 
   test('Can reach authenticated workspace', async ({ page }) => {
