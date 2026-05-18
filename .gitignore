@@ -45,3 +45,22 @@ next-env.d.ts
 /lib/generated/prisma/
 /lib/generated/prisma/client/
 .vscode/
+qa/.env
+qa/helpers/auth.json
+qa/node_modules/
+qa/test-results/
+qa/playwright-report/
+
+# QA local/generated files
+qa/.env
+qa/helpers/auth.json
+qa/node_modules/
+qa/test-results/
+qa/playwright-report/
+
+# QA local/generated files
+qa/.env
+qa/helpers/auth.json
+qa/node_modules/
+qa/test-results/
+qa/playwright-report/
