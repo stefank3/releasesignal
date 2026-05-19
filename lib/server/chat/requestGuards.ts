@@ -19,6 +19,7 @@ import { auth0 } from "@/lib/auth0";
 import { log } from "@/lib/logger";
 
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
+import { evaluateAccountAccess } from "@/lib/billing/accountAccess";
 import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
 import { chatRatelimit, CHAT_RATE_LIMIT } from "@/lib/ratelimit";
 
@@ -31,9 +32,9 @@ import {
 } from "@/lib/chat/chatTypes";
 import { isWeakInput } from "@/lib/chat/inputQuality";
 import {
+  buildAccountAccessRequiredResponse,
   buildForbiddenResponse,
   buildInputTooLargeResponse,
-  buildInsufficientCreditsPrecheckResponse,
   buildInvalidJsonBodyResponse,
   buildMissingMessageResponse,
   buildRateLimitExceededResponse,
@@ -364,7 +365,12 @@ export async function ensureBillingPreconditions(args: {
       ? orgState.organizationId
       : undefined;
 
-  if (orgState.wallet && orgState.wallet.balance > 0) {
+  const accountAccess = await evaluateAccountAccess({
+    organizationId: orgId,
+    wallet: orgState.wallet,
+  });
+
+  if (accountAccess.ok) {
     return {
       ok: true,
       orgId,
@@ -385,18 +391,26 @@ export async function ensureBillingPreconditions(args: {
     auth0Sub: args.auth0Sub,
     orgId,
     mode: args.clientMode,
-    errorType: "insufficient_credits_precheck",
-    errorMessage: "Wallet balance <= 0 before OpenAI call",
+    errorType: "account_access_required",
+    errorMessage: "Account access check failed before OpenAI call",
     durationMs: Date.now() - args.startTime,
-    meta: { walletBalance: orgState.wallet?.balance ?? 0 },
+    meta: {
+      reason: accountAccess.reason,
+      creditsRemaining: accountAccess.creditsRemaining,
+      planStatus: accountAccess.planStatus,
+      currentPeriodEnd: accountAccess.currentPeriodEnd,
+    },
   });
 
   return {
     ok: false,
-    response: buildInsufficientCreditsPrecheckResponse({
+    response: buildAccountAccessRequiredResponse({
       requestId: args.requestId,
       clientMode: args.clientMode,
-      creditsRemaining: orgState.wallet?.balance ?? 0,
+      reason: accountAccess.reason,
+      creditsRemaining: accountAccess.creditsRemaining,
+      planStatus: accountAccess.planStatus,
+      currentPeriodEnd: accountAccess.currentPeriodEnd,
     }),
   };
 }
