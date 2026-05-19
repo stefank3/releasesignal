@@ -8,6 +8,7 @@ import { auth0 } from "@/lib/auth0";
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
+import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
 function headers(requestId: string) {
   return { "X-Request-Id": requestId };
@@ -29,6 +30,16 @@ export async function GET(req: Request) {
     }
 
     const auth0Sub = session.user.sub as string;
+
+    const rateLimit = await enforceRouteRateLimit({
+      policy: "adminBillingOverview",
+      identifier: `admin:${auth0Sub}`,
+      requestId,
+    });
+
+    if (!rateLimit.ok) {
+      return rateLimit.response;
+    }
 
     // Find org for this admin (MVP: single org membership)
     const member = await prisma.orgMember.findFirst({

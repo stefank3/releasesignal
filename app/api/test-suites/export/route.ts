@@ -24,6 +24,7 @@ import { recordChatMetric } from "@/lib/metrics/chatMetrics";
 import { refreshArtifact } from "@/lib/chat/sessionStore";
 import { exportTestSuiteArtifact } from "@/lib/server/export/testSuiteExportService";
 import { requireAuthenticatedUser } from "@/lib/server/chat/requestGuards";
+import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,6 +63,16 @@ export async function GET(req: Request) {
 
   if (!auth.ok) {
     return auth.response;
+  }
+
+  const rateLimit = await enforceRouteRateLimit({
+    policy: "testSuiteExport",
+    identifier: `user:${auth.auth0Sub}`,
+    requestId,
+  });
+
+  if (!rateLimit.ok) {
+    return rateLimit.response;
   }
 
   const url = new URL(req.url);

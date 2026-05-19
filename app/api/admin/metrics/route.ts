@@ -17,6 +17,7 @@ import { randomUUID } from "crypto";
 
 import { auth0 } from "@/lib/auth0";
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
+import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
 const redis = Redis.fromEnv();
 
@@ -48,6 +49,24 @@ export async function GET(req: Request) {
       { ok: false, error: "Forbidden" },
       { status: 403, headers: headersWithRequestId(requestId) }
     );
+  }
+
+  const auth0Sub = session.user.sub as string | undefined;
+  if (!auth0Sub) {
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401, headers: headersWithRequestId(requestId) }
+    );
+  }
+
+  const rateLimit = await enforceRouteRateLimit({
+    policy: "adminMetrics",
+    identifier: `admin:${auth0Sub}`,
+    requestId,
+  });
+
+  if (!rateLimit.ok) {
+    return rateLimit.response;
   }
 
   // 3) Read last 60 minutes (5-min buckets => 12 buckets)
