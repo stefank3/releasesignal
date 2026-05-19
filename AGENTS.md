@@ -1,806 +1,438 @@
-# AGENTS.md — Release Signal Agent Instructions
+---
+type: universal_governance
+target_agents:
+  - ChatGPT
+  - Codex
+  - Claude Code
+  - Gemini CLI
+enforcement: strict_blocking
+version: 1.0.0
+scope: all_repo_work
+status: active
+---
 
-## Purpose
+# Release Signal AI Agent Instructions
 
-This file defines the working rules for Codex or any coding agent operating inside the Release Signal repository.
+This file is the universal entry point for all AI-assisted work in the Release Signal repository.
 
-Read this file before making changes.
+Every AI agent must read this file before planning, editing, reviewing, documenting, or validating repository work.
 
-If these instructions conflict with inferred codebase patterns, follow this file and ask the human before acting.
+This is the repo-level operating contract.
+
+Old product-specific context, milestone history, artifact details, roadmap history, and implementation notes are preserved in `docs/ai/` reference files. This root file stays focused on universal agent governance.
 
 ---
 
-## Product Overview
+## Core Architecture Rule
 
-Release Signal is a QA intelligence and release-risk platform.
-
-It helps QA professionals move from raw requirements and test plans toward structured, reviewable, evidence-backed release decisions.
-
-The current product is aimed at senior/intermediate QA professionals, QA leads, and technically strong testers who need better requirement analysis, test design review, execution evidence, and release-risk visibility.
-
-Release Signal is not currently:
-
-- a full test management replacement
-- a TestRail/Qase/Xray/Zephyr clone
-- a native automation-code-generation platform
-- a Playwright generator
-- a billing/subscription platform
-- a full enterprise release governance product
-
-Current category:
-
-```text
-QA intelligence workspace / release-risk reporting layer
-```
-
-The product is moving toward a high-tech QA intelligence layer that can sit before, around, or above traditional test management tools.
-
----
-
-## Non-Negotiable Architecture Rule
+Release Signal follows this non-negotiable architecture rule:
 
 ```text
 AI → parsed → structured artifacts → deterministic system logic → UI
 ```
 
-AI may:
+For scripts, prompts, and terminal checks, the ASCII equivalent is treated as the same rule:
 
-- assist
-- generate
-- clarify
-- explain
-- suggest improvements
+```text
+AI -> parsed -> structured artifacts -> deterministic system logic -> UI
+```
 
-Structured artifacts own product truth.
+AI may assist with planning, coding, reviewing, documentation, summarization, and analysis.
 
-Deterministic services own:
+AI must not become the source of product truth.
 
-- workflow decisions
+---
+
+## Product Truth Rules
+
+Structured data and deterministic logic are authoritative.
+
+The following must never be controlled by free-form AI text:
+
+- release readiness
 - review scoring
-- artifact validation
-- file ingestion
-- export logic
-- execution evidence validation
-- release readiness calculation
+- billing state
+- trial state
+- credit balance
+- credit consumption
+- workflow state
+- artifact lifecycle
+- access control
+- organization ownership
+- user entitlement
+- persisted session truth
 
-UI must:
+Deterministic server/client logic owns these decisions.
 
-- render artifact-backed state
-- trigger explicit user actions
-- never own product truth
+UI may display state and trigger actions, but UI must not own product truth.
 
-Never allow:
-
-- free-form AI text to own workflow truth
-- chat history to become artifact truth
-- UI-only state to become business truth
-- unvalidated model output to drive scoring
-- AI to decide release readiness
-- AI to own execution truth
-- prompts to become persistence contracts
-
-If a proposed change moves truth, scoring, release decisions, execution truth, artifact state, or workflow control into AI text, UI state, or chat history, stop and ask.
+AI output must be parsed, validated, normalized, and persisted into structured artifacts before it can influence system behavior.
 
 ---
 
-## Technical Stack
+## Consensus Decision Rule
 
-Release Signal uses:
+ChatGPT, Claude Code, and Gemini CLI may each provide recommendations, but no individual AI output is final.
 
-- Next.js / React / TypeScript
-- Next.js API routes
-- Auth0 authentication
-- Prisma / database-backed persistence
-- structured session artifacts
-- AI provider abstraction with OpenAI currently behind internal boundaries
-- Vercel-style deployment expected for production
+A decision becomes final only after the recommendations are consolidated into one Release Signal-specific rule set and approved by the human lead.
 
-The product is built around persisted session artifacts and deterministic service modules. Components render artifact-backed state. They do not own it.
+Once approved, all agents must follow that single decision and must not reinterpret or override it.
+
+If an agent disagrees, it must stop and raise a blocker instead of implementing an alternative.
 
 ---
 
-## Core Artifacts
+## Agent Responsibilities
 
-### RefinedRequirement
+### ChatGPT
 
-Structured QA-ready requirement derived from raw input.
+Primary role:
 
-Sections include:
+- architecture lead
+- milestone planner
+- prompt writer
+- consolidation partner
+- closure-message writer
+- decision-record assistant
 
-- Objective
-- Functional Scope
-- Business Rules
-- Acceptance Criteria
-- Edge Cases / Negative Paths
-- Non-Functional Constraints
-- Test Strategy Hooks
-- Risk Areas
-- Coverage Targets
-- Minimal Repro Scenarios
-- Open Questions / Clarifications
+ChatGPT is responsible for turning broad direction into scoped Release Signal work.
 
-### TestSuiteArtifact
+ChatGPT should not be treated as final authority unless the output is consolidated and approved by the human lead.
 
-Structured test plan / test suite.
+### Codex
 
-Case fields include:
+Primary role:
 
-- caseId
-- title
-- type
-- priority
-- preconditions
-- steps
-- expectedResults
-- tags
-- notes
-- body
+- implementation agent
+- focused code editor
+- bounded bug-fix agent
+- surgical refactor agent
+- local validation runner
 
-### PersistedReviewResult
+Codex may create or modify files only within the approved scope.
 
-Deterministic review of test design quality.
+Codex must not expand scope silently.
 
-Dimensions include:
+### Claude Code
 
-- business relevance
-- risk coverage
-- design quality
-- level and scope
-- diagnostic value
+Primary role:
 
-Hard rule:
+- architecture reviewer
+- high-risk change reviewer
+- refactor-risk challenger
+- coupling and boundary reviewer
 
-```text
-Review score measures test design quality only.
-Execution results must not change the review score.
-```
+Claude Code is review-first by default.
 
-### ExecutionIntelligenceArtifact
+Claude Code should not edit the same branch while Codex is actively editing unless the human lead explicitly assigns Claude Code as the active editing agent.
 
-Stores observed execution outcomes.
+### Gemini CLI
 
-Supported statuses:
+Primary role:
 
-- passed
-- failed
-- skipped
-- blocked
-- timed_out
-- unknown
+- large-context analyzer
+- documentation reviewer
+- consistency reviewer
+- product-readiness gap reviewer
+- impact-analysis assistant
 
-Supported sources:
+Gemini CLI is analysis/documentation-first by default.
 
-- manual
-- playwright
-- selenium
-- postman
-- ci
-- unknown
-
-Hard rules:
-
-- Execution evidence does not mutate the test suite.
-- Execution evidence does not mutate the review result.
-- Execution evidence does not decide readiness directly.
-
-### ReleaseReadinessSummary
-
-Derived deterministic release-readiness signal from current artifacts.
-
-Inputs:
-
-```text
-RefinedRequirement
-+ TestSuiteArtifact
-+ PersistedReviewResult
-+ ExecutionIntelligenceArtifact
-```
-
-Statuses:
-
-- insufficient_data
-- not_ready
-- weak
-- partial
-- ready_with_risk
-- ready
-- blocked
-
-Hard rule:
-
-```text
-ReleaseReadinessSummary is derived, not persisted as a historical artifact.
-Do not add readiness persistence unless explicitly approved.
-```
+Gemini CLI should not perform broad repository rewrites unless explicitly scoped and approved.
 
 ---
 
-## Completed Milestones
+## Universal Agent Rules
 
-### M14 — File-Based Suite Ingestion — COMPLETE
+All agents must follow these rules:
 
-Delivered:
-
-- TXT suite upload
-- structured MD suite upload
-- review-mode upload gating
-- deterministic parsing
-- fail-closed ingestion
-- SessionArtifact.testSuite creation
-
-Rule enforced:
-
-```text
-One workspace = one test target.
-Upload blocked if suite exists.
-No overwrite.
-No merge.
-No hidden mutation.
-```
-
-Not included:
-
-- CSV import
-- JSON suite upload
-- Qase/TestRail/Xray/Zephyr import
-- merge/append upload
-
-### M15 — Generic JSON/CSV Export Layer — COMPLETE
-
-Delivered:
-
-- generic JSON export
-- generic CSV export
-- export from persisted SessionArtifact.testSuite
-- deterministic filenames
-- metadata
-- ownership protection
-- read-only export
-- no artifact mutation
-- deterministic fallback parser for edited cases with body labels
-
-Correct positioning:
-
-```text
-Export Release Signal test suites as clean JSON/CSV for sharing, documentation, migration, or manual mapping.
-```
-
-Do not claim:
-
-- direct TestRail export
-- direct Qase export
-- direct Xray export
-- direct Zephyr export
-- guaranteed external-tool compatibility
-
-### M16 — Execution Evidence / Import Results Layer — COMPLETE
-
-Delivered:
-
-- `/api/execution-evidence` endpoint
-- deterministic validation and normalization
-- suite version linking
-- session ownership protection
-- duplicate result rejection
-- empty result rejection
-- unknown case ID warnings
-- suite version mismatch rejection
-- ExecutionIntelligenceArtifact persistence
-- Workspace Execution Evidence card
-
-Not included:
-
-- native Playwright/Postman/JUnit/Cypress parsing
-- CI/CD integration
-- AI-based interpretation
-
-### M17 — Release Readiness Dashboard / Reporting — COMPLETE
-
-Delivered:
-
-- deterministic readiness rules/service
-- derived ReleaseReadinessSummary
-- collapsed/expandable Release Readiness Report panel
-- readiness statuses
-- confidence level
-- reasons
-- warnings
-- recommended actions
-- artifact input visibility
-- review gap surfacing
-
-Validated behavior:
-
-- missing execution evidence shows Insufficient Data even with strong review score
-- blocked execution evidence shows Blocked
-- review score, execution evidence, and TestSuiteArtifact are never mutated
-
-Not included:
-
-- AI-based release decisions
-- numeric readiness score
-- persisted readiness history
-- native adapters
-- tool integrations
-- CI/CD
+1. Work on one bounded ticket at a time.
+2. Use one active editing agent per branch.
+3. Do not perform broad refactors.
+4. Do not mix unrelated cleanup with feature work.
+5. Do not rename files, contracts, routes, or product concepts unless explicitly scoped.
+6. Do not change artifact contracts unless explicitly approved.
+7. Do not move deterministic logic into UI components.
+8. Do not move product decisions into prompts.
+9. Do not use free-form AI text as product truth.
+10. Do not silently mutate existing users, organizations, subscriptions, wallets, credits, sessions, or artifacts.
+11. Do not add dependencies unless explicitly scoped.
+12. Do not change billing, credit, trial, readiness, review, or artifact behavior outside the approved milestone.
+13. Do not edit files outside the approved scope without raising a scope blocker.
 
 ---
 
-## M18 Closure State
+## One Active Editor Rule
 
-M18 is the V1 stabilization milestone after M14–M17.
+Only one AI agent may edit repository files on a branch at a time.
 
-Milestone:
-
-```text
-M18 — Architecture Cleanup / File Size Reduction / Bug Fixing / AI-Assisted Refactor Pass
-```
-
-Status:
+Allowed:
 
 ```text
-Complete, pending only normal post-merge final regression confirmation if one last manual/automated pass is desired.
+ChatGPT plans → Codex edits → Claude reviews → Codex fixes → Gemini reviews docs
 ```
 
-Latest recorded master:
+Not allowed:
 
 ```text
-fd3eadc docs(m18): update refactor inventory execution status
+Codex edits + Claude edits + Gemini edits on the same branch at the same time
 ```
 
-M18 achieved its objective:
-
-- stabilized the V1 architecture after M14–M17
-- reduced safe file bloat
-- fixed known workflow-quality defects
-- documented high-risk deferrals honestly
-- avoided risky refactors just to reduce line count
-
-Architecture rule preserved:
-
-```text
-AI → parsed → structured artifacts → deterministic system logic → UI
-```
-
-No workflow truth, review score, release decision, artifact state, execution result, or readiness status was moved into free-form AI text or UI-owned logic.
+Review agents may inspect and comment while another agent edits, but they must not modify files.
 
 ---
 
-## Completed M18 Work
-
-### M18.0 — Refactor Inventory and Execution Plan
-
-Status: complete.
-
-Codex inventory was accepted as a baseline, but implementation order was corrected.
-
-Decision:
-
-```text
-Do not start with broad app/api/chat/route.ts extraction.
-It is high-risk and controls the primary product path.
-```
-
-### M18.1a — Cases Card UI Controls Extraction
-
-Status: complete.
-
-CasesTextCard.tsx UI controls were extracted into a dedicated component.
-
-### M18.1b — Cases Card Overview Helper Extraction
-
-Status: complete.
-
-Case overview/helper logic was extracted from CasesTextCard.tsx.
-
-### M18.2 — Release Health vs Release Readiness Decision
-
-Status: complete.
-
-Decision:
-
-```text
-Release Readiness = primary V1 release decision/reporting surface.
-Workspace Health = compact workspace context signal.
-```
-
-No status semantics, persisted contracts, or dashboard architecture were changed.
-
-### M18.2a — Workspace Health Wording Clarification
-
-Status: complete.
-
-UI label changed from Release Health to Workspace Health.
-
-This was wording only:
-
-- no logic changed
-- no status semantics changed
-- no artifact contracts changed
-
-### M18.3 — Structured Field Persistence Hardening
-
-Status: complete.
-
-Edited/saved test cases now preserve or deterministically rehydrate structured fields more safely.
-
-Protected fields:
-
-- type
-- priority
-- preconditions
-- steps
-- expectedResults
-- tags
-- notes
-
-This supports correct JSON/CSV export behavior.
-
-### M18.4 — Improve Test Plan Preservation Hardening
-
-Status: complete.
-
-Bad behavior before fix:
-
-```text
-33 cases → 14 cases
-87/100 → 82/100
-```
-
-Fixes delivered:
-
-- Improve / Regenerate renamed to Improve Test Plan
-- prompt made preservation-first
-- full existing suite content added to Improve context
-- deterministic shrink guard added
-- unsafe replacement rejected if generated suite is less than 80% of existing case count
-
-Validated behavior:
-
-```text
-22 tests → 22 tests
-90/100 → 90/100
-```
-
-Action semantics:
-
-```text
-Generate Tests = create new suite
-Next Batch = append-only expansion
-Improve Test Plan = preserve + enhance + clarify + fill gaps
-Regenerate Test Plan = future separate destructive/restructure action
-```
-
-### M18.5 — Server/Service Boundary Review
-
-Status: complete.
-
-Decisions:
-
-- no broad route.ts extraction in M18
-- no artifactUpdateService split in M18
-- export and execution evidence routes are acceptable
-- route.ts remains known high-risk and deferred
-
-### M18.6 — Hook/Session Review and Label Cleanup
-
-Status: complete.
-
-useChatSession.ts remains large but was classified.
-
-Safe cleanup completed:
-
-- Improve / Regenerate Suite unavailable → Improve Test Plan unavailable
-- Improve / Regenerate Suite failed → Improve Test Plan failed
-
-### M18.7a — WorkspaceHealthCard Extraction
-
-Status: complete.
-
-FeatureWorkspaceSummary.tsx reduced from approximately:
-
-```text
-861 lines → 741 lines
-```
-
-New component:
-
-```text
-app/chat/components/workspace/WorkspaceHealthCard.tsx
-```
-
-Artifact-derived logic stayed in the parent. The extracted component is presentational only.
-
-### M18.7b — useChatSession Artifact Helper Extraction
-
-Status: complete.
-
-Extracted from:
-
-```text
-app/chat/hooks/useChatSession.ts
-```
-
-into:
-
-```text
-app/chat/hooks/useChatSession.artifacts.ts
-```
-
-Moved helpers:
-
-- shouldApplyIncomingArtifact
-- pruneStaleReviewItems
-- pruneLiveStaleReviewItems
-
-This preserved artifact freshness and stale-review safety.
-
-### M18.7c — Refine Requirement Fail-Closed Regression Fix
-
-Status: complete.
-
-Bug found during regression:
-
-```text
-Refine Requirement on an existing refined requirement could return ok:true
-with "I couldn't format the coach output this time. Please retry."
-```
-
-Fix delivered:
-
-- Refine Requirement no longer treats coach-formatting failure as success
-- requirement rendering no longer depends unnecessarily on coachParsed
-- invalid model output fails closed with clear error
-- existing artifact is kept unchanged
-
-This protects artifact-driven workflow.
-
-### M18 Inventory Status Update
-
-Status: complete.
-
-`docs/m18-refactor-inventory.md` reflects:
-
-- what was done
-- what was deferred
-- why refactoring stops unless final regression exposes a concrete bug
+## Scope Discipline
+
+Every task must have:
+
+- branch name
+- goal
+- allowed files or allowed directories
+- forbidden changes
+- validation plan
+- merge criteria
+
+An agent must stop and raise a blocker when:
+
+- the requested change requires files outside the approved scope
+- a schema change appears necessary but was not approved
+- a dependency change appears necessary but was not approved
+- a task conflicts with the architecture rule
+- a task conflicts with existing approved roadmap decisions
 
 ---
 
-## Explicit M18 Deferrals
+## Blast Radius Rule
 
-The following remain known oversized or high-risk and are not being further refactored in M18:
+Default blast radius limits:
+
+| Task Type | Default Maximum Changed Files | Rule |
+|---|---:|---|
+| Documentation-only task | 10 | Must not touch app logic |
+| Bug fix | 3 | Must be targeted |
+| Normal feature | 5 | Must stay within approved scope |
+| Complex feature | 10 | Requires explicit approval |
+| Refactor milestone | Approved scope only | Requires dedicated branch |
+
+Files under `.ai/milestones/` may be excluded from blast-radius counting when they are milestone artifacts only.
+
+Exceeding the default file limit requires explicit approval from the human lead.
+
+---
+
+## High-Risk Areas
+
+Extra review is required when touching:
 
 - `app/api/chat/route.ts`
 - `app/chat/hooks/useChatSession.ts`
 - `lib/chat/artifact.ts`
 - `lib/server/chat/artifactUpdateService.ts`
-- `app/api/chat/history/[sessionId]/route.ts`
-- `lib/server/chat/testSuiteService.ts`
+- artifact parsing or persistence services
+- billing services
+- trial initialization logic
+- credit wallet logic
+- credit ledger logic
+- subscription logic
+- Auth0 organization or user creation logic
+- release readiness services
+- review scoring logic
+- AI provider abstraction
+- prompt execution boundaries
+- session ownership or authorization checks
+- database schema or migrations
 
-Reason:
+High-risk changes require at minimum:
 
-These files are close to workflow orchestration, artifact persistence, stale-state invalidation, parsing contracts, or product-truth behavior.
-
-Further extraction requires dedicated bounded tickets with full regression validation.
-
-Do not pretend these files are solved.
-
-Do not continue refactoring them in M18 unless a concrete regression requires a targeted fix.
-
----
-
-## Not Included in M18 Final Regression
-
-These are not part of current M18 final regression because they are not active/current UI scope:
-
-- Upload TXT suite
-- Upload structured MD suite
-- Execution result file upload / translator
-
-Future scope remains:
-
-- Execution Result Upload Translator
-- Release Signal execution JSON upload
-- Generic execution CSV upload
-- Optional JUnit XML only if explicitly scoped
-
-This belongs to future V1.1/V2 work, not M18.
+- clear scope
+- minimal diff
+- build validation
+- architecture review
+- explicit human approval before merge
 
 ---
 
-## M18 Final Regression Checklist
+## Failure Mode
 
-Use this as the final M18 closure validation list:
+When an agent encounters ambiguity, contradiction, or a rule violation, it must stop.
 
-1. Refine Requirement on existing refined requirement
-2. Generate Tests
-3. Review Test Suite
-4. Improve Test Plan
-5. Generate Next Batch
-6. Edit/save a test case and confirm structured fields persist
-7. Export JSON
-8. Export CSV
-9. Execution Evidence structured/API import
-10. Release Readiness panel
-11. Workspace Health card
-12. Session switch
-13. Page refresh / artifact rehydration
-14. Requirement refinement invalidates stale review
+The agent must not guess.
 
-Closure rule:
+The agent must not implement an alternative.
+
+The agent must report the blocker clearly.
+
+For milestone work, the blocker should be captured as:
 
 ```text
-If all pass, M18 is closed.
-If something fails, fix only the concrete regression.
-No more refactoring or cleanup in M18.
+.ai/milestones/M-{N}/blocker.md
 ```
 
----
+The blocker must include:
 
-## Current Roadmap
+- what caused the blocker
+- which rule or scope item is affected
+- what decision is needed
+- what the agent recommends
+- what the agent did not change
 
-```text
-V1.0  = M14–M17 feature foundation + M18 stabilization
-V1.1  = Commercial/product readiness
-V1.2+ = Additional bounded product capabilities
-V2    = Deeper integrations and automation intelligence
-```
-
-### V1.1 future scope
-
-May include:
-
-- domain setup
-- onboarding/demo polish
-- simple subscription/usage tracking
-- possible execution result upload translator
-
-### V2 future scope
-
-May include:
-
-- Qase/TestRail/Xray/Zephyr interoperability
-- Automation Candidate Analysis
-- native execution report adapters
-- Playwright/API/Postman draft generation
-- CI/CD integration
-- team/project model
-- advanced dashboards
-- historical readiness
-- enterprise governance
-
-Do not implement, scaffold, or anticipate V1.1/V2 concepts during M18 or unrelated tasks unless explicitly approved.
+Implementation may continue only after the human lead resolves the blocker.
 
 ---
 
-## High-Risk Files — Do Not Touch Without Explicit Approval
+## Validation Required
 
-| File | Why risky | Disposition |
-|---|---|---|
-| `app/api/chat/route.ts` | Controls workflow routing, prompt construction, model execution, persistence, telemetry | Deferred. Any extraction requires specific seam approval. |
-| `app/chat/hooks/useChatSession.ts` | Session state, workflow execution, send flow, artifact freshness | Core remains deferred. Only approved bounded helper extraction is allowed. |
-| `lib/chat/artifact.ts` | Product-truth contract layer | Deferred. Do not split casually. |
-| `lib/server/chat/artifactUpdateService.ts` | Stale-state invalidation and artifact persistence | Deferred. Do not split casually. |
-| `app/api/chat/history/[sessionId]/route.ts` | Session history behavior | Deferred. |
-| `lib/server/chat/testSuiteService.ts` | Test-suite generation/service behavior | Deferred. |
+Every code change must report:
 
----
+1. files changed
+2. behavior changed
+3. behavior explicitly not changed
+4. commands run
+5. validation result
+6. risks
+7. follow-up recommendations
 
-## General Agent Rules
-
-Never work directly on master.
-
-Use:
-
-```text
-one branch
-one ticket
-one bounded change
-one commit scope
-validate before moving on
-```
-
-Before making any change:
-
-1. State which file(s) will be changed.
-2. State what behavior is being preserved.
-3. State the validation steps to run.
-4. Confirm the task is not excluded scope.
-5. Confirm the task does not touch high-risk files without explicit approval.
-
-After making any change:
-
-1. Run relevant validation.
-2. Run `npm run build` when application code changes.
-3. Run the relevant QA suite if `/qa` exists and the task affects UI/workflow behavior.
-4. List all changed files.
-5. Do not push unless explicitly instructed.
-
-Never:
-
-- modify files not explicitly included in the task
-- perform broad refactors
-- rewrite large files from scratch
-- change artifact contracts
-- change deterministic review scoring
-- change execution evidence semantics
-- move readiness logic into UI
-- move product truth into AI text
-- scaffold V2 concepts
-- combine unrelated changes in one commit
-
-Git safety:
-
-- Do not push to remote unless explicitly instructed.
-- Do not merge branches unless explicitly instructed.
-- Do not delete local or remote branches unless explicitly instructed.
-- Do not rebase unless explicitly instructed.
-- All implementation tickets must start from latest master unless explicitly continuing an approved existing branch.
-
----
-
-## Codex-Specific Rules
-
-For QA framework tasks:
-
-- only create or modify files under `/qa` unless explicitly approved
-- do not modify `app/`, `lib/`, `prisma/`, root `package.json`, root configs, or existing app source
-- after the task, run `git diff --stat`
-- confirm only `/qa` files changed
-- do not push
-- do not merge
-
-For M18 closure/final regression:
-
-- do not start more refactoring
-- if a regression is found, fix only the concrete regression
-- no more cleanup-only work in M18
-
----
-
-## Build and Validation
-
-Application build:
+Minimum validation for application code:
 
 ```bash
 npm run build
 ```
 
-If `/qa` Playwright framework exists:
+Additional validation is required when touching:
 
-```bash
-cd qa
-npm run smoke
-npm run regression
-```
-
-Expected QA behavior:
-
-- skipped tests are acceptable when required seeded session IDs are missing
-- failing tests are not acceptable
-- no app source files should be changed by the `/qa` test harness task
+- billing
+- trials
+- credits
+- authentication
+- authorization
+- artifacts
+- session state
+- AI provider flow
+- release readiness
+- review scoring
+- execution evidence
+- exports
+- onboarding
+- landing page routing
 
 ---
 
-## Final M18 Assessment
+## Merge Readiness Rule
 
-M18 was successful.
+A branch is merge-ready only when:
 
-It delivered:
+- the approved scope is respected
+- no unrelated files are changed
+- architecture rule is preserved
+- build validation passes
+- high-risk changes received review
+- validation results are documented
+- known non-blocking risks are listed
+- blockers are resolved
+- the human lead approves the final result
 
-- real bug fixes
-- real file-size reductions
-- artifact-safety improvements
-- clear product semantics
-- clear high-risk deferrals
-- no architecture drift
+---
 
-Most important outcomes:
+## Red-Flag Phrases
 
-- Improve Test Plan is now safe
-- structured test-case fields are better preserved
-- Workspace Health vs Release Readiness is clarified
-- Refine Requirement fails closed instead of returning false success
-- useChatSession and FeatureWorkspaceSummary were reduced safely
-- M18 inventory reflects reality
+Agents must stop and self-review if they are about to say or do any of the following:
+
+- "I also cleaned up..."
+- "I refactored the surrounding code..."
+- "I simplified the architecture..."
+- "I renamed this for consistency..."
+- "I changed the prompt to decide..."
+- "I moved this logic into the component..."
+- "I updated related files while I was there..."
+- "I fixed a few other things I noticed..."
+
+These usually indicate unauthorized scope expansion.
+
+---
+
+## Required Session Bootstrap
+
+Every AI-assisted work session should begin with this instruction:
+
+```text
+Read AGENTS.md and docs/ai/*.md first.
+
+Confirm the following before continuing:
+
+Role:
+[ChatGPT | Codex | Claude Code | Gemini CLI]
+
+Mode:
+[planning | implementation | review | documentation | validation]
+
+Milestone:
+[M-{N} or "not assigned"]
+
+Branch:
+[branch name or "not assigned"]
+
+Allowed scope:
+[list approved files/directories or "not assigned"]
+
+Forbidden actions:
+[list actions this agent must not perform in this session]
+
+Architecture confirmation:
+I will preserve the Release Signal architecture rule:
+
+AI → parsed → structured artifacts → deterministic system logic → UI
+```
+
+For implementation sessions, the agent must also confirm:
+
+```text
+I will not edit files outside the approved scope.
+I will stop and raise a blocker if the scope is insufficient.
+I will report changed files, validation, risks, and follow-up recommendations.
+```
+
+---
+
+## Full Governance Reference
+
+Additional governance files live under:
+
+```text
+docs/ai/
+```
+
+Recommended files:
+
+- `docs/ai/RELEASE_SIGNAL_ARCHITECTURE_RULES.md`
+- `docs/ai/AI_SAFEGUARDS.md`
+- `docs/ai/AGENT_OPERATING_MODEL.md`
+- `docs/ai/MILESTONE_WORKFLOW.md`
+- `docs/ai/V1_ROADMAP_EXECUTION_RULES.md`
+- `docs/ai/PROMPT_TEMPLATES.md`
+
+Milestone artifacts may live under:
+
+```text
+.ai/milestones/
+```
+
+Guardrail scripts may live under:
+
+```text
+.ai/bin/
+```
+
+---
+
+## Final Rule
+
+Three AI opinions are inputs.
+
+One consolidated human-approved decision is the source of truth.
+
+The Release Signal architecture rule always wins:
+
+```text
+AI → parsed → structured artifacts → deterministic system logic → UI
+```
