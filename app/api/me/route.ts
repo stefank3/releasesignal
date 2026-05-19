@@ -8,11 +8,13 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { auth0 } from "@/lib/auth0";
 import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { ensureOrgForUser } from "@/lib/billing/ensureOrgForUser";
 import { prisma } from "@/lib/prisma";
+import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
 type MeResponse =
   | {
@@ -42,7 +44,9 @@ function getTrialDaysRemaining(planStatus: string | null | undefined, currentPer
   return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const inbound = req.headers.get("x-request-id");
+  const requestId = inbound && inbound.length < 200 ? inbound : randomUUID();
   const session = await auth0.getSession();
 
   if (!session?.user) {
@@ -54,6 +58,16 @@ export async function GET() {
 
   if (!auth0Sub) {
     return NextResponse.json<MeResponse>({ authenticated: false }, { status: 401 });
+  }
+
+  const rateLimit = await enforceRouteRateLimit({
+    policy: "accountStatus",
+    identifier: `user:${auth0Sub}`,
+    requestId,
+  });
+
+  if (!rateLimit.ok) {
+    return rateLimit.response;
   }
 
   const email = (user.email as string | undefined) ?? "Unknown user";

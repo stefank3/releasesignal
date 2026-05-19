@@ -26,6 +26,7 @@ import { recordChatMetric } from "@/lib/metrics/chatMetrics";
 import { requireAuthenticatedUser } from "@/lib/server/chat/requestGuards";
 import { buildExecutionEvidenceArtifact } from "@/lib/server/execution/executionEvidenceService";
 import type { ExecutionEvidenceInput } from "@/lib/server/execution/executionEvidenceValidator";
+import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,6 +69,16 @@ export async function POST(req: Request) {
 
   if (!auth.ok) {
     return auth.response;
+  }
+
+  const rateLimit = await enforceRouteRateLimit({
+    policy: "executionEvidence",
+    identifier: `user:${auth.auth0Sub}`,
+    requestId,
+  });
+
+  if (!rateLimit.ok) {
+    return rateLimit.response;
   }
 
   const body = await readJsonBody(req);
