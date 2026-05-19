@@ -27,6 +27,7 @@ import type {
 } from "@/lib/chat/artifact";
 import type { CoachResult, ReviewResult } from "@/lib/framework/reviewSchema";
 import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
+import type { AccountAccessFailureReason } from "@/lib/billing/accountAccess";
 
 type UsagePayload = {
   promptTokens: number;
@@ -100,17 +101,23 @@ export function buildForbiddenResponse(args: {
   );
 }
 
-export function buildInsufficientCreditsPrecheckResponse(args: {
+export function buildAccountAccessRequiredResponse(args: {
   requestId: string;
   clientMode: ClientMode;
+  reason: AccountAccessFailureReason;
   creditsRemaining: number;
+  planStatus: string | null;
+  currentPeriodEnd: string | null;
 }) {
   return NextResponse.json(
     {
       ok: false,
       mode: args.clientMode,
-      error: "Insufficient credits",
+      error: "Account access required",
+      reason: args.reason,
       creditsRemaining: args.creditsRemaining,
+      planStatus: args.planStatus,
+      currentPeriodEnd: args.currentPeriodEnd,
     },
     { status: 402, headers: responseHeaders(args.requestId) }
   );
