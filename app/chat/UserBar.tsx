@@ -14,8 +14,41 @@
 import { useEffect, useState } from "react";
 
 type MeResponse =
-  | { authenticated: true; email: string; isAdmin: boolean }
+  | {
+      authenticated: true;
+      email: string;
+      isAdmin: boolean;
+      planStatus: string | null;
+      trialEndsAt: string | null;
+      creditsRemaining: number;
+      trialDaysRemaining: number | null;
+    }
   | { authenticated: false };
+
+function formatAccountStatus(me: Extract<MeResponse, { authenticated: true }>) {
+  const credits = `${me.creditsRemaining} credits`;
+
+  if (me.planStatus === "trialing") {
+    const daysLeft =
+      typeof me.trialDaysRemaining === "number"
+        ? ` · ${me.trialDaysRemaining} days left`
+        : "";
+
+    return `Trial · ${credits}${daysLeft}`;
+  }
+
+  return `Credits · ${credits}`;
+}
+
+function formatTrialTitle(me: Extract<MeResponse, { authenticated: true }>) {
+  if (me.planStatus !== "trialing" || !me.trialEndsAt) return undefined;
+
+  return `Trial ends ${new Date(me.trialEndsAt).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+}
 
 export default function UserBar() {
   const [me, setMe] = useState<MeResponse | null>(null);
@@ -83,8 +116,25 @@ export default function UserBar() {
   }
 
   return (
-    <div className="flex items-center gap-3 text-sm">
+    <div className="flex flex-wrap items-center justify-end gap-3 text-sm">
       <span className="opacity-80">{me.email}</span>
+
+      <span
+        title={formatTrialTitle(me)}
+        className="rounded-lg border px-3 py-2 text-xs font-semibold"
+        style={{
+          borderColor:
+            me.creditsRemaining === 0
+              ? "rgba(245,158,11,0.65)"
+              : "rgba(148,163,184,0.45)",
+          background:
+            me.creditsRemaining === 0
+              ? "rgba(245,158,11,0.14)"
+              : "rgba(148,163,184,0.12)",
+        }}
+      >
+        {formatAccountStatus(me)}
+      </span>
 
       {me.isAdmin && (
         <>
