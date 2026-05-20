@@ -8,6 +8,7 @@
   },
   "scripts": {
     "smoke": "playwright test tests/smoke.spec.ts",
+    "smoke:prod": "playwright test tests/smoke.spec.ts --grep-invert \"Export buttons|Session survives\"",
     "regression": "playwright test tests/regression.spec.ts",
     "test:all": "playwright test",
     "test:headed": "playwright test --headed",
