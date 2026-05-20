@@ -6,6 +6,9 @@ const workflowSteps = [
   "Surface evidence-backed release readiness",
 ];
 
+const signature =
+  "Built by Stefan Kajchevski, Senior Quality Engineer · An RSF Labs product";
+
 const signalCards = [
   {
     title: "Structured QA truth",
@@ -54,7 +57,7 @@ export default function Home() {
               Release Signal
             </span>
             <span style={{ fontSize: 12, color: "rgba(248,250,252,0.68)" }}>
-              QA intelligence workspace
+              QA intelligence workspace · private beta
             </span>
           </div>
 
@@ -119,6 +122,19 @@ export default function Home() {
               >
                 Move from raw requirements and test plans toward structured,
                 reviewable, evidence-backed release readiness.
+              </p>
+              <p
+                style={{
+                  margin: 0,
+                  maxWidth: 640,
+                  color: "rgba(226,232,240,0.68)",
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                }}
+              >
+                Private-beta access for requirement refinement, test-suite
+                generation and review, execution evidence, and deterministic
+                readiness reporting.
               </p>
             </div>
 
@@ -255,6 +271,19 @@ export default function Home() {
             </article>
           ))}
         </section>
+
+        <footer
+          style={{
+            marginTop: 44,
+            paddingTop: 18,
+            borderTop: "1px solid rgba(248,250,252,0.10)",
+            color: "rgba(226,232,240,0.64)",
+            fontSize: 13,
+            lineHeight: 1.6,
+          }}
+        >
+          {signature}
+        </footer>
       </section>
     </main>
   );
