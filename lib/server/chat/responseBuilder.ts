@@ -19,6 +19,7 @@
 
 import { NextResponse } from "next/server";
 import { responseHeaders } from "@/lib/chat/http";
+import { buildInternalServerErrorResponse } from "@/lib/server/apiErrorResponse";
 import type { RateMeta, ClientMode } from "@/lib/chat/chatTypes";
 import type {
   ExecutionIntelligenceArtifact,
@@ -304,7 +305,7 @@ export function buildAuthExpiredResponse(args: {
   );
 }
 
-export function buildServerErrorResponse(args: {
+export function buildChatPreconditionErrorResponse(args: {
   requestId: string;
   errorMessage: string;
   rateMeta: RateMeta | null;
@@ -312,12 +313,22 @@ export function buildServerErrorResponse(args: {
   return NextResponse.json(
     {
       ok: false,
-      error: "Server error",
+      error: "Workflow precondition failed",
       details: args.errorMessage,
       ...(args.rateMeta ? { rate: args.rateMeta } : {}),
       artifact: args.artifact,
       artifactUpdatedAt: args.artifactUpdatedAt,
     },
-    { status: 500, headers: responseHeaders(args.requestId, args.rateMeta ?? undefined) }
+    { status: 400, headers: responseHeaders(args.requestId, args.rateMeta ?? undefined) }
   );
+}
+
+export function buildServerErrorResponse(args: {
+  requestId: string;
+  rateMeta: RateMeta | null;
+} & SharedArtifactPayload) {
+  return buildInternalServerErrorResponse({
+    requestId: args.requestId,
+    headers: responseHeaders(args.requestId, args.rateMeta ?? undefined),
+  });
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth0 } from "@/lib/auth0";
 import { prisma } from "@/lib/prisma";
+import { buildInternalServerErrorResponse, getRequestId } from "@/lib/server/apiErrorResponse";
+import { log } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -18,7 +20,21 @@ async function getSessionId(ctx: Ctx): Promise<string | undefined> {
 }
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
-  const authSession = await auth0.getSession();
+  const requestId = getRequestId(req);
+  let authSession: Awaited<ReturnType<typeof auth0.getSession>>;
+  try {
+    authSession = await auth0.getSession();
+  } catch (err: unknown) {
+    log("error", {
+      event: "chat_error",
+      requestId,
+      errorType: "chat_history_title_auth_error",
+      errorMessage: err instanceof Error ? err.message : "Unknown error",
+    });
+
+    return buildInternalServerErrorResponse({ requestId });
+  }
+
   const sub = authSession?.user?.sub;
   if (!sub) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -83,8 +99,15 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         : null,
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    // Keep response non-leaky; msg is only for debugging if you later log it.
-    return NextResponse.json({ error: "Internal error", details: msg }, { status: 500 });
+    log("error", {
+      event: "chat_error",
+      requestId,
+      auth0Sub: sub,
+      sessionId,
+      errorType: "chat_history_title_error",
+      errorMessage: err instanceof Error ? err.message : "Unknown error",
+    });
+
+    return buildInternalServerErrorResponse({ requestId });
   }
 }
