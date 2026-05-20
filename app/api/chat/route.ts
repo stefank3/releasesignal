@@ -38,6 +38,7 @@ import { tryReplayExistingAssistant } from "@/lib/server/chat/replayService";
 
 import {
   buildAuthExpiredResponse,
+  buildChatPreconditionErrorResponse,
   buildChatSuccessResponse,
   buildInsufficientCreditsBillingResponse,
   buildServerErrorResponse,
@@ -627,7 +628,7 @@ export async function POST(req: Request) {
           latencyMs: Date.now() - startTime,
         });
 
-        return buildServerErrorResponse({
+        return buildChatPreconditionErrorResponse({
           requestId,
           errorMessage:
             workflowAction === "refine_requirement"
@@ -653,7 +654,7 @@ export async function POST(req: Request) {
             latencyMs: Date.now() - startTime,
           });
 
-          return buildServerErrorResponse({
+          return buildChatPreconditionErrorResponse({
             requestId,
             errorMessage: nextBatchPrerequisite.message,
             rateMeta,
@@ -674,7 +675,7 @@ export async function POST(req: Request) {
           latencyMs: Date.now() - startTime,
         });
 
-        return buildServerErrorResponse({
+        return buildChatPreconditionErrorResponse({
           requestId,
           errorMessage:
             "Review Test Suite action requires a persisted test suite artifact.",
@@ -915,8 +916,6 @@ export async function POST(req: Request) {
 
         return buildServerErrorResponse({
           requestId,
-          errorMessage:
-            "Refine Requirement failed because the model response could not be parsed into a valid refined requirement artifact. Existing requirement was kept unchanged.",
           rateMeta,
           artifact: sessionArtifact,
           artifactUpdatedAt: artifactUpdatedAtIso,
@@ -1566,7 +1565,6 @@ export async function POST(req: Request) {
 
     return buildServerErrorResponse({
       requestId,
-      errorMessage: errMsg,
       rateMeta,
       artifact: sessionArtifact,
       artifactUpdatedAt: artifactUpdatedAtIso,

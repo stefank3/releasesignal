@@ -10,6 +10,7 @@ import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
 import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
+import { buildInternalServerErrorResponse } from "@/lib/server/apiErrorResponse";
 
 /**
  * Standard response headers for request correlation.
@@ -202,9 +203,9 @@ export async function POST(req: Request) {
       errorMessage: errMsg,
     });
 
-    return NextResponse.json(
-      { ok: false, error: "Server error", details: errMsg },
-      { status: 500, headers: responseHeaders(requestId) }
-    );
+    return buildInternalServerErrorResponse({
+      requestId,
+      headers: responseHeaders(requestId),
+    });
   }
 }

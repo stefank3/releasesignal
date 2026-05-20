@@ -9,6 +9,7 @@ import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { log } from "@/lib/logger";
 import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
+import { buildInternalServerErrorResponse } from "@/lib/server/apiErrorResponse";
 
 function headers(requestId: string) {
   return { "X-Request-Id": requestId };
@@ -115,9 +116,9 @@ export async function GET(req: Request) {
       errorMessage: errMsg,
     });
 
-    return NextResponse.json(
-      { ok: false, error: "Server error", details: errMsg },
-      { status: 500, headers: headers(requestId) }
-    );
+    return buildInternalServerErrorResponse({
+      requestId,
+      headers: headers(requestId),
+    });
   }
 }
