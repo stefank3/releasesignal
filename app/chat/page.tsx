@@ -135,6 +135,15 @@ export default function ChatPage() {
     boxSizing: "border-box",
   };
 
+  const footerStyle: React.CSSProperties = {
+    marginTop: 18,
+    padding: "12px 4px 4px",
+    color: isDark ? "rgba(255,255,255,0.48)" : "rgba(15,23,42,0.52)",
+    fontSize: 12,
+    lineHeight: 1.5,
+    textAlign: "center",
+  };
+
   return (
     <div style={{ display: "flex", height: "100vh", width: "100%" }}>
       <SessionSidebar
@@ -202,6 +211,10 @@ export default function ChatPage() {
             bumpUiTickAction();
           }}
         />
+
+        <footer aria-label="App signature" style={footerStyle}>
+          Built by Stefan Kajchevski · RSF Labs
+        </footer>
       </main>
     </div>
   );
