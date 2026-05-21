@@ -153,7 +153,7 @@ export default function Home() {
         style={{
           width: "100%",
           background:
-            "linear-gradient(180deg, #0f172a 0%, #162033 58%, #f8fafc 58%)",
+            "linear-gradient(135deg, #0f172a 0%, #172033 58%, #1e293b 100%)",
           color: "#f8fafc",
         }}
       >
@@ -162,7 +162,7 @@ export default function Home() {
             width: "100%",
             maxWidth: 1120,
             margin: "0 auto",
-            padding: "28px 24px 76px",
+            padding: "28px 24px 72px",
           }}
         >
           <nav
@@ -204,9 +204,10 @@ export default function Home() {
           <div
             style={{
               display: "grid",
-              gap: 36,
-              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-              alignItems: "start",
+              gap: 40,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+              alignItems: "center",
             }}
           >
             <div style={{ display: "grid", gap: 24 }}>
@@ -225,9 +226,9 @@ export default function Home() {
                 <h1
                   style={{
                     margin: 0,
-                    maxWidth: 820,
-                    fontSize: 48,
-                    lineHeight: 1.02,
+                    maxWidth: 760,
+                    fontSize: 42,
+                    lineHeight: 1.08,
                     fontWeight: 950,
                   }}
                 >
@@ -238,9 +239,9 @@ export default function Home() {
                 <p
                   style={{
                     margin: 0,
-                    maxWidth: 760,
+                    maxWidth: 720,
                     color: "rgba(226,232,240,0.84)",
-                    fontSize: 19,
+                    fontSize: 18,
                     lineHeight: 1.6,
                   }}
                 >
@@ -251,7 +252,14 @@ export default function Home() {
                 </p>
               </div>
 
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
                 <Link
                   href="/auth/login"
                   style={{
@@ -262,6 +270,7 @@ export default function Home() {
                     textDecoration: "none",
                     fontSize: 14,
                     fontWeight: 950,
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.22)",
                   }}
                 >
                   Start Free Trial
@@ -273,7 +282,7 @@ export default function Home() {
                     border: "1px solid rgba(248,250,252,0.22)",
                     borderRadius: 8,
                     padding: "12px 16px",
-                    background: "rgba(248,250,252,0.06)",
+                    background: "rgba(248,250,252,0.10)",
                     color: "#f8fafc",
                     textDecoration: "none",
                     fontSize: 14,
@@ -288,7 +297,7 @@ export default function Home() {
                 style={{
                   margin: 0,
                   maxWidth: 620,
-                  color: "rgba(226,232,240,0.62)",
+                  color: "rgba(226,232,240,0.76)",
                   fontSize: 13,
                   lineHeight: 1.6,
                 }}
