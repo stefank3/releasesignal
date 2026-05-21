@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Release Signal",
   description:
-    "Private-beta QA intelligence workspace for requirement refinement, structured test design, execution evidence, and release readiness.",
+    "Private-beta AI-assisted QA intelligence for requirement refinement, structured test-suite review, QA artifact export, and deterministic release readiness evaluation.",
   robots: {
     index: false,
     follow: false,
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Release Signal",
     description:
-      "Private-beta QA intelligence workspace for requirement refinement, structured test design, execution evidence, and release readiness.",
+      "Private-beta AI-assisted QA intelligence for requirement refinement, structured test-suite review, QA artifact export, and deterministic release readiness evaluation.",
     type: "website",
     siteName: "Release Signal",
   },
@@ -36,7 +36,7 @@ export const metadata: Metadata = {
     card: "summary",
     title: "Release Signal",
     description:
-      "Private-beta QA intelligence workspace for requirement refinement, structured test design, execution evidence, and release readiness.",
+      "Private-beta AI-assisted QA intelligence for requirement refinement, structured test-suite review, QA artifact export, and deterministic release readiness evaluation.",
   },
 };
 
