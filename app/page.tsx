@@ -1,5 +1,6 @@
-import Link from "next/link";
 import type { CSSProperties } from "react";
+
+const workspaceLoginHref = "/auth/login?returnTo=%2Fchat";
 
 const signature =
   "Built by Stefan Kajchevski, Senior Quality Engineer · An RSF Labs product";
@@ -184,8 +185,8 @@ export default function Home() {
               </span>
             </div>
 
-            <Link
-              href="/auth/login"
+            <a
+              href={workspaceLoginHref}
               style={{
                 border: "1px solid rgba(248,250,252,0.22)",
                 borderRadius: 8,
@@ -198,7 +199,7 @@ export default function Home() {
               }}
             >
               Sign in
-            </Link>
+            </a>
           </nav>
 
           <div
@@ -260,8 +261,8 @@ export default function Home() {
                   flexWrap: "wrap",
                 }}
               >
-                <Link
-                  href="/auth/login"
+                <a
+                  href={workspaceLoginHref}
                   style={{
                     borderRadius: 8,
                     padding: "12px 16px",
@@ -274,7 +275,7 @@ export default function Home() {
                   }}
                 >
                   Start Free Trial
-                </Link>
+                </a>
 
                 <a
                   href="#workflow"
@@ -647,8 +648,8 @@ export default function Home() {
               credit-based and intentionally bounded.
             </p>
           </div>
-          <Link
-            href="/auth/login"
+          <a
+            href={workspaceLoginHref}
             style={{
               borderRadius: 8,
               padding: "12px 16px",
@@ -661,7 +662,7 @@ export default function Home() {
             }}
           >
             Start Free Trial
-          </Link>
+          </a>
         </div>
       </section>
 
@@ -782,8 +783,8 @@ export default function Home() {
               Start with one requirement. See how strong your coverage really is.
             </h2>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <Link
-                href="/auth/login"
+              <a
+                href={workspaceLoginHref}
                 style={{
                   borderRadius: 8,
                   padding: "12px 16px",
@@ -795,7 +796,7 @@ export default function Home() {
                 }}
               >
                 Start Free Trial
-              </Link>
+              </a>
               <a
                 href="#workflow"
                 style={{
