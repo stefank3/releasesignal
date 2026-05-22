@@ -93,7 +93,10 @@ async function readMultipartCsvUpload(req: Request): Promise<CsvUploadReadResult
     };
   }
 
-  const sessionId = optionalFormString(formData.get("sessionId"));
+  const querySessionId =
+    new URL(req.url).searchParams.get("sessionId")?.trim() ?? "";
+  const sessionId =
+    querySessionId || optionalFormString(formData.get("sessionId"));
   if (!sessionId) {
     return {
       ok: false,
