@@ -20,6 +20,9 @@ import {
 import {
   exportTestSuiteToCsv,
 } from "@/lib/server/export/testSuiteCsvExporter";
+import {
+  exportTestSuiteExecutionTemplateToCsv,
+} from "@/lib/server/export/testSuiteExecutionTemplateExporter";
 import type {
   TestSuiteExportFormat,
   TestSuiteExportInput,
@@ -31,6 +34,7 @@ function normalizeExportFormat(value: string | null | undefined): TestSuiteExpor
 
   if (normalized === "json") return "json";
   if (normalized === "csv") return "csv";
+  if (normalized === "execution-csv") return "execution-csv";
 
   return null;
 }
@@ -41,7 +45,13 @@ function buildExportFilename(args: {
   exportedAt: string;
 }): string {
   const safeTimestamp = args.exportedAt.replace(/[:.]/g, "-");
-  return `release-signal-suite-v${args.suite.version}-${safeTimestamp}.${args.format}`;
+  const extension = args.format === "json" ? "json" : "csv";
+  const name =
+    args.format === "execution-csv"
+      ? "release-signal-execution-template"
+      : "release-signal-suite";
+
+  return `${name}-v${args.suite.version}-${safeTimestamp}.${extension}`;
 }
 
 function validateExportSuite(
@@ -121,9 +131,13 @@ export function exportTestSuiteArtifact(args: {
           suite: validation.suite,
           exportedAt,
         })
-      : exportTestSuiteToCsv({
-          suite: validation.suite,
-        });
+      : format === "execution-csv"
+        ? exportTestSuiteExecutionTemplateToCsv({
+            suite: validation.suite,
+          })
+        : exportTestSuiteToCsv({
+            suite: validation.suite,
+          });
 
   return {
     ok: true,
