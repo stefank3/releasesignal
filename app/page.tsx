@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { CSSProperties } from "react";
 
 const workspaceLoginHref = "/auth/login?returnTo=%2Fchat";
@@ -186,7 +185,7 @@ export default function Home() {
               </span>
             </div>
 
-            <Link
+            <a
               href={workspaceLoginHref}
               style={{
                 border: "1px solid rgba(248,250,252,0.22)",
@@ -200,7 +199,7 @@ export default function Home() {
               }}
             >
               Sign in
-            </Link>
+            </a>
           </nav>
 
           <div
@@ -262,7 +261,7 @@ export default function Home() {
                   flexWrap: "wrap",
                 }}
               >
-                <Link
+                <a
                   href={workspaceLoginHref}
                   style={{
                     borderRadius: 8,
@@ -276,7 +275,7 @@ export default function Home() {
                   }}
                 >
                   Start Free Trial
-                </Link>
+                </a>
 
                 <a
                   href="#workflow"
@@ -649,7 +648,7 @@ export default function Home() {
               credit-based and intentionally bounded.
             </p>
           </div>
-          <Link
+          <a
             href={workspaceLoginHref}
             style={{
               borderRadius: 8,
@@ -663,7 +662,7 @@ export default function Home() {
             }}
           >
             Start Free Trial
-          </Link>
+          </a>
         </div>
       </section>
 
@@ -784,7 +783,7 @@ export default function Home() {
               Start with one requirement. See how strong your coverage really is.
             </h2>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <Link
+              <a
                 href={workspaceLoginHref}
                 style={{
                   borderRadius: 8,
@@ -797,7 +796,7 @@ export default function Home() {
                 }}
               >
                 Start Free Trial
-              </Link>
+              </a>
               <a
                 href="#workflow"
                 style={{
