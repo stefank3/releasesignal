@@ -12,11 +12,15 @@ import {
   normalizeTestCase,
   type TestSuiteArtifact,
 } from "@/lib/chat/artifact";
+import { parseExportFieldsFromBody } from "@/lib/server/export/testSuiteBodyFieldParser";
 
 const EXECUTION_TEMPLATE_COLUMNS = [
   "suiteVersion",
   "caseId",
   "title",
+  "preconditions",
+  "steps",
+  "expectedResults",
   "status",
   "actualResult",
   "defectReference",
@@ -28,6 +32,26 @@ const EXECUTION_TEMPLATE_COLUMNS = [
 type ExecutionTemplateColumn = (typeof EXECUTION_TEMPLATE_COLUMNS)[number];
 
 type ExecutionTemplateRow = Record<ExecutionTemplateColumn, string>;
+
+function joinList(values: string[] | undefined): string {
+  if (!Array.isArray(values) || values.length === 0) return "";
+
+  return values
+    .map((value, index) => `${index + 1}. ${normalizeMultilineText(value)}`)
+    .filter((value) => value.trim().length > 3)
+    .join("\n");
+}
+
+function preferStructuredList(
+  structured: string[] | undefined,
+  fallback: string[]
+): string[] {
+  if (Array.isArray(structured) && structured.length > 0) {
+    return structured;
+  }
+
+  return fallback;
+}
 
 function escapeCsvValue(value: string): string {
   const normalized = normalizeMultilineText(value);
@@ -47,10 +71,24 @@ function buildTemplateRow(args: {
   suiteVersion: number;
   testCase: ReturnType<typeof normalizeTestCase>;
 }): ExecutionTemplateRow {
+  const fallback = parseExportFieldsFromBody(args.testCase.body);
+
   return {
     suiteVersion: String(args.suiteVersion),
     caseId: args.testCase.id,
     title: args.testCase.title,
+    preconditions: joinList(
+      preferStructuredList(args.testCase.preconditions, fallback.preconditions)
+    ),
+    steps: joinList(
+      preferStructuredList(args.testCase.steps, fallback.steps)
+    ),
+    expectedResults: joinList(
+      preferStructuredList(
+        args.testCase.expectedResults,
+        fallback.expectedResults
+      )
+    ),
     status: "",
     actualResult: "",
     defectReference: "",
