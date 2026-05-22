@@ -12,7 +12,7 @@
 
 import type { TestSuiteArtifact } from "@/lib/chat/artifact";
 
-export type TestSuiteExportFormat = "json" | "csv";
+export type TestSuiteExportFormat = "json" | "csv" | "execution-csv";
 
 export type TestSuiteExportMetadata = {
   source: "Release Signal";

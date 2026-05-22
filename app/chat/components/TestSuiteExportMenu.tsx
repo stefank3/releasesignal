@@ -6,12 +6,14 @@
 // It does not format export content.
 // It does not read or mutate TestSuiteArtifact.
 // It does not contain export mapping/business logic.
+// V1.1 adds a Release Signal execution CSV template export only.
+// This does not add upload behavior or external tool compatibility claims.
 
 "use client";
 
 import { useState } from "react";
 
-type ExportFormat = "json" | "csv";
+type ExportFormat = "json" | "csv" | "execution-csv";
 
 type TestSuiteExportMenuProps = {
   sessionId: string | null;
@@ -72,7 +74,9 @@ export function TestSuiteExportMenu({
       const filenameMatch = contentDisposition?.match(/filename="([^"]+)"/i);
       const filename =
         filenameMatch?.[1] ??
-        `release-signal-suite.${format}`;
+        (format === "execution-csv"
+          ? "release-signal-execution-template.csv"
+          : `release-signal-suite.${format}`);
 
       const link = document.createElement("a");
       link.href = objectUrl;
@@ -108,6 +112,17 @@ export function TestSuiteExportMenu({
           className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isExporting === "csv" ? "Exporting CSV..." : "Export CSV"}
+        </button>
+
+        <button
+          type="button"
+          disabled={exportDisabled}
+          onClick={() => handleExport("execution-csv")}
+          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isExporting === "execution-csv"
+            ? "Exporting Template..."
+            : "Export Execution Template"}
         </button>
       </div>
 

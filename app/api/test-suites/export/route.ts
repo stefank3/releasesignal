@@ -5,6 +5,7 @@
 // Supported:
 // GET /api/test-suites/export?sessionId=<id>&format=json
 // GET /api/test-suites/export?sessionId=<id>&format=csv
+// GET /api/test-suites/export?sessionId=<id>&format=execution-csv
 //
 // Architecture rule:
 // persisted SessionArtifact.testSuite
@@ -16,6 +17,7 @@
 // No artifact mutation.
 // No /api/chat coupling.
 // No native Qase/TestRail/Xray/Zephyr schema claims.
+// No automation-report import/export compatibility claims.
 
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
@@ -87,16 +89,16 @@ export async function GET(req: Request) {
     });
   }
 
-const artifactState = await refreshArtifact({
-  auth0Sub: auth.auth0Sub,
-  sessionId: sessionId.trim(),
-  fallback: null,
-});
+  const artifactState = await refreshArtifact({
+    auth0Sub: auth.auth0Sub,
+    sessionId: sessionId.trim(),
+    fallback: null,
+  });
 
-const result = exportTestSuiteArtifact({
-  suite: artifactState.artifact?.testSuite,
-  format,
-});
+  const result = exportTestSuiteArtifact({
+    suite: artifactState.artifact?.testSuite,
+    format,
+  });
 
   if (!result.ok) {
     const status =
