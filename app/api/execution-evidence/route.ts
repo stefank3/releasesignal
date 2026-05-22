@@ -26,6 +26,10 @@ import { recordChatMetric } from "@/lib/metrics/chatMetrics";
 import { requireAuthenticatedUser } from "@/lib/server/chat/requestGuards";
 import { buildExecutionEvidenceArtifact } from "@/lib/server/execution/executionEvidenceService";
 import type { ExecutionEvidenceInput } from "@/lib/server/execution/executionEvidenceValidator";
+import {
+  buildExecutionEvidenceInputFromCsvUpload,
+  readExecutionEvidenceImportRequest,
+} from "@/lib/server/execution-upload";
 import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
 export const runtime = "nodejs";
@@ -46,14 +50,6 @@ function buildJsonError(args: {
     },
     { status: args.status }
   );
-}
-
-async function readJsonBody(req: Request): Promise<unknown> {
-  try {
-    return await req.json();
-  } catch {
-    return null;
-  }
 }
 
 export async function POST(req: Request) {
@@ -81,31 +77,19 @@ export async function POST(req: Request) {
     return rateLimit.response;
   }
 
-  const body = await readJsonBody(req);
+  const requestInput = await readExecutionEvidenceImportRequest(req);
 
-  if (!body || typeof body !== "object") {
+  if (!requestInput.ok) {
     return buildJsonError({
-      status: 400,
+      status: requestInput.status,
       requestId,
-      message: "Execution evidence request body must be valid JSON.",
-    });
-  }
-
-  const input = body as ExecutionEvidenceInput;
-  const sessionId =
-    typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-
-  if (!sessionId) {
-    return buildJsonError({
-      status: 400,
-      requestId,
-      message: "Missing sessionId for execution evidence import.",
+      message: requestInput.message,
     });
   }
 
   const artifactState = await refreshArtifact({
     auth0Sub: auth.auth0Sub,
-    sessionId,
+    sessionId: requestInput.sessionId,
     fallback: null,
   });
 
@@ -118,6 +102,32 @@ export async function POST(req: Request) {
       message:
         "Execution evidence requires an existing persisted test suite artifact.",
     });
+  }
+
+  let input: ExecutionEvidenceInput;
+
+  if (requestInput.kind === "json") {
+    input = requestInput.input;
+  } else {
+    const csvInput = buildExecutionEvidenceInputFromCsvUpload({
+      sessionId: requestInput.sessionId,
+      csvText: requestInput.csvText,
+      suite: currentArtifact.testSuite,
+    });
+
+    if (!csvInput.ok) {
+      return buildJsonError({
+        status: 400,
+        requestId,
+        message: csvInput.message,
+        details: {
+          errors: csvInput.errors,
+          warnings: csvInput.warnings,
+        },
+      });
+    }
+
+    input = csvInput.input;
   }
 
   const result = buildExecutionEvidenceArtifact({
@@ -140,7 +150,7 @@ export async function POST(req: Request) {
 
   const persisted = await persistArtifact({
     auth0Sub: auth.auth0Sub,
-    sessionId,
+    sessionId: requestInput.sessionId,
     artifact: result.nextSessionArtifact,
   });
 

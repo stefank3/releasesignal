@@ -27,6 +27,11 @@ function parseSuiteVersion(value: string): number | null {
   return Number(normalized);
 }
 
+function isValidObservedAt(value: string): boolean {
+  if (!value.trim()) return true;
+  return !Number.isNaN(new Date(value).getTime());
+}
+
 function buildCaseIndex(suite: TestSuiteArtifact): Map<string, string> {
   const cases = new Map<string, string>();
 
@@ -139,6 +144,13 @@ export function validateExecutionCsvUpload(args: {
       errors.push({
         row: row.rowNumber,
         message: `invalid status ${status || "blank"}`,
+      });
+    }
+
+    if (!isValidObservedAt(row.values.executedAt ?? "")) {
+      errors.push({
+        row: row.rowNumber,
+        message: "executedAt must be a valid datetime when provided",
       });
     }
 
