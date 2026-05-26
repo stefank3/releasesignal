@@ -718,14 +718,16 @@ export function useChatSession(): UseChatSessionReturn {
   }) => {
     const nextUpdatedAt = args.artifactUpdatedAt ?? new Date().toISOString();
 
-    setSessionArtifact((prev) =>
-      args.artifact
-        ? args.artifact
-        : {
-            ...(prev ?? {}),
-            executionIntelligence: args.executionIntelligence,
-          }
-    );
+    setSessionArtifact((prev) => {
+      const baseArtifact = args.artifact ?? prev ?? {};
+      const { releaseHealth: _staleReleaseHealth, ...artifactWithoutHealth } =
+        baseArtifact;
+
+      return {
+        ...artifactWithoutHealth,
+        executionIntelligence: args.executionIntelligence,
+      };
+    });
     setArtifactUpdatedAt(nextUpdatedAt);
   };
 
