@@ -77,6 +77,7 @@ import {
   buildNextBatchBaseline,
   validateNextBatchPrerequisites,
 } from "@/lib/server/chat/testSuiteService";
+import { buildCurrentReviewGapPromptContext } from "@/lib/server/chat/reviewGapPromptContext";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -254,6 +255,9 @@ function buildWorkflowActionMessage(args: {
 
     const existingSuiteContent =
       baseline.suiteContent.trim() || "No existing test case content available.";
+    const reviewGapContext = buildCurrentReviewGapPromptContext(
+      args.sessionArtifact
+    );
 
     return [
       "Improve and regenerate the persisted test suite from the persisted artifacts for this session.",
@@ -268,6 +272,7 @@ function buildWorkflowActionMessage(args: {
       "When reducing cases, make the reduction explainable through duplicate or invalid coverage only.",
       "Improve weak tests by making titles clearer, preconditions stronger, steps more diagnostic, expected results sharper, and coverage more purposeful.",
       "Add or strengthen missing negative paths, edge cases, risk scenarios, and requirement-aligned coverage where needed.",
+      "If current review gaps are provided, add or strengthen tests that directly close those named uncovered and partially covered requirement units.",
       "Keep the replacement suite at least as coverage-rich as the existing suite unless removed cases are clearly duplicate or invalid.",
       "Do NOT append a next batch.",
       "Do NOT continue numbering from the old suite.",
@@ -278,6 +283,7 @@ function buildWorkflowActionMessage(args: {
       "",
       "PERSISTED REFINED REQUIREMENT:",
       baseline.requirementText,
+      ...(reviewGapContext ? ["", reviewGapContext] : []),
       "",
       `EXISTING SUITE COUNT: ${baseline.existingCount}`,
       "EXISTING TEST CASE HEADERS:",
@@ -344,18 +350,24 @@ function buildWorkflowActionMessage(args: {
 
   const existingSuiteSummary =
     baseline.suiteSummary.trim() || "No existing test case headers available.";
+  const reviewGapContext = buildCurrentReviewGapPromptContext(
+    args.sessionArtifact
+  );
 
   return [
     "Generate the next batch of tests from the persisted artifacts for this session.",
     "",
     "Use ONLY the persisted refined requirement artifact and the persisted existing test suite artifact.",
     "Generate only NEW tests that expand coverage for uncovered requirement areas, missing edge cases, or missing negative paths.",
+    "If current review gaps are provided, target the listed uncovered and partially covered requirement units first.",
     "Do NOT regenerate the full suite.",
     "Do NOT duplicate or restate existing tests.",
+    "Avoid generic duplicates; each generated case must add distinct coverage against the persisted requirement and current review gaps.",
     "Return STRICT plain-text test cases in the locked TC format only.",
     "",
     "PERSISTED REFINED REQUIREMENT:",
     baseline.requirementText,
+    ...(reviewGapContext ? ["", reviewGapContext] : []),
     "",
     `EXISTING SUITE COUNT: ${baseline.existingCount}`,
     "EXISTING TEST CASE HEADERS:",

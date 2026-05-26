@@ -160,8 +160,14 @@ Test Steps:
 Expected Result:
 <one or more lines>
 
+Tags:
+<optional traceability or risk labels when requested by workflow instructions>
+
+Notes:
+<optional Covers: ... traceability when requested by workflow instructions>
+
 NUMBERING RULES
 - Sequential numbering.
 - Continue from the next available test case ID when continuity context is present.
-- End output immediately after the last Expected Result.
+- End output immediately after the last case section.
 `.trim();
