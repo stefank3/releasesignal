@@ -11,6 +11,7 @@ import type { SessionArtifact } from "@/lib/chat/artifact";
 import { buildReleaseReadinessSummary } from "@/lib/release-readiness/releaseReadinessService";
 import type { ReleaseReadinessStatus } from "@/lib/release-readiness/releaseReadinessTypes";
 import { ReleaseReadinessSummary } from "./ReleaseReadinessSummary";
+import { ExecutionResultsBreakdown } from "./readiness/ExecutionResultsBreakdown";
 
 type Props = {
   sessionArtifact: SessionArtifact | null | undefined;
@@ -188,6 +189,7 @@ export function ReleaseReadinessPanel({
             padding: 12,
           }}
         >
+          <ExecutionResultsBreakdown factors={readiness.factors} />
           <ReleaseReadinessSummary readiness={readiness} />
         </div>
       ) : null}
