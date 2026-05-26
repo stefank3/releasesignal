@@ -14,13 +14,24 @@
 "use client";
 
 import React from "react";
-import type { ExecutionIntelligenceArtifact } from "@/lib/chat/artifact";
+import type {
+  ExecutionIntelligenceArtifact,
+  SessionArtifact,
+} from "../chat.types";
+import { UploadTestResultsButton } from "./execution/UploadTestResultsButton";
 
 type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
 
 type Props = {
   execution: ExecutionIntelligenceArtifact | null | undefined;
+  sessionId?: string | null;
   resolvedTheme?: "light" | "dark";
+  uploadDisabled?: boolean;
+  onExecutionUploadSuccess?: (args: {
+    executionIntelligence: ExecutionIntelligenceArtifact;
+    artifact?: SessionArtifact | null;
+    artifactUpdatedAt?: string | null;
+  }) => void;
 };
 
 function toDisplayLabel(value: string | null | undefined): string {
@@ -215,7 +226,10 @@ function StatusChip(args: {
 
 export function ExecutionEvidenceSummary({
   execution,
+  sessionId = null,
   resolvedTheme = "dark",
+  uploadDisabled = false,
+  onExecutionUploadSuccess,
 }: Props) {
   const isDark = resolvedTheme === "dark";
   const ready = !!execution;
@@ -281,8 +295,17 @@ export function ExecutionEvidenceSummary({
       <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.82 }}>
         {ready
           ? "This card shows what happened when the persisted suite was executed. It is separate from design review and release readiness."
-          : "Attach Release Signal execution JSON to show pass/fail evidence for the current suite."}
+          : "Upload Release Signal execution CSV results to show pass/fail evidence for the current suite."}
       </div>
+
+      {onExecutionUploadSuccess ? (
+        <UploadTestResultsButton
+          sessionId={sessionId}
+          disabled={uploadDisabled}
+          resolvedTheme={resolvedTheme}
+          onUploadSuccess={onExecutionUploadSuccess}
+        />
+      ) : null}
 
       <div
         style={{
@@ -367,7 +390,7 @@ export function ExecutionEvidenceSummary({
       <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.74 }}>
         {ready
           ? "Execution evidence is persisted as a structured artifact and does not change the review score."
-          : "M16 supports the Release Signal-native execution JSON format. Tool-specific report imports remain future adapter work."}
+          : "Release Signal execution CSV uploads use the native template. Tool-specific report imports remain future adapter work."}
       </div>
 
       {ready ? (

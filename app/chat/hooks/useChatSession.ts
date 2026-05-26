@@ -207,6 +207,11 @@ export type UseChatSessionReturn = {
   // M12 Step 4B:
   // explicit editable-suite persistence path
   updateTestSuite: (cases: TestCase[]) => Promise<void>;
+  applyExecutionEvidenceUpload: (args: {
+    executionIntelligence: NonNullable<SessionArtifact["executionIntelligence"]>;
+    artifact?: SessionArtifact | null;
+    artifactUpdatedAt?: string | null;
+  }) => void;
 
   // M12.9 CHANGE:
   // artifact-driven workspace action paths
@@ -704,6 +709,24 @@ export function useChatSession(): UseChatSessionReturn {
     } catch (err) {
       console.error("Failed to update test suite", err);
     }
+  };
+
+  const applyExecutionEvidenceUpload = (args: {
+    executionIntelligence: NonNullable<SessionArtifact["executionIntelligence"]>;
+    artifact?: SessionArtifact | null;
+    artifactUpdatedAt?: string | null;
+  }) => {
+    const nextUpdatedAt = args.artifactUpdatedAt ?? new Date().toISOString();
+
+    setSessionArtifact((prev) =>
+      args.artifact
+        ? args.artifact
+        : {
+            ...(prev ?? {}),
+            executionIntelligence: args.executionIntelligence,
+          }
+    );
+    setArtifactUpdatedAt(nextUpdatedAt);
   };
 
   /*
@@ -1621,6 +1644,7 @@ export function useChatSession(): UseChatSessionReturn {
     deleteSession,
 
     updateTestSuite,
+    applyExecutionEvidenceUpload,
     generateTestsFromRequirement,
     reviewTestSuite,
 

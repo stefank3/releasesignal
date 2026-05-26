@@ -755,7 +755,10 @@ export default function FeatureWorkspaceSummary({
 
         <ExecutionEvidenceSummary
           execution={executionEvidence}
+          sessionId={exportSessionId}
+          uploadDisabled={!suiteReady}
           resolvedTheme={resolvedTheme}
+          onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
         />
 
         <WorkspaceHealthCard

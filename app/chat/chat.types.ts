@@ -148,6 +148,7 @@ export type WorkflowGuidance = {
 // M12.14: Execution intelligence types
 // ==============================
 export type ExecutionSource =
+  | "manual"
   | "playwright"
   | "selenium"
   | "postman"
