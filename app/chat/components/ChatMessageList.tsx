@@ -774,6 +774,16 @@ export default function ChatMessageList({
                     ? "Persisted review result for the current test design."
                     : undefined
                 }
+                onImproveTestPlanAction={
+                  isLatestReview ? onRegenerateSuiteAction : undefined
+                }
+                canImproveTestPlan={isLatestReview && canRegenerateSuite}
+                isImprovingTestPlan={isLatestReview && isRegeneratingSuite}
+                onGenerateFromGapsAction={
+                  isLatestReview ? onGenerateNextBatchAction : undefined
+                }
+                canGenerateFromGaps={isLatestReview && canGenerateNextBatch}
+                isGeneratingFromGaps={isLatestReview && isGeneratingNextBatch}
               />
             </div>
           );
