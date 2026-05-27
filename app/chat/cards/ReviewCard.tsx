@@ -24,6 +24,7 @@
 import React, { useEffect, useState } from "react";
 import type { ReviewResult } from "../chat.types";
 import { clamp } from "../components/ChatUI";
+import { ArtifactProvenanceLabel } from "../components/workspace/ArtifactProvenanceLabel";
 
 /** Minimal markdown safety for list items (Jira/Confluence paste). */
 function mdSafe(s: string) {
@@ -386,9 +387,13 @@ function ReviewEmptyState({
 export default function ReviewCard({
   review,
   resolvedTheme = "light",
+  provenanceLabel,
+  provenanceDescription,
 }: {
   review: ReviewResult;
   resolvedTheme?: "light" | "dark";
+  provenanceLabel?: string;
+  provenanceDescription?: string;
 }) {
   const [toast, setToast] = useState<string | null>(null);
 
@@ -486,6 +491,29 @@ export default function ReviewCard({
           Review artifact
         </div>
       </div>
+
+      {provenanceLabel || provenanceDescription ? (
+        <div style={{ display: "grid", gap: 6 }}>
+          {provenanceLabel ? (
+            <ArtifactProvenanceLabel
+              label={provenanceLabel}
+              resolvedTheme={resolvedTheme}
+            />
+          ) : null}
+
+          {provenanceDescription ? (
+            <div
+              style={{
+                fontSize: 12,
+                lineHeight: 1.45,
+                color: isDark ? "rgba(255,255,255,0.72)" : "#555",
+              }}
+            >
+              {provenanceDescription}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div>
         <SectionLabel

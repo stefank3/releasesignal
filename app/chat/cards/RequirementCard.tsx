@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { ArtifactProvenanceLabel } from "../components/workspace/ArtifactProvenanceLabel";
 
 // M12.9 CHANGE:
 // Keep RequirementCard presentational-only.
@@ -20,6 +21,8 @@ import React, { useEffect, useState } from "react";
 type RequirementCardProps = {
   text: string;
   resolvedTheme?: "light" | "dark";
+  provenanceLabel?: string;
+  provenanceDescription?: string;
 
   onGenerateTestsAction?: () => void;
   canGenerateTests?: boolean;
@@ -120,6 +123,8 @@ function SectionLabel(args: {
 export default function RequirementCard({
   text,
   resolvedTheme = "dark",
+  provenanceLabel,
+  provenanceDescription,
   onGenerateTestsAction,
   canGenerateTests = false,
   isGeneratingTests = false,
@@ -201,6 +206,23 @@ export default function RequirementCard({
           Requirement artifact
         </div>
       </div>
+
+      {provenanceLabel || provenanceDescription ? (
+        <div style={{ display: "grid", gap: 6 }}>
+          {provenanceLabel ? (
+            <ArtifactProvenanceLabel
+              label={provenanceLabel}
+              resolvedTheme={resolvedTheme}
+            />
+          ) : null}
+
+          {provenanceDescription ? (
+            <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.76 }}>
+              {provenanceDescription}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div style={{ display: "grid", gap: 10 }}>
         <div>

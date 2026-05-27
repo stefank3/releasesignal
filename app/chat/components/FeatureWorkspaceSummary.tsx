@@ -50,11 +50,6 @@ import React from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { ExecutionEvidenceSummary } from "./ExecutionEvidenceSummary";
 import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
-import {
-  ArtifactProvenanceLabel,
-  formatArtifactVersion,
-  joinProvenanceParts,
-} from "./workspace/ArtifactProvenanceLabel";
 
 type Props = {
   chat: UseChatSessionReturn;
@@ -234,7 +229,6 @@ function DashboardSummaryCard(args: {
   }>;
   helpText?: string;
   meta?: string;
-  provenanceLabel?: string;
   actionSlot?: React.ReactNode;
   resolvedTheme: "light" | "dark";
 }) {
@@ -287,13 +281,6 @@ function DashboardSummaryCard(args: {
       <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.82 }}>
         {args.description}
       </div>
-
-      {args.provenanceLabel ? (
-        <ArtifactProvenanceLabel
-          label={args.provenanceLabel}
-          resolvedTheme={args.resolvedTheme}
-        />
-      ) : null}
 
       <div
         style={{
@@ -465,25 +452,9 @@ export default function FeatureWorkspaceSummary({
   const suiteReady = chat.hasPersistentTestSuite;
   const reviewReady = chat.hasReviewArtifact;
 
-  const requirementVersion = (
-    chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
-  )?.version;
   const suiteVersion = chat.sessionArtifact?.testSuite?.version;
-  const suiteBasedOnRequirementVersion = (
-    chat.sessionArtifact?.testSuite as
-      | { basedOnRequirementVersion?: number }
-      | undefined
-  )?.basedOnRequirementVersion;
   const suiteCount = chat.sessionArtifact?.testSuite?.cases?.length ?? 0;
   const reviewScore = chat.sessionArtifact?.reviewResult?.score;
-  const reviewBasedOnRequirementVersion = (
-    chat.sessionArtifact?.reviewResult as
-      | { basedOnRequirementVersion?: number }
-      | undefined
-  )?.basedOnRequirementVersion;
-  const reviewBasedOnSuiteVersion = (
-    chat.sessionArtifact?.reviewResult as { basedOnSuiteVersion?: number } | undefined
-  )?.basedOnSuiteVersion;
 
   // M15:
   // Export uses the active persisted session id only.
@@ -678,12 +649,6 @@ export default function FeatureWorkspaceSummary({
               ? "Requirement artifact present"
               : "No refined requirement saved yet"
           }
-          provenanceLabel={
-            requirementReady
-              ? formatArtifactVersion("Requirement", requirementVersion) ??
-                "Requirement artifact"
-              : undefined
-          }
           resolvedTheme={resolvedTheme}
         />
 
@@ -706,16 +671,6 @@ export default function FeatureWorkspaceSummary({
             suiteReady
               ? `${suiteCount} case${suiteCount === 1 ? "" : "s"} in the current persisted suite`
               : "Generate the suite from the refined requirement"
-          }
-          provenanceLabel={
-            suiteReady
-              ? joinProvenanceParts([
-                  formatArtifactVersion("Test Suite", suiteVersion),
-                  suiteBasedOnRequirementVersion
-                    ? `Based on Requirement v${suiteBasedOnRequirementVersion}`
-                    : null,
-                ]) || "Test Suite artifact"
-              : undefined
           }
           actionSlot={
             suiteReady ? (
@@ -751,19 +706,6 @@ export default function FeatureWorkspaceSummary({
                     : "available"
                 }`
               : "Run Test Review against the current suite"
-          }
-          provenanceLabel={
-            reviewReady
-              ? joinProvenanceParts([
-                  "Review Result",
-                  reviewBasedOnSuiteVersion
-                    ? `Based on Test Suite v${reviewBasedOnSuiteVersion}`
-                    : null,
-                  reviewBasedOnRequirementVersion
-                    ? `Requirement v${reviewBasedOnRequirementVersion}`
-                    : null,
-                ]) || "Review Result"
-              : undefined
           }
           resolvedTheme={resolvedTheme}
         />

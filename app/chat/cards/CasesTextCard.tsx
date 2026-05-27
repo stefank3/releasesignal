@@ -76,6 +76,7 @@ import {
   ToneBadge,
 } from "./cases/CasesCardControls";
 import { buildCaseOverview, truncateText } from "./cases/caseOverview";
+import { ArtifactProvenanceLabel } from "../components/workspace/ArtifactProvenanceLabel";
 
 // M18.3:
 // Keep ParsedCase aligned with TestCase so edit/save does not drop structured fields.
@@ -94,6 +95,8 @@ type ViewMode = "expanded" | "overview";
 type Props = {
   text: string;
   resolvedTheme?: "light" | "dark";
+  provenanceLabel?: string;
+  provenanceDescription?: string;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
   onReviewTestSuiteAction?: () => void;
@@ -227,6 +230,8 @@ function CasesTextCardContent({
   text,
   hasStructuredCases,
   resolvedTheme = "dark",
+  provenanceLabel,
+  provenanceDescription,
   onUpdateTestSuiteAction,
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
@@ -242,6 +247,8 @@ function CasesTextCardContent({
   text: string;
   hasStructuredCases: boolean;
   resolvedTheme?: "light" | "dark";
+  provenanceLabel?: string;
+  provenanceDescription?: string;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
@@ -557,6 +564,23 @@ function CasesTextCardContent({
             </div>
           ) : null}
         </div>
+
+        {provenanceLabel || provenanceDescription ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            {provenanceLabel ? (
+              <ArtifactProvenanceLabel
+                label={provenanceLabel}
+                resolvedTheme={resolvedTheme}
+              />
+            ) : null}
+
+            {provenanceDescription ? (
+              <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.76 }}>
+                {provenanceDescription}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div>
           <SectionLabel
@@ -1182,6 +1206,8 @@ function CasesTextCardContent({
 export default function CasesTextCard({
   text,
   resolvedTheme = "dark",
+  provenanceLabel,
+  provenanceDescription,
   onUpdateTestSuiteAction,
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
@@ -1207,6 +1233,8 @@ export default function CasesTextCard({
       text={text}
       hasStructuredCases={hasStructuredCases}
       resolvedTheme={resolvedTheme}
+      provenanceLabel={provenanceLabel}
+      provenanceDescription={provenanceDescription}
       onUpdateTestSuiteAction={onUpdateTestSuiteAction}
       onReviewTestSuiteAction={onReviewTestSuiteAction}
       canReviewTestSuite={canReviewTestSuite}
