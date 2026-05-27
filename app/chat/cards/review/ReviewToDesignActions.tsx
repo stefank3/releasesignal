@@ -67,6 +67,17 @@ function ActionButton(args: {
   );
 }
 
+function hasActionableReviewGaps(gapCount: number): boolean {
+  return gapCount > 0;
+}
+
+function hasActionableReviewImprovements(args: {
+  gapCount: number;
+  improvementCount: number;
+}): boolean {
+  return args.gapCount > 0 || args.improvementCount > 0;
+}
+
 export function ReviewToDesignActions({
   gapCount,
   improvementCount,
@@ -85,10 +96,20 @@ export function ReviewToDesignActions({
 
   if (!hasActions) return null;
 
-  const hasReviewTargets = gapCount > 0 || improvementCount > 0;
-  const targetText = hasReviewTargets
+  const canTargetGaps = hasActionableReviewGaps(gapCount);
+  const canImproveFromReview = hasActionableReviewImprovements({
+    gapCount,
+    improvementCount,
+  });
+  const showGenerateFromGaps =
+    canTargetGaps && typeof onGenerateFromGapsAction === "function";
+  const showImproveTestPlan =
+    canImproveFromReview && typeof onImproveTestPlanAction === "function";
+  const hasVisibleActions = showGenerateFromGaps || showImproveTestPlan;
+
+  const targetText = hasVisibleActions
     ? `${gapCount} gap${gapCount === 1 ? "" : "s"} and ${improvementCount} improvement${improvementCount === 1 ? "" : "s"} available as targeting context.`
-    : "No explicit review gaps were listed, but the current suite and review remain available as context.";
+    : "This review does not currently have prioritized gaps to turn into new tests.";
 
   return (
     <section
@@ -112,31 +133,43 @@ export function ReviewToDesignActions({
           Create targeted coverage for uncovered or partially covered areas.
           These actions use the latest persisted review and suite context.
         </div>
+        {hasVisibleActions ? (
+          <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
+            This may take a little longer because Release Signal uses the
+            persisted suite and review context.
+          </div>
+        ) : null}
         <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.68 }}>
           {targetText}
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <ActionButton
-          primary
-          onClick={onGenerateFromGapsAction}
-          disabled={!canGenerateFromGaps || isGeneratingFromGaps}
-          resolvedTheme={resolvedTheme}
-        >
-          {isGeneratingFromGaps
-            ? "Generating..."
-            : "Generate Tests from Review Gaps"}
-        </ActionButton>
+      {hasVisibleActions ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {showGenerateFromGaps ? (
+            <ActionButton
+              primary
+              onClick={onGenerateFromGapsAction}
+              disabled={!canGenerateFromGaps || isGeneratingFromGaps}
+              resolvedTheme={resolvedTheme}
+            >
+              {isGeneratingFromGaps
+                ? "Generating..."
+                : "Generate Tests from Review Gaps"}
+            </ActionButton>
+          ) : null}
 
-        <ActionButton
-          onClick={onImproveTestPlanAction}
-          disabled={!canImproveTestPlan || isImprovingTestPlan}
-          resolvedTheme={resolvedTheme}
-        >
-          {isImprovingTestPlan ? "Improving..." : "Improve Test Plan"}
-        </ActionButton>
-      </div>
+          {showImproveTestPlan ? (
+            <ActionButton
+              onClick={onImproveTestPlanAction}
+              disabled={!canImproveTestPlan || isImprovingTestPlan}
+              resolvedTheme={resolvedTheme}
+            >
+              {isImprovingTestPlan ? "Improving..." : "Improve Test Plan"}
+            </ActionButton>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
