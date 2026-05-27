@@ -14,7 +14,7 @@ function hasFreshAuthState(): boolean {
 }
 
 async function isWorkspaceVisible(page: Page): Promise<boolean> {
-  const workspace = page.getByText(/Feature Workspace|Release Signal|Workspace Health/i).first();
+  const workspace = page.getByText(/Feature Workspace|Release Signal|Release Readiness/i).first();
 
   try {
     await expect(workspace).toBeVisible({ timeout: 5000 });

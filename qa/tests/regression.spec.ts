@@ -28,6 +28,96 @@ async function readCaseCount(page: Page): Promise<number> {
   return Number(match?.[0]);
 }
 
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === '"' && inQuotes && next === '"') {
+      cell += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && next === '\n') index += 1;
+      row.push(cell);
+      if (row.some((value) => value.trim())) rows.push(row);
+      row = [];
+      cell = '';
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((value) => value.trim())) rows.push(row);
+  return rows;
+}
+
+function serializeCsv(rows: string[][]): string {
+  return rows
+    .map((row) =>
+      row
+        .map((value) => {
+          const normalized = String(value ?? '');
+          return /[",\r\n]/.test(normalized)
+            ? `"${normalized.replace(/"/g, '""')}"`
+            : normalized;
+        })
+        .join(',')
+    )
+    .join('\n');
+}
+
+function buildValidExecutionCsvFromTemplate(templateCsv: string): string {
+  const rows = parseCsv(templateCsv);
+  expect(rows.length, 'Expected execution template header and at least one case row').toBeGreaterThan(1);
+
+  const header = rows[0];
+  const columnIndex = (name: string) => {
+    const index = header.indexOf(name);
+    expect(index, `Expected execution template column ${name}`).toBeGreaterThanOrEqual(0);
+    return index;
+  };
+
+  const statusIndex = columnIndex('status');
+  const actualResultIndex = columnIndex('actualResult');
+  const executedByIndex = columnIndex('executedBy');
+  const executedAtIndex = columnIndex('executedAt');
+  const notesIndex = columnIndex('notes');
+
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    rows[rowIndex][statusIndex] = rowIndex === 1 ? 'passed' : 'not_run';
+    rows[rowIndex][actualResultIndex] =
+      rowIndex === 1 ? 'Actual result matched the expected result.' : '';
+    rows[rowIndex][executedByIndex] = rowIndex === 1 ? 'Playwright QA' : '';
+    rows[rowIndex][executedAtIndex] =
+      rowIndex === 1 ? '2026-05-27T10:00:00.000Z' : '';
+    rows[rowIndex][notesIndex] =
+      rowIndex === 1 ? 'Automated closed-cycle upload smoke.' : '';
+  }
+
+  return serializeCsv(rows);
+}
+
 test.describe('Requirement workflow', () => {
   test('Refine Requirement input field is present and accepts text', async ({ page }) => {
     await goToWorkspace(page, sessions.emptyWorkspace || undefined);
@@ -101,6 +191,15 @@ test.describe('Test Suite workflow', () => {
     const download = page.waitForEvent('download');
     await (await waitForActionButton(page, 'Export CSV')).click();
     await download;
+  });
+
+  test('Export Execution Template button triggers CSV template download', async ({ page }) => {
+    requireSession(sessions.existingSuite || sessions.noExecution || sessions.fullArtifacts, 'suite available for execution template export');
+    await goToWorkspace(page, sessions.existingSuite || sessions.noExecution || sessions.fullArtifacts);
+    const download = page.waitForEvent('download');
+    await (await waitForActionButton(page, 'Export Execution Template')).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toMatch(/execution-template\.csv$/i);
   });
 });
 
@@ -217,6 +316,45 @@ test.describe('Execution evidence', () => {
     await (await waitForActionButton(page, 'Submit Execution Evidence')).click();
     await waitForArtifactCard(page, 'Execution Evidence');
   });
+
+  test('Upload Test Results action is available from Execution Evidence', async ({ page }) => {
+    requireSession(sessions.existingSuite || sessions.noExecution || sessions.fullArtifacts, 'workspace with suite');
+    await goToWorkspace(page, sessions.existingSuite || sessions.noExecution || sessions.fullArtifacts);
+    await waitForArtifactCard(page, 'Execution Evidence');
+    await waitForActionButton(page, 'Upload Test Results');
+  });
+
+  test('Valid execution CSV upload updates evidence and keeps readiness visible', async ({ page }) => {
+    requireSession(sessions.noExecution || sessions.existingSuite || sessions.fullArtifacts, 'workspace with suite that can accept execution CSV upload');
+    const sessionId = sessions.noExecution || sessions.existingSuite || sessions.fullArtifacts;
+    const tmpDir = path.join(process.cwd(), 'test-results', 'tmp');
+    const templatePath = path.join(tmpDir, 'closed-cycle-template.csv');
+    const uploadPath = path.join(tmpDir, 'closed-cycle-results.csv');
+
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    await goToWorkspace(page, sessionId);
+
+    const templateDownload = page.waitForEvent('download');
+    await (await waitForActionButton(page, 'Export Execution Template')).click();
+    await (await templateDownload).saveAs(templatePath);
+
+    const templateCsv = fs.readFileSync(templatePath, 'utf8');
+    fs.writeFileSync(uploadPath, buildValidExecutionCsvFromTemplate(templateCsv));
+
+    await waitForArtifactCard(page, 'Execution Evidence');
+    await page.locator('input[type="file"][accept*=".csv"]').setInputFiles(uploadPath);
+
+    await expect(page.getByText(/Execution results uploaded successfully/i).first()).toBeVisible({
+      timeout: 30000
+    });
+    await expect(page.getByText(/Total results/i).first()).toBeVisible();
+    await expect(page.getByText(/Passed/i).first()).toBeVisible();
+    await expect(page.getByText(/Release Readiness Report/i).first()).toBeVisible();
+
+    await page.getByText(/Release Readiness Report/i).first().click();
+    await expect(page.getByText(/Execution Results Breakdown|Execution Summary/i).first()).toBeVisible();
+  });
 });
 
 test.describe('Release Readiness', () => {
@@ -244,9 +382,10 @@ test.describe('Release Readiness', () => {
     await expect(page.getByText(/blocked/i).first()).toBeVisible();
   });
 
-  test('Workspace Health card renders', async ({ page }) => {
+  test('Workspace Status is hidden from Feature Workspace summary', async ({ page }) => {
     await goToWorkspace(page, sessions.fullArtifacts || undefined);
-    await waitForArtifactCard(page, 'Workspace Health');
+    await expect(page.getByText(/Workspace Health|Workspace Status/i)).toHaveCount(0);
+    await expect(page.getByText(/Release Readiness Report/i).first()).toBeVisible();
   });
 });
 
