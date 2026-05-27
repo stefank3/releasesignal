@@ -19,6 +19,10 @@ import type {
   SessionArtifact,
 } from "../chat.types";
 import { UploadTestResultsButton } from "./execution/UploadTestResultsButton";
+import {
+  ArtifactProvenanceLabel,
+  joinProvenanceParts,
+} from "./workspace/ArtifactProvenanceLabel";
 
 type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
 
@@ -247,6 +251,15 @@ export function ExecutionEvidenceSummary({
       ? `v${execution.suiteVersion}`
       : "Unknown";
 
+  const provenanceLabel =
+    ready && typeof execution?.suiteVersion === "number"
+      ? joinProvenanceParts([
+          "Execution Evidence",
+          `Linked to Test Suite v${execution.suiteVersion}`,
+          execution?.source ? `Source: ${toDisplayLabel(execution.source)}` : null,
+        ])
+      : null;
+
   return (
     <div
       style={{
@@ -297,6 +310,13 @@ export function ExecutionEvidenceSummary({
           ? "This card shows what happened when the persisted suite was executed. It is separate from design review and release readiness."
           : "Upload Release Signal execution CSV results to show pass/fail evidence for the current suite."}
       </div>
+
+      {provenanceLabel ? (
+        <ArtifactProvenanceLabel
+          label={provenanceLabel}
+          resolvedTheme={resolvedTheme}
+        />
+      ) : null}
 
       {onExecutionUploadSuccess ? (
         <UploadTestResultsButton
