@@ -13,7 +13,8 @@ test.describe('Smoke', () => {
   test('Can reach authenticated workspace', async ({ page }) => {
     await goToWorkspace(page);
     await expect(page.getByText(/Feature Workspace/i).first()).toBeVisible();
-    await expect(page.getByText(/Requirement|Test Suite|Review|Execution Evidence|Workspace Health/i).first()).toBeVisible();
+    await expect(page.getByText(/Requirement|Test Suite|Review|Execution Evidence/i).first()).toBeVisible();
+    await expect(page.getByText(/Workspace Health|Workspace Status/i)).toHaveCount(0);
   });
 
   test('Release Readiness panel is present', async ({ page }) => {
@@ -44,10 +45,11 @@ test.describe('Smoke', () => {
 
     await goToWorkspace(page, sessionId);
     await waitForArtifactCard(page, sessions.fullArtifacts || sessions.existingSuite ? 'Test Suite' : 'Requirement');
-    const before = await page.getByText(/Requirement|Test Suite|Review|Workspace Health/i).first().textContent();
+    const before = await page.getByText(/Requirement|Test Suite|Review|Execution Evidence/i).first().textContent();
 
     await page.reload();
     await waitForWorkspaceReady(page);
-    await expect(page.getByText(before || /Requirement|Test Suite|Review|Workspace Health/i).first()).toBeVisible();
+    await expect(page.getByText(before || /Requirement|Test Suite|Review|Execution Evidence/i).first()).toBeVisible();
+    await expect(page.getByText(/Workspace Health|Workspace Status/i)).toHaveCount(0);
   });
 });
