@@ -1,14 +1,13 @@
 // app/chat/components/workspace/WorkspaceHealthCard.tsx
 // M18.7a:
 // Presentational extraction from FeatureWorkspaceSummary.
-// Keeps workspace-health rendering isolated while leaving artifact-derived
+// Keeps workspace-status rendering isolated while leaving artifact-derived
 // state and semantics in the parent component.
 
 type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
 
 type WorkspaceHealthCardProps = {
   ready: boolean;
-  overall: string | null;
   coverage: string | null;
   execution: string | null;
   failureBurden: string | null;
@@ -20,7 +19,7 @@ type WorkspaceHealthCardProps = {
   resolvedTheme: "light" | "dark";
 };
 
-function HealthStatusChip(args: {
+function StatusChip(args: {
   ready: boolean;
   resolvedTheme: "light" | "dark";
 }) {
@@ -49,27 +48,9 @@ function HealthStatusChip(args: {
             : "#475569",
       }}
     >
-      {args.ready ? "Ready" : "Pending"}
+      {args.ready ? "Available" : "Pending"}
     </span>
   );
-}
-
-function toOverallTone(value: string | null | undefined): Tone {
-  const normalized = String(value ?? "").trim().toLowerCase();
-
-  if (normalized.includes("ready") && !normalized.includes("not")) {
-    return "positive";
-  }
-
-  if (normalized.includes("blocked") || normalized.includes("not ready")) {
-    return "negative";
-  }
-
-  if (normalized.includes("partial") || normalized.includes("risk")) {
-    return "warning";
-  }
-
-  return "neutral";
 }
 
 function toCoverageTone(value: string | null | undefined): Tone {
@@ -200,13 +181,15 @@ function HealthTile(args: {
 export default function WorkspaceHealthCard(args: WorkspaceHealthCardProps) {
   const isDark = args.resolvedTheme === "dark";
 
-  const overallTone = toOverallTone(args.overall);
   const coverageTone = toCoverageTone(args.coverage);
   const executionTone = toExecutionTone(args.execution);
   const failureTone = toFailureBurdenTone(args.failureBurden);
 
-  const accentBorder = getAccentBorder(overallTone, isDark);
-  const accentBackground = getAccentBackground(overallTone, isDark);
+  const accentBorder = getAccentBorder(args.ready ? "info" : "neutral", isDark);
+  const accentBackground = getAccentBackground(
+    args.ready ? "info" : "neutral",
+    isDark
+  );
 
   return (
     <div
@@ -234,10 +217,10 @@ export default function WorkspaceHealthCard(args: WorkspaceHealthCardProps) {
             color: isDark ? "#ffffff" : "#0f172a",
           }}
         >
-          Workspace Health
+          Workspace Status
         </div>
 
-        <HealthStatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
+        <StatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
       </div>
 
       <div
@@ -260,17 +243,11 @@ export default function WorkspaceHealthCard(args: WorkspaceHealthCardProps) {
           style={{
             display: "grid",
             gap: 8,
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
           }}
         >
           <HealthTile
-            label="Overall"
-            value={args.overall ?? "Unknown"}
-            tone={overallTone}
-            resolvedTheme={args.resolvedTheme}
-          />
-          <HealthTile
-            label="Coverage"
+            label="Completeness"
             value={args.coverage ?? "Unknown"}
             tone={coverageTone}
             resolvedTheme={args.resolvedTheme}
@@ -282,7 +259,7 @@ export default function WorkspaceHealthCard(args: WorkspaceHealthCardProps) {
             resolvedTheme={args.resolvedTheme}
           />
           <HealthTile
-            label="Failure burden"
+            label="Failure signal"
             value={args.failureBurden ?? "Unknown"}
             tone={failureTone}
             resolvedTheme={args.resolvedTheme}

@@ -25,7 +25,7 @@
 //
 // M12.15 FOLLOW-UP CHANGE:
 // - align Requirement / Test Suite / Review with the compact dashboard card style
-// - keep Workspace Health as the strongest visual card while preserving one shared family
+// - keep compact artifact cards visually aligned
 // - preserve artifact-driven behavior and avoid turning the workspace into a full analytics dashboard
 //
 // M15 CHANGE:
@@ -50,7 +50,6 @@ import React from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { ExecutionEvidenceSummary } from "./ExecutionEvidenceSummary";
 import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
-import WorkspaceHealthCard from "./workspace/WorkspaceHealthCard";
 
 type Props = {
   chat: UseChatSessionReturn;
@@ -470,21 +469,6 @@ export default function FeatureWorkspaceSummary({
   const executionEvidence = chat.sessionArtifact?.executionIntelligence ?? null;
   const executionEvidenceReady = !!executionEvidence;
 
-  const releaseHealth = chat.sessionArtifact?.releaseHealth ?? null;
-  const releaseHealthReady = !!releaseHealth;
-  const releaseHealthOverall = releaseHealth
-    ? toReleaseHealthLabel(releaseHealth.overallStatus)
-    : null;
-  const releaseHealthCoverage = releaseHealth
-    ? toReleaseHealthLabel(releaseHealth.coverageStatus)
-    : null;
-  const releaseHealthExecution = releaseHealth
-    ? toReleaseHealthLabel(releaseHealth.executionStatus)
-    : null;
-  const releaseHealthFailureBurden = releaseHealth
-    ? toReleaseHealthLabel(releaseHealth.failureBurden)
-    : null;
-
   const currentStage = normalizeStageTitle(chat.workflowStatus.title);
   const nextAction = chat.workflowStatus.nextAction;
 
@@ -492,8 +476,7 @@ export default function FeatureWorkspaceSummary({
     requirementReady ||
     suiteReady ||
     reviewReady ||
-    executionEvidenceReady ||
-    releaseHealthReady;
+    executionEvidenceReady;
 
   const requirementEmphasis = requirementReady
     ? "Latest refined requirement is available"
@@ -511,32 +494,6 @@ export default function FeatureWorkspaceSummary({
         }`
       : "Latest review result is available"
     : "No persisted review yet";
-
-  const releaseHealthEmphasis = releaseHealthReady
-    ? `Overall status: ${releaseHealthOverall}`
-    : "No workspace health signal computed yet";
-
-  const releaseHealthPartialStateText = releaseHealthReady
-    ? releaseHealthOverall === "Not Ready" &&
-      releaseHealthCoverage === "Requirement Only" &&
-      releaseHealthExecution === "Not Started"
-      ? "Partial state is explicit: the requirement exists, but suite, review, or execution progress is still incomplete."
-      : releaseHealthExecution === "Not Started"
-        ? "Execution has not started yet, so the current health view reflects persisted pre-execution readiness only."
-        : null
-    : null;
-
-  const releaseHealthMeta = releaseHealthReady
-    ? [
-        releaseHealthCoverage ? `Coverage: ${releaseHealthCoverage}` : null,
-        releaseHealthExecution ? `Execution: ${releaseHealthExecution}` : null,
-        releaseHealthFailureBurden
-          ? `Failure burden: ${releaseHealthFailureBurden}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : "Workspace health will appear once the compact workspace signal is available";
 
   const requirementTiles = [
     {
@@ -659,7 +616,7 @@ export default function FeatureWorkspaceSummary({
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and workspace-health state for this workspace."
+              ? "The cards below show the latest saved requirement, suite, review, and execution evidence."
               : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
           </div>
         </div>
@@ -759,28 +716,6 @@ export default function FeatureWorkspaceSummary({
           uploadDisabled={!suiteReady}
           resolvedTheme={resolvedTheme}
           onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
-        />
-
-        <WorkspaceHealthCard
-          ready={releaseHealthReady}
-          overall={releaseHealthOverall}
-          coverage={releaseHealthCoverage}
-          execution={releaseHealthExecution}
-          failureBurden={releaseHealthFailureBurden}
-          emphasis={releaseHealthEmphasis}
-          description={
-            releaseHealthReady
-              ? "A compact deterministic workspace-health signal is available from the latest persisted artifacts."
-              : "Workspace health has not yet been surfaced for this workspace."
-          }
-          helpText={
-            releaseHealthReady
-              ? "This view is read-only and summarizes persisted artifact state. Use the Release Readiness Report for the release decision view."
-              : "This will become visible once workspace-health data is computed and persisted by the backend."
-          }
-          partialStateText={releaseHealthPartialStateText}
-          meta={releaseHealthMeta}
-          resolvedTheme={resolvedTheme}
         />
       </div>
 
