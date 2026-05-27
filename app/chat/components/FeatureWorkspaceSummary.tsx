@@ -509,9 +509,7 @@ export default function FeatureWorkspaceSummary({
       : "Latest review result is available"
     : "No persisted review yet";
 
-  const releaseHealthEmphasis = releaseHealthReady
-    ? "Workspace artifact status is available"
-    : "No workspace status signal computed yet";
+  const releaseHealthEmphasis = "Workspace artifact status is available";
 
   const releaseHealthPartialStateText = releaseHealthReady
     ? releaseHealthCoverage === "Requirement Only" &&
@@ -532,7 +530,11 @@ export default function FeatureWorkspaceSummary({
       ]
         .filter(Boolean)
         .join(" · ")
-    : "Workspace status will appear once the compact workspace signal is available";
+    : "";
+
+  const workspaceSummaryText = releaseHealthReady
+    ? "The cards below show the latest saved requirement, suite, review, execution evidence, and compact workspace status."
+    : "The cards below show the latest saved requirement, suite, review, and execution evidence.";
 
   const requirementTiles = [
     {
@@ -655,7 +657,7 @@ export default function FeatureWorkspaceSummary({
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and compact workspace status."
+              ? workspaceSummaryText
               : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
           </div>
         </div>
@@ -757,26 +759,20 @@ export default function FeatureWorkspaceSummary({
           onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
         />
 
-        <WorkspaceHealthCard
-          ready={releaseHealthReady}
-          coverage={releaseHealthCoverage}
-          execution={releaseHealthExecution}
-          failureBurden={releaseHealthFailureBurden}
-          emphasis={releaseHealthEmphasis}
-          description={
-            releaseHealthReady
-              ? "A compact deterministic workspace-status signal is available from the latest persisted artifacts."
-              : "Workspace status has not yet been surfaced for this workspace."
-          }
-          helpText={
-            releaseHealthReady
-              ? "This view is read-only and summarizes artifact completeness. Use the Release Readiness Report for the release decision view."
-              : "This will become visible once workspace-status data is computed and persisted by the backend."
-          }
-          partialStateText={releaseHealthPartialStateText}
-          meta={releaseHealthMeta}
-          resolvedTheme={resolvedTheme}
-        />
+        {releaseHealthReady ? (
+          <WorkspaceHealthCard
+            ready={releaseHealthReady}
+            coverage={releaseHealthCoverage}
+            execution={releaseHealthExecution}
+            failureBurden={releaseHealthFailureBurden}
+            emphasis={releaseHealthEmphasis}
+            description="A compact deterministic workspace-status signal is available from the latest persisted artifacts."
+            helpText="This view is read-only and summarizes artifact completeness. Use the Release Readiness Report for the release decision view."
+            partialStateText={releaseHealthPartialStateText}
+            meta={releaseHealthMeta}
+            resolvedTheme={resolvedTheme}
+          />
+        ) : null}
       </div>
 
       <div
