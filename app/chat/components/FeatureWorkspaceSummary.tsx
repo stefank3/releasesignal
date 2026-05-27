@@ -25,7 +25,7 @@
 //
 // M12.15 FOLLOW-UP CHANGE:
 // - align Requirement / Test Suite / Review with the compact dashboard card style
-// - keep Workspace Health as the strongest visual card while preserving one shared family
+// - keep compact Workspace Status visually aligned with the artifact cards
 // - preserve artifact-driven behavior and avoid turning the workspace into a full analytics dashboard
 //
 // M15 CHANGE:
@@ -472,9 +472,6 @@ export default function FeatureWorkspaceSummary({
 
   const releaseHealth = chat.sessionArtifact?.releaseHealth ?? null;
   const releaseHealthReady = !!releaseHealth;
-  const releaseHealthOverall = releaseHealth
-    ? toReleaseHealthLabel(releaseHealth.overallStatus)
-    : null;
   const releaseHealthCoverage = releaseHealth
     ? toReleaseHealthLabel(releaseHealth.coverageStatus)
     : null;
@@ -513,16 +510,15 @@ export default function FeatureWorkspaceSummary({
     : "No persisted review yet";
 
   const releaseHealthEmphasis = releaseHealthReady
-    ? `Overall status: ${releaseHealthOverall}`
-    : "No workspace health signal computed yet";
+    ? "Workspace artifact status is available"
+    : "No workspace status signal computed yet";
 
   const releaseHealthPartialStateText = releaseHealthReady
-    ? releaseHealthOverall === "Not Ready" &&
-      releaseHealthCoverage === "Requirement Only" &&
+    ? releaseHealthCoverage === "Requirement Only" &&
       releaseHealthExecution === "Not Started"
       ? "Partial state is explicit: the requirement exists, but suite, review, or execution progress is still incomplete."
       : releaseHealthExecution === "Not Started"
-        ? "Execution has not started yet, so the current health view reflects persisted pre-execution readiness only."
+        ? "Execution has not started yet, so this compact status view reflects persisted workspace progress only."
         : null
     : null;
 
@@ -536,7 +532,7 @@ export default function FeatureWorkspaceSummary({
       ]
         .filter(Boolean)
         .join(" · ")
-    : "Workspace health will appear once the compact workspace signal is available";
+    : "Workspace status will appear once the compact workspace signal is available";
 
   const requirementTiles = [
     {
@@ -659,7 +655,7 @@ export default function FeatureWorkspaceSummary({
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and workspace-health state for this workspace."
+              ? "The cards below show the latest saved requirement, suite, review, execution evidence, and compact workspace status."
               : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
           </div>
         </div>
@@ -763,20 +759,19 @@ export default function FeatureWorkspaceSummary({
 
         <WorkspaceHealthCard
           ready={releaseHealthReady}
-          overall={releaseHealthOverall}
           coverage={releaseHealthCoverage}
           execution={releaseHealthExecution}
           failureBurden={releaseHealthFailureBurden}
           emphasis={releaseHealthEmphasis}
           description={
             releaseHealthReady
-              ? "A compact deterministic workspace-health signal is available from the latest persisted artifacts."
-              : "Workspace health has not yet been surfaced for this workspace."
+              ? "A compact deterministic workspace-status signal is available from the latest persisted artifacts."
+              : "Workspace status has not yet been surfaced for this workspace."
           }
           helpText={
             releaseHealthReady
-              ? "This view is read-only and summarizes persisted artifact state. Use the Release Readiness Report for the release decision view."
-              : "This will become visible once workspace-health data is computed and persisted by the backend."
+              ? "This view is read-only and summarizes artifact completeness. Use the Release Readiness Report for the release decision view."
+              : "This will become visible once workspace-status data is computed and persisted by the backend."
           }
           partialStateText={releaseHealthPartialStateText}
           meta={releaseHealthMeta}
