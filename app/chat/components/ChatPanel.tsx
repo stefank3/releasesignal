@@ -532,6 +532,7 @@ export default function ChatPanel({
             <ChatMessageList
               items={chat.items}
               mode={chat.mode}
+              sessionArtifact={chat.sessionArtifact}
               resolvedTheme={resolvedTheme}
               onUpdateTestSuiteAction={(cases) => {
                 void chat.updateTestSuite(cases);

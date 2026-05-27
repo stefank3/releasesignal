@@ -508,7 +508,7 @@ export default function FeatureWorkspaceSummary({
     },
     {
       label: "Artifact",
-      value: requirementReady ? "Strategy artifact" : "Not available",
+      value: requirementReady ? "Requirement artifact" : "Not available",
       tone: requirementReady ? "info" : "neutral",
     },
     {
@@ -646,7 +646,7 @@ export default function FeatureWorkspaceSummary({
           }
           meta={
             requirementReady
-              ? "Strategy artifact present"
+              ? "Requirement artifact present"
               : "No refined requirement saved yet"
           }
           resolvedTheme={resolvedTheme}

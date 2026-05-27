@@ -60,12 +60,22 @@ import React from "react";
 import type { TestCase } from "@/lib/chat/artifact";
 import type { WorkflowGuidance } from "@/lib/server/chat/workflowAssistantService";
 
-import type { ChatItem, Mode, ReviewResult, CasesResult } from "../chat.types";
+import type {
+  CasesResult,
+  ChatItem,
+  Mode,
+  ReviewResult,
+  SessionArtifact,
+} from "../chat.types";
 
 import ReviewCard from "../cards/ReviewCard";
 import CasesTextCard from "../cards/CasesTextCard";
 import CasesLegacyCard from "../cards/CasesLegacyCard";
 import RequirementCard from "../cards/RequirementCard";
+import {
+  formatArtifactVersion,
+  joinProvenanceParts,
+} from "./workspace/ArtifactProvenanceLabel";
 
 /** Minimal markdown safety for list items (Jira/Confluence paste). */
 function mdSafe(s: string) {
@@ -264,6 +274,82 @@ function getWorkflowGuidance(item: ChatItem): WorkflowGuidance | null {
   return null;
 }
 
+function getRequirementVersion(
+  artifact: SessionArtifact | null | undefined
+): number | undefined {
+  return (artifact?.refinedRequirement as { version?: number } | undefined)?.version;
+}
+
+function getSuiteBasedOnRequirementVersion(
+  artifact: SessionArtifact | null | undefined
+): number | undefined {
+  return (
+    artifact?.testSuite as { basedOnRequirementVersion?: number } | undefined
+  )?.basedOnRequirementVersion;
+}
+
+function getReviewBasedOnRequirementVersion(
+  artifact: SessionArtifact | null | undefined
+): number | undefined {
+  return (
+    artifact?.reviewResult as { basedOnRequirementVersion?: number } | undefined
+  )?.basedOnRequirementVersion;
+}
+
+function getReviewBasedOnSuiteVersion(
+  artifact: SessionArtifact | null | undefined
+): number | undefined {
+  return (
+    artifact?.reviewResult as { basedOnSuiteVersion?: number } | undefined
+  )?.basedOnSuiteVersion;
+}
+
+function buildRequirementProvenanceLabel(
+  artifact: SessionArtifact | null | undefined
+): string {
+  return (
+    joinProvenanceParts([
+      "Technical Requirement",
+      formatArtifactVersion("Requirement", getRequirementVersion(artifact)),
+    ]) || "Technical Requirement"
+  );
+}
+
+function buildSuiteProvenanceLabel(
+  artifact: SessionArtifact | null | undefined
+): string {
+  return (
+    joinProvenanceParts([
+      formatArtifactVersion("Test Suite", artifact?.testSuite?.version),
+      getSuiteBasedOnRequirementVersion(artifact)
+        ? `Based on Requirement v${getSuiteBasedOnRequirementVersion(artifact)}`
+        : null,
+    ]) || "Test Suite"
+  );
+}
+
+function buildReviewProvenanceLabel(
+  artifact: SessionArtifact | null | undefined
+): string {
+  const suiteVersion = getReviewBasedOnSuiteVersion(artifact);
+  const requirementVersion = getReviewBasedOnRequirementVersion(artifact);
+  const basedOn =
+    suiteVersion && requirementVersion
+      ? `Based on Test Suite v${suiteVersion} and Requirement v${requirementVersion}`
+      : suiteVersion
+        ? `Based on Test Suite v${suiteVersion}`
+        : requirementVersion
+          ? `Based on Requirement v${requirementVersion}`
+          : null;
+
+  return (
+    joinProvenanceParts([
+      "Review Result",
+      basedOn,
+    ]) || "Review Result"
+  );
+}
+
 function formatRecommendedAction(
   action: WorkflowGuidance["recommendedAction"]
 ): string {
@@ -459,6 +545,7 @@ function EmptyStateCard(args: {
 type Props = {
   items: ChatItem[];
   mode: Mode;
+  sessionArtifact?: SessionArtifact | null;
   resolvedTheme?: "light" | "dark";
 
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
@@ -487,6 +574,7 @@ type Props = {
 export default function ChatMessageList({
   items,
   mode,
+  sessionArtifact = null,
   resolvedTheme = "dark",
   onUpdateTestSuiteAction,
 
@@ -609,6 +697,16 @@ export default function ChatMessageList({
                     <RequirementCard
                       text={textToShow}
                       resolvedTheme={resolvedTheme}
+                      provenanceLabel={
+                        isLatestRequirement
+                          ? buildRequirementProvenanceLabel(sessionArtifact)
+                          : undefined
+                      }
+                      provenanceDescription={
+                        isLatestRequirement
+                          ? "Generated requirement artifact used for downstream test design."
+                          : undefined
+                      }
                       onGenerateTestsAction={onGenerateTestsAction}
                       canGenerateTests={canGenerateTests}
                       isGeneratingTests={isGeneratingTests}
@@ -666,6 +764,16 @@ export default function ChatMessageList({
               <ReviewCard
                 review={it.review as ReviewResult}
                 resolvedTheme={resolvedTheme}
+                provenanceLabel={
+                  isLatestReview
+                    ? buildReviewProvenanceLabel(sessionArtifact)
+                    : undefined
+                }
+                provenanceDescription={
+                  isLatestReview
+                    ? "Persisted review result for the current test design."
+                    : undefined
+                }
               />
             </div>
           );
@@ -717,6 +825,16 @@ export default function ChatMessageList({
                 onRegenerateSuiteAction={onRegenerateSuiteAction}
                 canRegenerateSuite={canRegenerateSuite}
                 isRegeneratingSuite={isRegeneratingSuite}
+                provenanceLabel={
+                  isLatestPersistedSuite
+                    ? buildSuiteProvenanceLabel(sessionArtifact)
+                    : undefined
+                }
+                provenanceDescription={
+                  isLatestPersistedSuite
+                    ? "Generated test suite artifact used for review and execution evidence."
+                    : undefined
+                }
               />
             </div>
           );

@@ -12,6 +12,7 @@ import { buildReleaseReadinessSummary } from "@/lib/release-readiness/releaseRea
 import type { ReleaseReadinessStatus } from "@/lib/release-readiness/releaseReadinessTypes";
 import { ReleaseReadinessSummary } from "./ReleaseReadinessSummary";
 import { ExecutionResultsBreakdown } from "./readiness/ExecutionResultsBreakdown";
+import { ArtifactProvenanceLabel } from "./workspace/ArtifactProvenanceLabel";
 
 type Props = {
   sessionArtifact: SessionArtifact | null | undefined;
@@ -118,6 +119,10 @@ export function ReleaseReadinessPanel({
               Deterministic release signal derived from requirement, suite,
               review, and execution evidence.
             </div>
+            <ArtifactProvenanceLabel
+              label="Release Readiness · Calculated from requirement, suite, review, and execution evidence"
+              resolvedTheme={resolvedTheme}
+            />
           </div>
 
           <div
