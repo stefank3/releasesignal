@@ -353,6 +353,10 @@ export default function ChatPanel({
     return "minmax(0, 1fr) 400px";
   }, [isCoachSession, isNarrow]);
 
+  const transcriptPanelHeight = isNarrow
+    ? "clamp(420px, 68vh, 760px)"
+    : "clamp(520px, 72vh, 840px)";
+
   const leftPanelStyle: React.CSSProperties = {
     border: isDark
       ? "1px solid rgba(255,255,255,0.10)"
@@ -362,7 +366,8 @@ export default function ChatPanel({
     overflow: "hidden",
     display: "grid",
     gridTemplateRows: "1fr auto",
-    minHeight: isNarrow ? "60vh" : "68vh",
+    height: transcriptPanelHeight,
+    minHeight: 0,
     boxShadow: isDark
       ? "0 8px 30px rgba(0,0,0,0.18)"
       : "0 8px 24px rgba(15,23,42,0.06)",
@@ -371,6 +376,7 @@ export default function ChatPanel({
   const chatBoxStyle: React.CSSProperties = {
     padding: 14,
     overflow: "auto",
+    overscrollBehavior: "contain",
     minHeight: 0,
   };
 
