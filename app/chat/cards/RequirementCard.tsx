@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { ArtifactProvenanceLabel } from "../components/workspace/ArtifactProvenanceLabel";
+import { RequirementContentRenderer } from "./requirement/RequirementContentRenderer";
 
 // M12.9 CHANGE:
 // Keep RequirementCard presentational-only.
@@ -312,30 +313,14 @@ export default function RequirementCard({
       <div>
         <SectionLabel
           title="Requirement content"
-          description="Current rendered requirement text for this workspace."
+          description="Current rendered requirement text for this workspace. Section formatting is display-only."
           resolvedTheme={resolvedTheme}
         />
 
-        <pre
-          style={{
-            margin: 0,
-            whiteSpace: "pre-wrap",
-            fontSize: 12,
-            lineHeight: 1.5,
-            fontFamily: "inherit",
-            color: isDark ? "#ffffff" : "#0f172a",
-            background: isDark
-              ? "rgba(255,255,255,0.03)"
-              : "rgba(15,23,42,0.03)",
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.08)"
-              : "1px solid rgba(15,23,42,0.08)",
-            borderRadius: 12,
-            padding: 12,
-          }}
-        >
-          {text}
-        </pre>
+        <RequirementContentRenderer
+          text={text}
+          resolvedTheme={resolvedTheme}
+        />
       </div>
     </div>
   );
