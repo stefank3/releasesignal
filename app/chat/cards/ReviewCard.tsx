@@ -25,6 +25,7 @@ import React, { useEffect, useState } from "react";
 import type { ReviewResult } from "../chat.types";
 import { clamp } from "../components/ChatUI";
 import { ArtifactProvenanceLabel } from "../components/workspace/ArtifactProvenanceLabel";
+import { ReviewToDesignActions } from "./review/ReviewToDesignActions";
 
 /** Minimal markdown safety for list items (Jira/Confluence paste). */
 function mdSafe(s: string) {
@@ -389,11 +390,23 @@ export default function ReviewCard({
   resolvedTheme = "light",
   provenanceLabel,
   provenanceDescription,
+  onImproveTestPlanAction,
+  canImproveTestPlan = false,
+  isImprovingTestPlan = false,
+  onGenerateFromGapsAction,
+  canGenerateFromGaps = false,
+  isGeneratingFromGaps = false,
 }: {
   review: ReviewResult;
   resolvedTheme?: "light" | "dark";
   provenanceLabel?: string;
   provenanceDescription?: string;
+  onImproveTestPlanAction?: () => void;
+  canImproveTestPlan?: boolean;
+  isImprovingTestPlan?: boolean;
+  onGenerateFromGapsAction?: () => void;
+  canGenerateFromGaps?: boolean;
+  isGeneratingFromGaps?: boolean;
 }) {
   const [toast, setToast] = useState<string | null>(null);
 
@@ -514,6 +527,18 @@ export default function ReviewCard({
           ) : null}
         </div>
       ) : null}
+
+      <ReviewToDesignActions
+        gapCount={review.riskGaps.length}
+        improvementCount={review.improvements.length}
+        resolvedTheme={resolvedTheme}
+        onImproveTestPlanAction={onImproveTestPlanAction}
+        canImproveTestPlan={canImproveTestPlan}
+        isImprovingTestPlan={isImprovingTestPlan}
+        onGenerateFromGapsAction={onGenerateFromGapsAction}
+        canGenerateFromGaps={canGenerateFromGaps}
+        isGeneratingFromGaps={isGeneratingFromGaps}
+      />
 
       <div>
         <SectionLabel
