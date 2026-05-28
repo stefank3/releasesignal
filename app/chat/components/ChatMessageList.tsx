@@ -547,6 +547,7 @@ type Props = {
   mode: Mode;
   sessionArtifact?: SessionArtifact | null;
   resolvedTheme?: "light" | "dark";
+  hiddenItemIndexes?: number[];
 
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
@@ -576,6 +577,7 @@ export default function ChatMessageList({
   mode,
   sessionArtifact = null,
   resolvedTheme = "dark",
+  hiddenItemIndexes = [],
   onUpdateTestSuiteAction,
 
   onGenerateTestsAction,
@@ -610,6 +612,7 @@ export default function ChatMessageList({
     latestPersistedSuiteIndex,
     latestReviewIndex,
   } = getLatestArtifactIndexes(items);
+  const hiddenIndexSet = new Set(hiddenItemIndexes);
 
   if (items.length === 0) {
     return <EmptyStateCard mode={mode} resolvedTheme={resolvedTheme} />;
@@ -618,6 +621,8 @@ export default function ChatMessageList({
   return (
     <div style={{ display: "grid", gap: 18 }}>
       {items.map((it, idx) => {
+        if (hiddenIndexSet.has(idx)) return null;
+
         const rolePart =
           it.kind === "text" ||
           it.kind === "review" ||

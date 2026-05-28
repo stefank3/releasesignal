@@ -91,6 +91,8 @@ import ChatWorkflowBanner from "./ChatWorkflowBanner";
 import FeatureWorkspaceSummary from "./FeatureWorkspaceSummary";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import StrategyPanel from "./StrategyPanel";
+import { ArtifactDocumentSurface } from "./workspace/ArtifactDocumentSurface";
+import { getLatestArtifactDocumentIndexesToHide } from "./workspace/artifactDocumentItems";
 
 type Props = {
   chat: UseChatSessionReturn;
@@ -454,6 +456,12 @@ export default function ChatPanel({
     chat.hasPinnedRequirement &&
     !!buildRefinedRequirementInput(chat.sessionArtifact);
 
+  const canGenerateNextBatch =
+    chat.hasPinnedRequirement && chat.hasPersistentTestSuite;
+
+  const hiddenTimelineDocumentIndexes =
+    getLatestArtifactDocumentIndexesToHide(chat.items);
+
   const hasWorkspaceArtifacts =
     chat.hasPinnedRequirement ||
     chat.hasPersistentTestSuite ||
@@ -500,6 +508,40 @@ export default function ChatPanel({
               resolvedTheme={resolvedTheme}
             />
 
+            <ArtifactDocumentSurface
+              items={chat.items}
+              sessionArtifact={chat.sessionArtifact}
+              resolvedTheme={resolvedTheme}
+              onUpdateTestSuiteAction={(cases) => {
+                void chat.updateTestSuite(cases);
+              }}
+              onGenerateTestsAction={() => {
+                void chat.generateTestsFromRequirement();
+              }}
+              canGenerateTests={chat.canGenerateTests}
+              isGeneratingTests={chat.isRunningWorkflowAction}
+              onRefineRequirementAction={() => {
+                void chat.refineRequirement();
+              }}
+              canRefineRequirement={chat.canRefineRequirement}
+              isRefiningRequirement={chat.isRunningWorkflowAction}
+              onGenerateNextBatchAction={() => {
+                void chat.generateNextBatchOfTests();
+              }}
+              canGenerateNextBatch={canGenerateNextBatch}
+              isGeneratingNextBatch={chat.isRunningWorkflowAction}
+              onRegenerateSuiteAction={() => {
+                void chat.regenerateSuite();
+              }}
+              canRegenerateSuite={chat.canRegenerateSuite}
+              isRegeneratingSuite={chat.isRunningWorkflowAction}
+              onReviewTestSuiteAction={() => {
+                void chat.reviewTestSuite();
+              }}
+              canReviewTestSuite={chat.canReviewTestSuite}
+              isReviewingTestSuite={chat.isRunningWorkflowAction}
+            />
+
             {!hasWorkspaceArtifacts && !isBusy ? (
               <EmptyWorkspaceHint resolvedTheme={resolvedTheme} />
             ) : null}
@@ -534,6 +576,7 @@ export default function ChatPanel({
               mode={chat.mode}
               sessionArtifact={chat.sessionArtifact}
               resolvedTheme={resolvedTheme}
+              hiddenItemIndexes={hiddenTimelineDocumentIndexes}
               onUpdateTestSuiteAction={(cases) => {
                 void chat.updateTestSuite(cases);
               }}
@@ -550,9 +593,7 @@ export default function ChatPanel({
               onGenerateNextBatchAction={() => {
                 void chat.generateNextBatchOfTests();
               }}
-              canGenerateNextBatch={
-                chat.hasPinnedRequirement && chat.hasPersistentTestSuite
-              }
+              canGenerateNextBatch={canGenerateNextBatch}
               isGeneratingNextBatch={chat.isRunningWorkflowAction}
               onRegenerateSuiteAction={() => {
                 void chat.regenerateSuite();
