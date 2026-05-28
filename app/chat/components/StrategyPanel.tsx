@@ -314,6 +314,7 @@ export default function StrategyPanel({
   const [constraints, setConstraints] = useState("");
   const [scope, setScope] = useState("");
   const [successCriteria, setSuccessCriteria] = useState("");
+  const [showStructuredForm, setShowStructuredForm] = useState(false);
 
   const generatedStructuredText = useMemo(() => {
     return [
@@ -338,6 +339,7 @@ export default function StrategyPanel({
       scope.trim() ||
       successCriteria.trim()
   );
+  const shouldShowStructuredForm = showStructuredForm || hasAnyInput;
 
   if (!isCoachSession) return null;
 
@@ -369,8 +371,8 @@ export default function StrategyPanel({
               color: isDark ? "#fff" : "#0f172a",
             }}
           >
-            Refine the requirement as the scope evolves. This updates the pinned
-            Refined Requirement used for test generation.
+            Optional starting point for turning early notes into a clearer
+            technical requirement.
           </div>
         </div>
         <Pill resolvedTheme={resolvedTheme}>
@@ -379,12 +381,55 @@ export default function StrategyPanel({
       </div>
 
       <HelpBox
-        title="How to use this panel"
-        text="Fill in the structure below, paste it into the main input, then run Strategy. This panel helps prepare requirement content, but it does not save or run the workflow by itself."
+        title="Use Strategy when scope is still forming"
+        text="Start with a short feature idea, user problem, acceptance criteria, or risk notes. Release Signal will help structure the input before Test Design."
         resolvedTheme={resolvedTheme}
       />
 
-      <Surface resolvedTheme={resolvedTheme}>
+      <Surface dashed resolvedTheme={resolvedTheme}>
+        <SectionTitle resolvedTheme={resolvedTheme}>
+          Not sure where to start?
+        </SectionTitle>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            fontSize: 12,
+            lineHeight: 1.45,
+            color: isDark ? "#fff" : "#0f172a",
+          }}
+        >
+          <div style={{ opacity: 0.78 }}>
+            Paste rough notes into the main input and run Strategy, or use the
+            structured form here if you want a guided outline first.
+          </div>
+          <div style={{ opacity: 0.68 }}>
+            Already have a clear requirement? Go directly to Test Design.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+          <SmallButton
+            onClick={() => setShowStructuredForm((current) => !current)}
+            resolvedTheme={resolvedTheme}
+          >
+            {shouldShowStructuredForm
+              ? "Hide structured form"
+              : "Use structured form"}
+          </SmallButton>
+
+          <SmallButton
+            onClick={focusChatInputBestEffort}
+            resolvedTheme={resolvedTheme}
+          >
+            Focus main input
+          </SmallButton>
+        </div>
+      </Surface>
+
+      {shouldShowStructuredForm ? (
+        <Surface resolvedTheme={resolvedTheme}>
         <SectionTitle resolvedTheme={resolvedTheme}>
           Refine requirement
         </SectionTitle>
@@ -487,9 +532,11 @@ export default function StrategyPanel({
             Clear form
           </SmallButton>
         </div>
-      </Surface>
+        </Surface>
+      ) : null}
 
-      <Surface dashed resolvedTheme={resolvedTheme}>
+      {shouldShowStructuredForm ? (
+        <Surface dashed resolvedTheme={resolvedTheme}>
         <div
           style={{
             fontSize: 11,
@@ -514,11 +561,12 @@ export default function StrategyPanel({
         >
           {generatedStructuredText}
         </div>
-      </Surface>
+        </Surface>
+      ) : null}
 
       <HelpBox
-        title="What happens after paste"
-        text="After pasting into the main input, run the Strategy step there. The resulting refined requirement will appear in the conversation area and can then be reused by Test Design."
+        title="What Strategy creates"
+        text="Run Strategy from the main input to create a refined requirement. That artifact becomes the basis for downstream test design."
         resolvedTheme={resolvedTheme}
       />
 
@@ -543,9 +591,8 @@ export default function StrategyPanel({
             color: isDark ? "#fff" : "#0f172a",
           }}
         >
-          Nothing is pinned yet. Complete the refinement fields, paste the result
-          into the main workflow input, and run Strategy to create the Refined
-          Requirement.
+          Nothing is pinned yet. Use the main input or the optional structured
+          form to create the Refined Requirement.
         </div>
       )}
     </div>
