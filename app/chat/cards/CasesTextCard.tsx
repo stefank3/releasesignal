@@ -75,6 +75,7 @@ import {
   TextInput,
   ToneBadge,
 } from "./cases/CasesCardControls";
+import { CollapsibleRawSuiteText } from "./cases/CollapsibleRawSuiteText";
 import { buildCaseOverview, truncateText } from "./cases/caseOverview";
 import { ArtifactProvenanceLabel } from "../components/workspace/ArtifactProvenanceLabel";
 
@@ -1130,45 +1131,10 @@ function CasesTextCardContent({
             );
           })}
 
-          <div
-            style={{
-              marginTop: 14,
-              borderTop: isDark
-                ? "1px solid rgba(255,255,255,0.08)"
-                : "1px solid rgba(15,23,42,0.08)",
-              paddingTop: 12,
-            }}
-          >
-            <SectionLabel
-              title="Copy-ready suite output"
-              description="This is the current rendered suite text after local edits."
-              resolvedTheme={resolvedTheme}
-            />
-
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                fontSize: 12,
-                lineHeight: 1.5,
-                background: isDark
-                  ? "rgba(0,0,0,0.22)"
-                  : "rgba(15,23,42,0.04)",
-                border: isDark
-                  ? "1px solid rgba(255,255,255,0.10)"
-                  : "1px solid rgba(15,23,42,0.10)",
-                borderRadius: 14,
-                padding: 12,
-                color: isDark
-                  ? "rgba(255,255,255,0.86)"
-                  : "rgba(15,23,42,0.86)",
-                maxHeight: 240,
-                overflow: "auto",
-              }}
-            >
-              {renderedText}
-            </pre>
-          </div>
+          <CollapsibleRawSuiteText
+            text={renderedText}
+            resolvedTheme={resolvedTheme}
+          />
         </div>
       ) : (
         <div style={{ marginTop: 14 }}>
