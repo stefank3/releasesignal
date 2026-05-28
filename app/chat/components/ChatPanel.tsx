@@ -605,6 +605,10 @@ export default function ChatPanel({
               mode={chat.mode}
               value={chat.input}
               disabled={isBusy}
+              hasReviewArtifactContext={
+                chat.mode === "review" &&
+                (chat.hasPersistentTestSuite || chat.hasReviewArtifact)
+              }
               resolvedTheme={resolvedTheme}
               onChangeAction={(next: string) => chat.setInput(next)}
               onSendAction={() => {
