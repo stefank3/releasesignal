@@ -91,6 +91,7 @@ import ChatWorkflowBanner from "./ChatWorkflowBanner";
 import FeatureWorkspaceSummary from "./FeatureWorkspaceSummary";
 import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import StrategyPanel from "./StrategyPanel";
+import { ActivityTimelinePanel } from "./workspace/ActivityTimelinePanel";
 import { ArtifactDocumentSurface } from "./workspace/ArtifactDocumentSurface";
 import { getLatestArtifactDocumentIndexesToHide } from "./workspace/artifactDocumentItems";
 
@@ -355,35 +356,6 @@ export default function ChatPanel({
     return "minmax(0, 1fr) 400px";
   }, [isCoachSession, isNarrow]);
 
-  const leftPanelStyle: React.CSSProperties = {
-    border: isDark
-      ? "1px solid rgba(255,255,255,0.10)"
-      : "1px solid rgba(15,23,42,0.10)",
-    borderRadius: 18,
-    background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
-    overflow: "hidden",
-    display: "grid",
-    gridTemplateRows: "1fr auto",
-    minHeight: isNarrow ? "60vh" : "68vh",
-    boxShadow: isDark
-      ? "0 8px 30px rgba(0,0,0,0.18)"
-      : "0 8px 24px rgba(15,23,42,0.06)",
-  };
-
-  const chatBoxStyle: React.CSSProperties = {
-    padding: 14,
-    overflow: "auto",
-    minHeight: 0,
-  };
-
-  const inputWrapStyle: React.CSSProperties = {
-    borderTop: isDark
-      ? "1px solid rgba(255,255,255,0.10)"
-      : "1px solid rgba(15,23,42,0.10)",
-    padding: 12,
-    background: isDark ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.55)",
-  };
-
   const processingBannerStyle: React.CSSProperties = {
     marginBottom: 10,
     padding: "10px 12px",
@@ -561,8 +533,65 @@ export default function ChatPanel({
           </div>
         </div>
 
-        <div style={leftPanelStyle}>
-          <div ref={chatBoxRef} style={chatBoxStyle}>
+        <ActivityTimelinePanel
+          ref={chatBoxRef}
+          resolvedTheme={resolvedTheme}
+          isNarrow={isNarrow}
+          inputSlot={
+            <>
+              {canUseRefinedRequirement ? (
+                <div style={helperBannerStyle}>
+                  <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.4 }}>
+                    Use the pinned{" "}
+                    <strong style={{ fontWeight: 900 }}>
+                      Refined Requirement
+                    </strong>{" "}
+                    as the starting point for test generation.
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextInput = buildRefinedRequirementInput(
+                        chat.sessionArtifact
+                      );
+                      if (!nextInput) return;
+
+                      chat.setInput(nextInput);
+
+                      requestAnimationFrame(() => {
+                        inputRef.current?.focus();
+                      });
+                    }}
+                    style={helperButtonStyle}
+                    disabled={isBusy}
+                  >
+                    Use Refined Requirement
+                  </button>
+                </div>
+              ) : null}
+
+              <ChatInput
+                ref={inputRef}
+                mode={chat.mode}
+                value={chat.input}
+                disabled={isBusy}
+                hasReviewArtifactContext={
+                  chat.mode === "review" &&
+                  (chat.hasPersistentTestSuite || chat.hasReviewArtifact)
+                }
+                resolvedTheme={resolvedTheme}
+                onChangeAction={(next: string) => chat.setInput(next)}
+                onSendAction={() => {
+                  void (async () => {
+                    await chat.send();
+                    onAfterSendAction?.();
+                  })();
+                }}
+              />
+            </>
+          }
+        >
             {isBusy ? (
               <div style={processingBannerStyle}>
                 {chat.isRunningWorkflowAction
@@ -606,61 +635,7 @@ export default function ChatPanel({
               canReviewTestSuite={chat.canReviewTestSuite}
               isReviewingTestSuite={chat.isRunningWorkflowAction}
             />
-          </div>
-
-          <div style={inputWrapStyle}>
-            {canUseRefinedRequirement ? (
-              <div style={helperBannerStyle}>
-                <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.4 }}>
-                  Use the pinned{" "}
-                  <strong style={{ fontWeight: 900 }}>
-                    Refined Requirement
-                  </strong>{" "}
-                  as the starting point for test generation.
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextInput = buildRefinedRequirementInput(
-                      chat.sessionArtifact
-                    );
-                    if (!nextInput) return;
-
-                    chat.setInput(nextInput);
-
-                    requestAnimationFrame(() => {
-                      inputRef.current?.focus();
-                    });
-                  }}
-                  style={helperButtonStyle}
-                  disabled={isBusy}
-                >
-                  Use Refined Requirement
-                </button>
-              </div>
-            ) : null}
-
-            <ChatInput
-              ref={inputRef}
-              mode={chat.mode}
-              value={chat.input}
-              disabled={isBusy}
-              hasReviewArtifactContext={
-                chat.mode === "review" &&
-                (chat.hasPersistentTestSuite || chat.hasReviewArtifact)
-              }
-              resolvedTheme={resolvedTheme}
-              onChangeAction={(next: string) => chat.setInput(next)}
-              onSendAction={() => {
-                void (async () => {
-                  await chat.send();
-                  onAfterSendAction?.();
-                })();
-              }}
-            />
-          </div>
-        </div>
+        </ActivityTimelinePanel>
       </div>
 
       {isCoachSession ? (
