@@ -304,9 +304,13 @@ function focusChatInputBestEffort() {
 export default function StrategyPanel({
   chat,
   resolvedTheme = "dark",
+  defaultStructuredFormOpen = false,
+  onCloseAction,
 }: {
   chat: UseChatSessionReturn;
   resolvedTheme?: ResolvedTheme;
+  defaultStructuredFormOpen?: boolean;
+  onCloseAction?: () => void;
 }) {
   const [objective, setObjective] = useState("");
   const [primaryRisk, setPrimaryRisk] = useState("");
@@ -314,7 +318,9 @@ export default function StrategyPanel({
   const [constraints, setConstraints] = useState("");
   const [scope, setScope] = useState("");
   const [successCriteria, setSuccessCriteria] = useState("");
-  const [showStructuredForm, setShowStructuredForm] = useState(false);
+  const [showStructuredForm, setShowStructuredForm] = useState(
+    defaultStructuredFormOpen
+  );
 
   const generatedStructuredText = useMemo(() => {
     return [
@@ -385,6 +391,17 @@ export default function StrategyPanel({
         text="Start with a short feature idea, user problem, acceptance criteria, or risk notes. Release Signal will help structure the input before Test Design."
         resolvedTheme={resolvedTheme}
       />
+
+      {onCloseAction ? (
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <SmallButton
+            onClick={onCloseAction}
+            resolvedTheme={resolvedTheme}
+          >
+            Hide Strategy panel
+          </SmallButton>
+        </div>
+      ) : null}
 
       <Surface dashed resolvedTheme={resolvedTheme}>
         <SectionTitle resolvedTheme={resolvedTheme}>
