@@ -309,6 +309,7 @@ export default function ChatPanel({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const [isNarrow, setIsNarrow] = useState(false);
+  const [showStrategyPanel, setShowStrategyPanel] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 980px)");
@@ -353,8 +354,9 @@ export default function ChatPanel({
   const gridTemplateColumns = useMemo(() => {
     if (!isCoachSession) return "1fr";
     if (isNarrow) return "1fr";
+    if (!showStrategyPanel) return "1fr";
     return "minmax(0, 1fr) 400px";
-  }, [isCoachSession, isNarrow]);
+  }, [isCoachSession, isNarrow, showStrategyPanel]);
 
   const processingBannerStyle: React.CSSProperties = {
     marginBottom: 10,
@@ -410,6 +412,22 @@ export default function ChatPanel({
     fontWeight: 900,
     cursor: "pointer",
     whiteSpace: "nowrap",
+  };
+
+  const strategyHelperStyle: React.CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 12,
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.10)"
+      : "1px solid rgba(15,23,42,0.10)",
+    background: isDark ? "rgba(255,255,255,0.035)" : "rgba(15,23,42,0.025)",
+    color: isDark ? "#ffffff" : "#0f172a",
   };
 
   // M12.10 CHANGE:
@@ -533,6 +551,28 @@ export default function ChatPanel({
           </div>
         </div>
 
+        {isCoachSession && !showStrategyPanel ? (
+          <div style={strategyHelperStyle}>
+            <div style={{ display: "grid", gap: 3 }}>
+              <div style={{ fontSize: 12, fontWeight: 950 }}>
+                Strategy is optional
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.4 }}>
+                Paste rough notes in the main input, or open the structured
+                form when you want a guided outline first.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowStrategyPanel(true)}
+              style={helperButtonStyle}
+              disabled={isBusy}
+            >
+              Open structured Strategy
+            </button>
+          </div>
+        ) : null}
+
         <ActivityTimelinePanel
           ref={chatBoxRef}
           resolvedTheme={resolvedTheme}
@@ -638,9 +678,14 @@ export default function ChatPanel({
         </ActivityTimelinePanel>
       </div>
 
-      {isCoachSession ? (
+      {isCoachSession && showStrategyPanel ? (
         <div style={strategyPanelWrapStyle}>
-          <StrategyPanel chat={chat} resolvedTheme={resolvedTheme} />
+          <StrategyPanel
+            chat={chat}
+            resolvedTheme={resolvedTheme}
+            defaultStructuredFormOpen
+            onCloseAction={() => setShowStrategyPanel(false)}
+          />
         </div>
       ) : null}
     </div>
