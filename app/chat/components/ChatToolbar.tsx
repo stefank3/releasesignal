@@ -29,6 +29,11 @@
 // - improve first-run clarity for toolbar sections
 // - make session vs workspace intent easier to understand
 // - add lightweight onboarding copy only; no workflow logic changes
+//
+// V1.1 UI CLEANUP:
+// - collapse demo shortcuts behind an optional disclosure
+// - remove repeated helper callouts so workspace content appears sooner
+// - keep session/workspace actions trigger-only and hook-driven
 
 "use client";
 
@@ -54,60 +59,6 @@ function modeLabel(m: Mode) {
     : m === "review"
       ? "Test Review"
       : "Test Design";
-}
-
-function SectionHint(args: {
-  text: string;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <div
-      style={{
-        marginTop: 6,
-        marginBottom: 10,
-        fontSize: 11,
-        lineHeight: 1.4,
-        color: isDark ? "rgba(255,255,255,0.68)" : "rgba(15,23,42,0.62)",
-      }}
-    >
-      {args.text}
-    </div>
-  );
-}
-
-function HelpCallout(args: {
-  title: string;
-  text: string;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <div
-      style={{
-        marginTop: 8,
-        marginBottom: 10,
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.10)"
-          : "1px solid rgba(15,23,42,0.10)",
-        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
-        color: isDark ? "#ffffff" : "#0f172a",
-        display: "grid",
-        gap: 4,
-      }}
-    >
-      <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.82 }}>
-        {args.title}
-      </div>
-      <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.72 }}>
-        {args.text}
-      </div>
-    </div>
-  );
 }
 
 type Props = {
@@ -184,74 +135,75 @@ export default function ChatToolbar({
 
   const isBusy = chat.isSending || chat.isRunningWorkflowAction;
   const hasWorkspace = !!chat.activeSessionId;
+  const showGenerateTestsAction = chat.hasPinnedRequirement && hasWorkspace;
 
-  const workspaceActionHint = !hasWorkspace
-    ? "Workspace actions appear after a session is created."
-    : chat.hasPinnedRequirement
-      ? "Actions below use persisted workspace artifacts, not prompt reconstruction."
-      : "A refined requirement is needed before Generate Tests becomes available.";
+  const demoDisclosureStyle: React.CSSProperties = {
+    marginBottom: 10,
+    borderRadius: 14,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.10)"
+      : "1px solid rgba(15,23,42,0.10)",
+    background: isDark ? "rgba(255,255,255,0.035)" : "rgba(15,23,42,0.025)",
+    color: textColor,
+    overflow: "hidden",
+  };
+
+  const demoSummaryStyle: React.CSSProperties = {
+    padding: "9px 12px",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 900,
+    listStyle: "none",
+  };
 
   return (
     <>
-      {/* Demo toolbar */}
-      <Toolbar
-        resolvedTheme={resolvedTheme}
-        right={
-          <HeaderButton
-            resolvedTheme={resolvedTheme}
-            onClickAction={() => {
-              chat.startNewSessionInMode(chat.mode);
-              localStorage.removeItem(STORAGE_KEY);
-              onAfterUiAction?.();
-            }}
-            disabled={isBusy}
-          >
-            Clear
-          </HeaderButton>
-        }
-      >
-        <Chip resolvedTheme={resolvedTheme}>Demo</Chip>
+      <details style={demoDisclosureStyle}>
+        <summary style={demoSummaryStyle}>
+          Demo shortcuts
+          <span style={{ marginLeft: 8, opacity: 0.62, fontWeight: 700 }}>
+            sample inputs
+          </span>
+        </summary>
 
-        <HeaderButton
-          resolvedTheme={resolvedTheme}
-          onClickAction={() => loadDemoAction("coach", DEMO_COACH_LOGIN)}
-          disabled={isBusy}
-        >
-          Login + MFA (Strategy)
-        </HeaderButton>
+        <div style={{ padding: "0 10px 10px" }}>
+          <Toolbar resolvedTheme={resolvedTheme}>
+            <Chip resolvedTheme={resolvedTheme}>Demo</Chip>
 
-        <HeaderButton
-          resolvedTheme={resolvedTheme}
-          onClickAction={() => loadDemoAction("review", DEMO_REVIEW_LOGIN)}
-          disabled={isBusy}
-        >
-          Login + MFA (Test Review)
-        </HeaderButton>
+            <HeaderButton
+              resolvedTheme={resolvedTheme}
+              onClickAction={() => loadDemoAction("coach", DEMO_COACH_LOGIN)}
+              disabled={isBusy}
+            >
+              Login + MFA (Strategy)
+            </HeaderButton>
 
-        <HeaderButton
-          resolvedTheme={resolvedTheme}
-          onClickAction={() => loadDemoAction("review", DEMO_REVIEW_EXPORT)}
-          disabled={isBusy}
-        >
-          Export CSV (Test Review)
-        </HeaderButton>
+            <HeaderButton
+              resolvedTheme={resolvedTheme}
+              onClickAction={() => loadDemoAction("review", DEMO_REVIEW_LOGIN)}
+              disabled={isBusy}
+            >
+              Login + MFA (Test Review)
+            </HeaderButton>
 
-        <HeaderButton
-          resolvedTheme={resolvedTheme}
-          onClickAction={() => loadDemoAction("cases", DEMO_CASES_LOGIN)}
-          disabled={isBusy}
-        >
-          Login + MFA (Test Design)
-        </HeaderButton>
-      </Toolbar>
+            <HeaderButton
+              resolvedTheme={resolvedTheme}
+              onClickAction={() => loadDemoAction("review", DEMO_REVIEW_EXPORT)}
+              disabled={isBusy}
+            >
+              Export CSV (Test Review)
+            </HeaderButton>
 
-      <HelpCallout
-        title="Demo shortcuts"
-        text="These examples preload sample inputs for each workflow. They help first-time users explore the product without changing how real workspace actions behave."
-        resolvedTheme={resolvedTheme}
-      />
-
-      <div style={{ height: 10 }} />
+            <HeaderButton
+              resolvedTheme={resolvedTheme}
+              onClickAction={() => loadDemoAction("cases", DEMO_CASES_LOGIN)}
+              disabled={isBusy}
+            >
+              Login + MFA (Test Design)
+            </HeaderButton>
+          </Toolbar>
+        </div>
+      </details>
 
       {/* Session actions toolbar */}
       <Toolbar resolvedTheme={resolvedTheme}>
@@ -280,6 +232,18 @@ export default function ChatToolbar({
               Retry
             </HeaderButton>
           )}
+
+          <HeaderButton
+            resolvedTheme={resolvedTheme}
+            onClickAction={() => {
+              chat.startNewSessionInMode(chat.mode);
+              localStorage.removeItem(STORAGE_KEY);
+              onAfterUiAction?.();
+            }}
+            disabled={isBusy}
+          >
+            Clear
+          </HeaderButton>
         </Group>
 
         <Group>
@@ -317,26 +281,14 @@ export default function ChatToolbar({
         </Group>
       </Toolbar>
 
-      <SectionHint
-        text="Session controls manage the current workspace context and session lifecycle."
-        resolvedTheme={resolvedTheme}
-      />
-
-      <HelpCallout
-        title="What this section does"
-        text="Use these controls to retry the latest request, start a fresh workspace, or switch into a new Strategy, Test Design, or Test Review session."
-        resolvedTheme={resolvedTheme}
-      />
-
       {/* M12.9:
           Contextual workspace actions are artifact-driven.
           Visibility stays in UI; eligibility/execution stays in hook.
       */}
-      <Toolbar resolvedTheme={resolvedTheme}>
-        <Group>
-          <Chip resolvedTheme={resolvedTheme}>Workspace actions</Chip>
-
-          {chat.hasPinnedRequirement && chat.activeSessionId ? (
+      {showGenerateTestsAction ? (
+        <Toolbar resolvedTheme={resolvedTheme}>
+          <Group>
+            <Chip resolvedTheme={resolvedTheme}>Workspace actions</Chip>
             <HeaderButton
               resolvedTheme={resolvedTheme}
               onClickAction={() => {
@@ -349,18 +301,8 @@ export default function ChatToolbar({
             >
               {chat.isRunningWorkflowAction ? "Generating…" : "Generate Tests"}
             </HeaderButton>
-          ) : null}
-        </Group>
-      </Toolbar>
-
-      <SectionHint text={workspaceActionHint} resolvedTheme={resolvedTheme} />
-
-      {!hasWorkspace ? (
-        <HelpCallout
-          title="Before workspace actions appear"
-          text="Create or open a workspace first. Once a session exists and the required artifacts are present, valid actions such as Generate Tests will appear here."
-          resolvedTheme={resolvedTheme}
-        />
+          </Group>
+        </Toolbar>
       ) : null}
 
       {/* Mode lock banner (null-safe) */}
@@ -449,8 +391,7 @@ export default function ChatToolbar({
 
         {chat.activeSessionId ? (
           <div style={{ fontSize: 12, color: subtleText }}>
-            Workspace actions are driven by persisted artifacts. Start a new
-            session only when you want a separate workflow context.
+            Workspace actions use persisted artifacts.
           </div>
         ) : null}
       </div>

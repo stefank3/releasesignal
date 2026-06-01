@@ -16,6 +16,10 @@
 // - highlights the active workflow step
 // - reinforces the intended product flow during beta
 //
+// V1.1 UI CLEANUP:
+// - keep the workflow tabs as the primary navigation
+// - remove the duplicate stepper so workspace content appears sooner
+//
 // CHANGE (M10 UI Pass):
 // - add theme-aware header rendering
 // - remove dark-only toolbar/header styling
@@ -50,23 +54,19 @@ const MODE_META: Record<
   {
     label: string;
     hint: string;
-    step: number;
   }
 > = {
   coach: {
     label: "Strategy",
     hint: "Clarify requirements and risks",
-    step: 1,
   },
   cases: {
     label: "Test Design",
     hint: "Generate structured test cases",
-    step: 2,
   },
   review: {
     label: "Test Review",
     hint: "Evaluate coverage and gaps",
-    step: 3,
   },
 };
 
@@ -80,7 +80,6 @@ export default function ChatHeader({
   resolvedTheme = "dark",
 }: Props) {
   const activeModeMeta = MODE_META[mode];
-  const activeStep = activeModeMeta.step;
 
   const isDark = resolvedTheme === "dark";
 
@@ -150,12 +149,12 @@ export default function ChatHeader({
         </div>
       </div>
 
-      {/* M8.1 + M8.2: Workflow selector + progress indicator */}
+      {/* M8.1: Workflow selector */}
       <div
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: 10,
+          gap: 8,
           padding: "10px 12px",
           borderRadius: 14,
           border: isDark
@@ -212,97 +211,6 @@ export default function ChatHeader({
               >
                 {meta.label}
               </button>
-            );
-          })}
-        </div>
-
-        {/* M8.2: Workflow progress indicator */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          {WORKFLOW_ORDER.map((item, index) => {
-            const meta = MODE_META[item];
-            const isActive = item === mode;
-            const isCompleted = meta.step < activeStep;
-
-            return (
-              <React.Fragment key={`step-${item}`}>
-                <div
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 10px",
-                    borderRadius: 999,
-                    border: isActive
-                      ? isDark
-                        ? "1px solid rgba(255,255,255,0.26)"
-                        : "1px solid rgba(15,23,42,0.18)"
-                      : isDark
-                        ? "1px solid rgba(255,255,255,0.10)"
-                        : "1px solid rgba(15,23,42,0.10)",
-                    background: isActive
-                      ? isDark
-                        ? "rgba(255,255,255,0.12)"
-                        : "rgba(15,23,42,0.08)"
-                      : isCompleted
-                        ? isDark
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(15,23,42,0.05)"
-                        : isDark
-                          ? "rgba(255,255,255,0.03)"
-                          : "rgba(15,23,42,0.025)",
-                    opacity: isActive ? 1 : isCompleted ? 0.92 : 0.72,
-                    color: textColor,
-                    fontSize: 12,
-                    fontWeight: isActive ? 900 : 700,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "inline-grid",
-                      placeItems: "center",
-                      width: 20,
-                      height: 20,
-                      borderRadius: 999,
-                      border: isDark
-                        ? "1px solid rgba(255,255,255,0.18)"
-                        : "1px solid rgba(15,23,42,0.14)",
-                      fontSize: 11,
-                      fontWeight: 900,
-                      background: isActive
-                        ? isDark
-                          ? "rgba(255,255,255,0.14)"
-                          : "rgba(15,23,42,0.10)"
-                        : "transparent",
-                    }}
-                  >
-                    {meta.step}
-                  </span>
-
-                  <span>{meta.label}</span>
-                </div>
-
-                {index < WORKFLOW_ORDER.length - 1 ? (
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      fontSize: 12,
-                      opacity: 0.45,
-                      fontWeight: 900,
-                      color: textColor,
-                    }}
-                  >
-                    →
-                  </span>
-                ) : null}
-              </React.Fragment>
             );
           })}
         </div>
