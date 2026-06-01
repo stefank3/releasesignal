@@ -32,10 +32,6 @@
 // - keep top Save as fallback, but make edit completion the primary persistence path
 // - block Done-close when validation issues exist or save fails
 //
-// DEBUG TEMP:
-// - add explicit logs for Done click and save guard path
-// - confirm whether save exits early before calling parent persistence callback
-//
 // M12.10 CHANGE:
 // - separate suite workflow actions from local editing controls
 // - make edit/save state easier to scan in long suites
@@ -383,49 +379,21 @@ function CasesTextCardContent({
   };
 
   const saveSuite = async (): Promise<boolean> => {
-    console.log("saveSuite called", {
-      hasUpdateAction: !!onUpdateTestSuiteAction,
-      hasStructuredCases,
-      isDirty,
-      hasValidationIssues,
-      persistedCasesCount: persistedCases.length,
-      editingId,
-    });
-
     if (!onUpdateTestSuiteAction || !hasStructuredCases || !isDirty) {
-      console.log("saveSuite early return", {
-        reason: !onUpdateTestSuiteAction
-          ? "missing_update_action"
-          : !hasStructuredCases
-            ? "no_structured_cases"
-            : "not_dirty",
-      });
       return true;
     }
 
     if (hasValidationIssues) {
-      console.log("saveSuite blocked by validation", {
-        duplicateGroups: duplicateGroups.map((group) => group.ids),
-        duplicateIds: validation.duplicateIds,
-        malformedHeaderIds: validation.malformedHeaderIds,
-        emptyCaseIds: validation.emptyCaseIds,
-      });
       setToast("Resolve suite issues before saving");
       return false;
     }
 
     try {
       setIsSaving(true);
-      console.log("saveSuite invoking onUpdateTestSuiteAction", {
-        persistedCasesCount: persistedCases.length,
-        caseIds: persistedCases.map((tc) => tc.id),
-      });
       await onUpdateTestSuiteAction(persistedCases);
-      console.log("saveSuite onUpdateTestSuiteAction resolved");
       setToast("Saved ✓");
       return true;
-    } catch (error) {
-      console.log("saveSuite failed", { error });
+    } catch {
       setToast("Save failed");
       return false;
     } finally {
@@ -436,24 +404,12 @@ function CasesTextCardContent({
   const handleEditToggle = async (id: string) => {
     const isCurrentlyEditing = editingId === id;
 
-    console.log("Done/Edit clicked", {
-      id,
-      isCurrentlyEditing,
-      isDirty,
-      hasValidationIssues,
-      editingId,
-    });
-
     if (!isCurrentlyEditing) {
       setEditingId(id);
       return;
     }
 
     const didSave = await saveSuite();
-    console.log("handleEditToggle save result", {
-      id,
-      didSave,
-    });
 
     if (didSave) {
       setEditingId(null);
@@ -465,12 +421,6 @@ function CasesTextCardContent({
     field: "title" | "body",
     value: string
   ) => {
-    console.log("updateCaseField", {
-      id,
-      field,
-      valueLength: value.length,
-    });
-
     setEditedCases((prev) =>
       prev.map((c) => {
         if (c.id !== id) return c;
