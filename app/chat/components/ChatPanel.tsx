@@ -545,7 +545,6 @@ export default function ChatPanel({
             />
             <ChatWorkflowBanner
               status={chat.workflowStatus}
-              chat={chat}
               resolvedTheme={resolvedTheme}
             />
           </div>
