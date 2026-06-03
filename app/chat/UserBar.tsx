@@ -12,12 +12,14 @@
 // every internal page directly in the main shell.
 
 import { useEffect, useState } from "react";
+import { PRODUCT_PACKAGE_LABELS, PRODUCT_PLAN_CODES } from "@/lib/product/packageLabels";
 
 type MeResponse =
   | {
       authenticated: true;
       email: string;
       isAdmin: boolean;
+      planCode: string | null;
       planStatus: string | null;
       trialEndsAt: string | null;
       creditsRemaining: number;
@@ -34,7 +36,11 @@ function formatAccountStatus(me: Extract<MeResponse, { authenticated: true }>) {
         ? ` · ${me.trialDaysRemaining} days left`
         : "";
 
-    return `Trial · ${credits}${daysLeft}`;
+    return `${PRODUCT_PACKAGE_LABELS.trial} · ${credits}${daysLeft}`;
+  }
+
+  if (me.planCode === PRODUCT_PLAN_CODES.standardPaid) {
+    return `${PRODUCT_PACKAGE_LABELS.basePlan} · ${credits}`;
   }
 
   return `Credits · ${credits}`;
