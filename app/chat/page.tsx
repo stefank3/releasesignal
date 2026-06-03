@@ -32,6 +32,7 @@ import SessionSidebar from "./components/SessionSidebar";
 import ChatHeader from "./components/ChatHeader";
 import ChatToolbar from "./components/ChatToolbar";
 import ChatPanel from "./components/ChatPanel";
+import GuidedOnboardingTour from "./components/GuidedOnboardingTour";
 
 type ThemeMode = "light" | "dark" | "system";
 
@@ -211,6 +212,8 @@ export default function ChatPage() {
             bumpUiTickAction();
           }}
         />
+
+        <GuidedOnboardingTour resolvedTheme={resolvedTheme} />
 
         <footer aria-label="App signature" style={footerStyle}>
           Built by Stefan Kajchevski · RSF Labs
