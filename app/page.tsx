@@ -8,6 +8,14 @@ const standardTrialPackageName = PRODUCT_PACKAGE_NAMES.standardTrial;
 const signature =
   "Built by Stefan Kajchevski, Senior Quality Engineer · An RSF Labs product";
 
+const trustLinks = [
+  { href: "/contact", label: "Contact" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/terms", label: "Terms" },
+  { href: "/trial-terms", label: "Trial Terms" },
+  { href: "/refund-cancellation", label: "Refund / Cancellation" },
+];
+
 const workflowSteps = [
   {
     title: "Refine requirement",
@@ -826,9 +834,29 @@ export default function Home() {
               color: "rgba(226,232,240,0.64)",
               fontSize: 13,
               lineHeight: 1.6,
+              display: "grid",
+              gap: 12,
             }}
           >
-            {signature}
+            <div>{signature}</div>
+            <nav
+              aria-label="Trust pages"
+              style={{ display: "flex", gap: 14, flexWrap: "wrap" }}
+            >
+              {trustLinks.map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  style={{
+                    color: "rgba(226,232,240,0.74)",
+                    textDecoration: "none",
+                    fontWeight: 750,
+                  }}
+                >
+                  {link.label}
+                </a>
+              ))}
+            </nav>
           </footer>
         </div>
       </section>
