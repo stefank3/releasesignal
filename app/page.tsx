@@ -1,6 +1,9 @@
 import type { CSSProperties } from "react";
+import { PRODUCT_PACKAGE_NAMES } from "@/lib/product/packageLabels";
 
 const workspaceLoginHref = "/auth/login?returnTo=%2Fchat";
+const standardPackageName = PRODUCT_PACKAGE_NAMES.standard;
+const standardTrialPackageName = PRODUCT_PACKAGE_NAMES.standardTrial;
 
 const signature =
   "Built by Stefan Kajchevski, Senior Quality Engineer · An RSF Labs product";
@@ -116,9 +119,9 @@ const faqs = [
       "It is a deterministic signal derived from the current requirement, test suite, review result, and structured execution evidence.",
   },
   {
-    question: "How does the trial work?",
+    question: `How does the ${standardTrialPackageName} work?`,
     answer:
-      "Release Signal V1 uses a controlled 15-day trial with included usage credits. Usage is not unlimited.",
+      `${standardTrialPackageName} uses a controlled 15-day trial with included usage credits. Usage is not unlimited.`,
   },
   {
     question: "What can I export?",
@@ -181,7 +184,7 @@ export default function Home() {
                 Release Signal
               </h2>
               <span style={{ fontSize: 12, color: "rgba(248,250,252,0.68)" }}>
-                RSF Labs · private beta
+                RSF Labs · {standardPackageName}
               </span>
             </div>
 
@@ -274,7 +277,7 @@ export default function Home() {
                     boxShadow: "0 10px 30px rgba(0,0,0,0.22)",
                   }}
                 >
-                  Start Free Trial
+                  Start Standard Trial
                 </a>
 
                 <a
@@ -631,10 +634,10 @@ export default function Home() {
                 textTransform: "uppercase",
               }}
             >
-              Controlled V1 trial
+              {standardTrialPackageName}
             </p>
             <h2 style={{ margin: 0, fontSize: 30, lineHeight: 1.15 }}>
-              Start with a 15-day trial and included usage credits.
+              Start with {standardTrialPackageName} and included usage credits.
             </h2>
             <p
               style={{
@@ -644,8 +647,8 @@ export default function Home() {
                 lineHeight: 1.65,
               }}
             >
-              Release Signal is in controlled V1 trial mode. Trial usage is
-              credit-based and intentionally bounded.
+              {standardTrialPackageName} is credit-based and intentionally
+              bounded.
             </p>
           </div>
           <a
@@ -661,7 +664,7 @@ export default function Home() {
               whiteSpace: "nowrap",
             }}
           >
-            Start Free Trial
+            Start Standard Trial
           </a>
         </div>
       </section>
@@ -795,7 +798,7 @@ export default function Home() {
                   fontWeight: 950,
                 }}
               >
-                Start Free Trial
+                Start Standard Trial
               </a>
               <a
                 href="#workflow"
