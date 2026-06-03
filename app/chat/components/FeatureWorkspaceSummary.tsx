@@ -230,6 +230,7 @@ function DashboardSummaryCard(args: {
   helpText?: string;
   meta?: string;
   actionSlot?: React.ReactNode;
+  tourAnchor?: string;
   resolvedTheme: "light" | "dark";
 }) {
   const isDark = args.resolvedTheme === "dark";
@@ -237,6 +238,7 @@ function DashboardSummaryCard(args: {
 
   return (
     <div
+      data-tour-anchor={args.tourAnchor}
       style={{
         border: getAccentBorder(accentTone, isDark),
         borderRadius: 14,
@@ -631,6 +633,7 @@ export default function FeatureWorkspaceSummary({
       >
         <DashboardSummaryCard
           title="Requirement"
+          tourAnchor="requirement-card"
           ready={requirementReady}
           emphasis={requirementEmphasis}
           description={
@@ -654,6 +657,7 @@ export default function FeatureWorkspaceSummary({
 
         <DashboardSummaryCard
           title="Test Suite"
+          tourAnchor="test-suite-card"
           ready={suiteReady}
           emphasis={suiteEmphasis}
           description={
@@ -685,6 +689,7 @@ export default function FeatureWorkspaceSummary({
 
         <DashboardSummaryCard
           title="Review"
+          tourAnchor="review-card"
           ready={reviewReady}
           emphasis={reviewEmphasis}
           description={
@@ -710,13 +715,15 @@ export default function FeatureWorkspaceSummary({
           resolvedTheme={resolvedTheme}
         />
 
-        <ExecutionEvidenceSummary
-          execution={executionEvidence}
-          sessionId={exportSessionId}
-          uploadDisabled={!suiteReady}
-          resolvedTheme={resolvedTheme}
-          onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
-        />
+        <div data-tour-anchor="execution-evidence-card">
+          <ExecutionEvidenceSummary
+            execution={executionEvidence}
+            sessionId={exportSessionId}
+            uploadDisabled={!suiteReady}
+            resolvedTheme={resolvedTheme}
+            onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
+          />
+        </div>
       </div>
 
       <div

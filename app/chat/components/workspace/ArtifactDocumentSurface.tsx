@@ -90,6 +90,7 @@ export function ArtifactDocumentSurface({
   return (
     <section
       aria-label="Generated artifact documents"
+      data-tour-anchor="artifact-documents"
       style={{
         display: "grid",
         gap: 12,
@@ -141,19 +142,23 @@ export function ArtifactDocumentSurface({
           }
 
           return (
-            <ReviewCard
+            <div
               key={`artifact-document-${document.kind}-${document.index}`}
-              review={document.item.review as ReviewResult}
-              resolvedTheme={resolvedTheme}
-              provenanceLabel={buildReviewProvenanceLabel(sessionArtifact)}
-              provenanceDescription="Persisted review result for the current test design."
-              onImproveTestPlanAction={onRegenerateSuiteAction}
-              canImproveTestPlan={canRegenerateSuite}
-              isImprovingTestPlan={isRegeneratingSuite}
-              onGenerateFromGapsAction={onGenerateNextBatchAction}
-              canGenerateFromGaps={canGenerateNextBatch}
-              isGeneratingFromGaps={isGeneratingNextBatch}
-            />
+              data-tour-anchor="review-actions"
+            >
+              <ReviewCard
+                review={document.item.review as ReviewResult}
+                resolvedTheme={resolvedTheme}
+                provenanceLabel={buildReviewProvenanceLabel(sessionArtifact)}
+                provenanceDescription="Persisted review result for the current test design."
+                onImproveTestPlanAction={onRegenerateSuiteAction}
+                canImproveTestPlan={canRegenerateSuite}
+                isImprovingTestPlan={isRegeneratingSuite}
+                onGenerateFromGapsAction={onGenerateNextBatchAction}
+                canGenerateFromGaps={canGenerateNextBatch}
+                isGeneratingFromGaps={isGeneratingNextBatch}
+              />
+            </div>
           );
         })}
       </div>

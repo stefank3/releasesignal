@@ -77,6 +77,7 @@ export function ReleaseReadinessPanel({
 
   return (
     <section
+      data-tour-anchor="release-readiness-panel"
       style={{
         marginBottom: 12,
         border: isDark
