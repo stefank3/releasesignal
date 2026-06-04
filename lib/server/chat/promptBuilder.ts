@@ -15,7 +15,7 @@
 // - preserve deterministic parsing safety by keeping schemas and response formats stable
 //
 // V1.3.1 PROMPT HARDENING CHANGE:
-// - reinforce technical detail preservation in coach/refinement mode
+// - reinforce technical detail preservation in coach/refinement and cases modes
 // - keep output contract and parser expectations unchanged
 
 import {
@@ -87,10 +87,19 @@ function buildCasesModeInstruction(args: {
     "Follow the OUTPUT CONTRACT exactly.",
     "Avoid both exact duplicates and semantic duplicates.",
     "Do NOT repeat, rephrase, or renumber existing tests when continuity is active.",
+    "Infer the test design intent before writing cases: API/contract, unit/module, file import/export, UI workflow, regression/change, or mixed.",
+    "Adapt each case body to the detected intent while preserving the locked TC format.",
+    "For API/contract cases, preserve methods, endpoints, headers, content types, query parameters, request/response assertions, status codes, schema checks, follow-up verification, and cleanup when present.",
+    "For unit/module cases, focus on function/module names, inputs, outputs, branches, validation, boundaries, return types, and mocks/stubs; do not add endpoints, HTTP methods, databases, downstream systems, retries, or logs unless explicit.",
+    "For file import/export cases, preserve file type, columns/fields, row examples, validation expectations, import/export results, row/file-level errors, and cleanup or rollback expectations.",
+    "For UI workflow cases, preserve screen/page, role, UI elements, user actions, expected UI state, validation messages, navigation, and permission/visibility assertions.",
     "Prioritize business-critical paths, negative paths, edge cases, retries, partial failures, invalid inputs, and integration failure behavior.",
     "Do NOT default to a happy-path-heavy suite.",
-    "If the requirement is ambiguous, make bounded assumptions and convert those assumptions into concrete, testable cases.",
+    "If the requirement is ambiguous, use bounded non-critical assumptions only for setup; missing technical decisions needed for correctness must be noted as gaps in the case body.",
+    "Missing details must not become invented systems, endpoints, fields, schemas, payloads, domains, or workflows.",
     "Pressure-test idempotency, state transitions, downstream side effects, and recovery behavior where relevant.",
+    "Valid happy-path flows must be Positive core workflow cases, not Edge cases.",
+    "Do NOT force API-style case structure onto unit, file, or UI inputs.",
     "Prefer fewer high-signal cases over filler cases.",
     "Each generated test must add meaningful coverage, not cosmetic variation.",
   ].join("\n");
@@ -143,14 +152,17 @@ function buildCoachModeInstruction(args: {
       ? "Do a clean re-analysis from the current user message."
       : "Update and extend the evolving requirement when new scope, constraints, or risks are introduced.",
     "Primary rule: Do NOT start by asking questions.",
-    "If input is weak or ambiguous: make reasonable bounded assumptions and proceed.",
+    "If input is weak or ambiguous: proceed with bounded non-critical assumptions, but preserve missing technical decisions as unresolved context or risk.",
     "Encode assumptions and constraints inside the requirement context instead of returning advisory sections.",
     "Do NOT be overly agreeable or optimistic about unclear requirements.",
     "Identify ambiguity, missing decision points, hidden dependencies, and testability risks inside the structured requirement fields.",
     "Strengthen negative paths, failure handling, state integrity, retries, duplicates, and integration risks where relevant.",
+    "Infer the likely test design intent before writing JSON: API/contract, unit/module, file import/export, UI workflow, regression/change, or mixed.",
+    "Use the inferred intent only to preserve the right details in existing fields; do not add new fields.",
     "Preserve executable technical detail from the source input: API methods/paths/status codes/schemas, UI screens/fields/actions/states, file formats/columns/mappings, unit/module names/inputs/outputs/branches, and regression change scope when present.",
     "Do NOT collapse concrete technical input into generic QA wording such as CRUD coverage, error handling, data integrity, or authorization unless the source itself is generic.",
-    "Do NOT invent unrelated domains, endpoints, roles, schemas, screens, functions, modules, or business examples.",
+    "Do NOT invent unrelated domains, endpoints, roles, schemas, screens, functions, modules, business examples, payloads, workflows, downstream systems, retries, or logs.",
+    "For unit/module input, do not add API, database, downstream-system, retry, or logging concerns unless explicitly present.",
     "Classify valid happy-path operations as core scope or acceptance criteria; reserve riskFocus for invalid, missing, malformed, unauthorized, boundary, duplicate, failed dependency, and state-conflict behavior.",
     "Prefer precise, testable requirement language over broad product prose.",
     "Do not invent extra workflow state, release decisions, or scoring logic.",
