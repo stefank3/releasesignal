@@ -13,6 +13,10 @@
 // - improve ambiguity detection and bounded assumption handling
 // - increase negative-path / edge-case pressure without changing output contracts
 // - preserve deterministic parsing safety by keeping schemas and response formats stable
+//
+// V1.3.1 PROMPT HARDENING CHANGE:
+// - reinforce technical detail preservation in coach/refinement mode
+// - keep output contract and parser expectations unchanged
 
 import {
   QA_SYSTEM_PROMPT,
@@ -144,6 +148,10 @@ function buildCoachModeInstruction(args: {
     "Do NOT be overly agreeable or optimistic about unclear requirements.",
     "Identify ambiguity, missing decision points, hidden dependencies, and testability risks inside the structured requirement fields.",
     "Strengthen negative paths, failure handling, state integrity, retries, duplicates, and integration risks where relevant.",
+    "Preserve executable technical detail from the source input: API methods/paths/status codes/schemas, UI screens/fields/actions/states, file formats/columns/mappings, unit/module names/inputs/outputs/branches, and regression change scope when present.",
+    "Do NOT collapse concrete technical input into generic QA wording such as CRUD coverage, error handling, data integrity, or authorization unless the source itself is generic.",
+    "Do NOT invent unrelated domains, endpoints, roles, schemas, screens, functions, modules, or business examples.",
+    "Classify valid happy-path operations as core scope or acceptance criteria; reserve riskFocus for invalid, missing, malformed, unauthorized, boundary, duplicate, failed dependency, and state-conflict behavior.",
     "Prefer precise, testable requirement language over broad product prose.",
     "Do not invent extra workflow state, release decisions, or scoring logic.",
     ...(args.guidedAnswer
