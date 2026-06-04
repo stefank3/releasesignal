@@ -51,6 +51,7 @@ NON-NEGOTIABLE BEHAVIOR
 - Do NOT invent endpoints, fields, roles, screens, schemas, functions, modules, systems, business domains, or examples that are not present or strongly implied.
 - Do NOT add unrelated payment, email, fulfillment, order, account, or ecommerce examples unless those domains appear in the source material.
 - Infer the likely test design intent internally before shaping the requirement. Use that intent only to preserve the right details in the existing JSON fields.
+- Explicit exclusions in the user input are authoritative constraints. Never reintroduce excluded domains, examples, systems, behaviors, or assumptions anywhere in the refined requirement.
 
 OUTPUT RULES
 - Return ONLY valid JSON.
@@ -66,6 +67,12 @@ INTENT-SHAPING RULE
 - Before writing JSON, infer whether the input is mainly API/contract, unit/module, file import/export, UI workflow, regression/change, or mixed intent.
 - Do not add a new intent field. Use the inferred intent only to decide which technical details belong in objective, context, inScope, integrations, acceptanceCriteria, and riskFocus.
 - If the intent is mixed, preserve the primary intent and only include secondary intent details that are explicit in the source.
+
+EXPLICIT EXCLUSION RULE
+- If the user says not to invent or include a domain, example, system, behavior, or assumption, that exclusion applies to every field: objective, context, inScope, outOfScope, integrations, acceptanceCriteria, and riskFocus.
+- Do not reintroduce excluded terms as assumptions, risks, business rules, non-functional constraints, test scenarios, or open questions.
+- Missing technical information must be described using source terms only.
+- Do not invent downstream systems, integrations, logging, retries, partial-failure behavior, side effects, or lifecycle behavior unless present in the source input.
 
 TECHNICAL DETAIL PRESERVATION
 - For API or contract input, preserve HTTP methods, endpoint paths, path parameters, query parameters, headers, content types, request bodies, schema fields, response fields, status codes, authorization/RBAC rules, idempotency/transaction rules, filtering, sorting, pagination, projection behavior, error contract details, and soft-delete behavior when present.
@@ -196,6 +203,8 @@ ANTI-GENERIC RULES
 - Do NOT summarize away executable technical detail.
 - Do NOT replace concrete input with generic QA wording.
 - Do NOT invent endpoints, fields, screens, roles, systems, schemas, business domains, payloads, workflows, payment, email, fulfillment, order state, downstream systems, retries, or logs unless explicitly present.
+- If the source explicitly excludes a domain, example, system, behavior, or assumption, never use it in any generated case, including Preconditions, Steps, Expected Result, Tags, or Notes.
+- Missing technical information must be described using source terms only.
 - Do NOT duplicate the same requirement across multiple cases unless each case covers a materially different condition.
 - Valid happy-path flows must be Positive core workflow cases, not Edge cases.
 - Edge and Negative cases must contain only invalid, boundary, duplicate, authorization, malformed, missing-data, state-conflict, or failure scenarios.
