@@ -89,6 +89,10 @@ type RequirementLike = {
 
 export type NormalizedRefinedRequirement = {
   objective: string;
+  context: string | null;
+  inScope: string[];
+  outOfScope: string[];
+  integrations: string[];
   functionalScope: string[];
   businessRules: string[];
   acceptanceCriteria: string[];
@@ -597,11 +601,14 @@ function normalizeRequirementLike(
 ): NormalizedRefinedRequirement | null {
   const objective = toOptionalText(requirement.objective);
   const context = toOptionalText(requirement.context);
+  const inScope = toTrimmedStringArray(requirement.inScope, 12);
+  const outOfScope = toTrimmedStringArray(requirement.outOfScope, 12);
+  const integrations = toTrimmedStringArray(requirement.integrations, 8);
 
   const functionalScope = mergeUnique(
     [
       toTrimmedStringArray(requirement.functionalScope, 12),
-      toTrimmedStringArray(requirement.inScope, 12),
+      inScope,
     ],
     12
   );
@@ -629,8 +636,6 @@ function normalizeRequirementLike(
   )
     .map((item) => normalizePhrase(item))
     .filter(Boolean);
-
-  const integrations = toTrimmedStringArray(requirement.integrations, 8);
 
   const businessRules = buildBusinessRules({
     requirement,
@@ -685,6 +690,9 @@ function normalizeRequirementLike(
 
   const signalCount =
     (objective ? 1 : 0) +
+    (context ? 1 : 0) +
+    (outOfScope.length > 0 ? 1 : 0) +
+    (integrations.length > 0 ? 1 : 0) +
     (functionalScope.length > 0 ? 1 : 0) +
     (businessRules.length > 0 ? 1 : 0) +
     (acceptanceCriteria.length > 0 ? 1 : 0) +
@@ -700,6 +708,10 @@ function normalizeRequirementLike(
 
   return {
     objective: normalizeSentence(objective).replace(/\.$/, ""),
+    context,
+    inScope,
+    outOfScope,
+    integrations,
     functionalScope,
     businessRules,
     acceptanceCriteria,
