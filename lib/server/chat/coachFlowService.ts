@@ -57,6 +57,10 @@ function normalizedRequirementToArtifactPatch(
 
   return {
     objective: requirement.objective,
+    ...(requirement.context ? { context: requirement.context } : {}),
+    inScope: requirement.inScope,
+    outOfScope: requirement.outOfScope,
+    integrations: requirement.integrations,
     functionalScope: requirement.functionalScope,
     businessRules: requirement.businessRules,
     acceptanceCriteria: requirement.acceptanceCriteria,
