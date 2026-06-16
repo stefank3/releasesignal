@@ -489,22 +489,65 @@ export async function runCoachFlow(args: {
     };
   }
 
-  if (!args.explicitRegenerationRequest) {
-    const normalizedRequirementPatch =
-      normalizedRequirementToArtifactPatch(normalizedRequirement);
+  const sourceHasTechnicalSignal = hasTechnicalSignal(args.message);
+  const shouldResetRequirementArtifact =
+    args.explicitRegenerationRequest && !sourceHasTechnicalSignal;
+  const requirementMergeBase = shouldResetRequirementArtifact
+    ? null
+    : sessionArtifact;
+  let requirementArtifactUpdated = false;
 
-    if (normalizedRequirementPatch) {
-      const mergedArtifact = mergeArtifact(
-        sessionArtifact,
-        normalizedRequirementPatch
-      );
+  const normalizedRequirementPatch =
+    normalizedRequirementToArtifactPatch(normalizedRequirement);
+
+  if (normalizedRequirementPatch) {
+    const mergedArtifact = mergeArtifact(
+      requirementMergeBase,
+      normalizedRequirementPatch
+    );
+
+    // M12.18:
+    // Merge updates the requirement artifact itself.
+    // This follow-up step enforces downstream integrity rules after the
+    // requirement version has been recalculated.
+    const nextArtifact = applyRequirementRefinementEffects({
+      previousArtifact: requirementMergeBase,
+      nextArtifact: mergedArtifact,
+    });
+
+    const saved = await saveSessionArtifact({
+      sessionId: args.sessionId,
+      artifact: nextArtifact,
+    });
+
+    sessionArtifact = saved.artifact;
+    artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
+    requirementArtifactUpdated = true;
+  } else if (coachParsed) {
+    const compatibilityPatch = legacyCoachToRequirementPatch({
+      coach: coachParsed,
+      sourceMessage: args.message,
+    });
+    const continuityPatch =
+      compatibilityPatch ??
+      (args.explicitRegenerationRequest
+        ? null
+        : buildCoachContinuityArtifactPatch({
+            existingArtifact: requirementMergeBase,
+            coach: coachParsed,
+            latestUserMessage: args.message,
+            guidedAnswer: args.guidedAnswer,
+            weakInput: args.weakInput,
+          }));
+
+    if (continuityPatch) {
+      const mergedArtifact = mergeArtifact(requirementMergeBase, continuityPatch);
 
       // M12.18:
-      // Merge updates the requirement artifact itself.
-      // This follow-up step enforces downstream integrity rules after the
-      // requirement version has been recalculated.
+      // Legacy continuity patches can still materially change the requirement.
+      // Apply the same downstream invalidation rules here.
       const nextArtifact = applyRequirementRefinementEffects({
-        previousArtifact: sessionArtifact,
+        previousArtifact: requirementMergeBase,
         nextArtifact: mergedArtifact,
       });
 
@@ -515,44 +558,14 @@ export async function runCoachFlow(args: {
 
       sessionArtifact = saved.artifact;
       artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
-    } else if (coachParsed) {
-      const continuityPatch =
-        legacyCoachToRequirementPatch({
-          coach: coachParsed,
-          sourceMessage: args.message,
-        }) ??
-        buildCoachContinuityArtifactPatch({
-          existingArtifact: sessionArtifact,
-          coach: coachParsed,
-          latestUserMessage: args.message,
-          guidedAnswer: args.guidedAnswer,
-          weakInput: args.weakInput,
-        });
-
-      if (continuityPatch) {
-        const mergedArtifact = mergeArtifact(sessionArtifact, continuityPatch);
-
-        // M12.18:
-        // Legacy continuity patches can still materially change the requirement.
-        // Apply the same downstream invalidation rules here.
-        const nextArtifact = applyRequirementRefinementEffects({
-          previousArtifact: sessionArtifact,
-          nextArtifact: mergedArtifact,
-        });
-
-        const saved = await saveSessionArtifact({
-          sessionId: args.sessionId,
-          artifact: nextArtifact,
-        });
-
-        sessionArtifact = saved.artifact;
-        artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
-      }
+      requirementArtifactUpdated = true;
     }
   }
 
   const effectiveArtifactForReply = args.explicitRegenerationRequest
-    ? null
+    ? requirementArtifactUpdated
+      ? sessionArtifact
+      : null
     : sessionArtifact;
 
   const shouldRenderRefinedRequirement = shouldReturnTechnicalRequirement({
