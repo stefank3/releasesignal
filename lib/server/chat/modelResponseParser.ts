@@ -253,6 +253,144 @@ function mergeUnique(values: Array<string[]>, max: number): string[] {
   return out;
 }
 
+function placementKey(value: string): string {
+  return normalizePhrase(value)
+    .toLowerCase()
+    .replace(/^(coverage for|risk coverage for|scope coverage for):\s*/i, "")
+    .replace(/^(test acceptance flow|prove acceptance criterion):\s*/i, "")
+    .replace(/^(validate business rule|validate in-scope behavior):\s*/i, "")
+    .replace(/^(cover edge case|cover negative path):\s*/i, "")
+    .replace(/\b(given|when|then|setup|action|expected observable outcome)\b/g, "")
+    .replace(/[^a-z0-9_{}./'-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function appendUniqueByPlacementKey(
+  target: string[],
+  value: string | null,
+  max: number
+): void {
+  if (!value || target.length >= max) return;
+
+  const cleaned = normalizeSentence(value);
+  if (!cleaned) return;
+
+  const key = placementKey(cleaned);
+  if (!key) return;
+
+  const seen = new Set(target.map(placementKey));
+  if (seen.has(key)) return;
+
+  target.push(cleaned);
+}
+
+const UNRESOLVED_PATTERN =
+  /\b(need(?:s|ed)? confirmation|needs to be confirmed|unclear|to be defined|tbd|pending confirmation|requires alignment|requires clarification|must be clarified|confirm whether|confirm if|which\s+\S.{0,40}\?|how\s+\S.{0,40}\?|what\s+\S.{0,40}\?)\b/i;
+
+const TEST_ACTIVITY_PATTERN =
+  /\b(tests|testing|perform e2e|e2e testing|qa should|tester should)\b/i;
+
+const GENERIC_BUSINESS_RULE_PATTERN =
+  /\b(system behavior must satisfy the stated objective|system should work as expected|implementation must meet requirements|must meet the requirements|works as expected)\b/i;
+
+const NEGATIVE_BEHAVIOR_PATTERN =
+  /\b(invalid|missing|malformed|duplicate|idempot|retry|transient|failure|failed|error|timeout|forbidden|unauth|unauthorized|boundary|unsupported|conflict|not found|bad request|internal server error|partial|race|concurrent|concurrency|rollback|lock|serialization)\b/i;
+
+const POSITIVE_CORE_PATTERN =
+  /\b(valid|successful|success|succeeds|200 ok|supported|happy path|correct conditional cleanup|accepted)\b/i;
+
+const REFERENCE_IMPLEMENTATION_PATTERN =
+  /\b(similar logic|reference implementation|existing implementation|ksa|as implemented in|based on another system)\b/i;
+
+function isUnresolvedText(value: string): boolean {
+  const text = normalizePhrase(value);
+  return UNRESOLVED_PATTERN.test(text) || /\?$/.test(text);
+}
+
+function isTestActivityText(value: string): boolean {
+  return TEST_ACTIVITY_PATTERN.test(normalizePhrase(value));
+}
+
+function isGenericBusinessRule(value: string): boolean {
+  return GENERIC_BUSINESS_RULE_PATTERN.test(normalizePhrase(value));
+}
+
+function isNegativeBehaviorText(value: string): boolean {
+  return NEGATIVE_BEHAVIOR_PATTERN.test(normalizePhrase(value));
+}
+
+function isPositiveCoreText(value: string): boolean {
+  return POSITIVE_CORE_PATTERN.test(normalizePhrase(value));
+}
+
+function isReferenceImplementationText(value: string): boolean {
+  return REFERENCE_IMPLEMENTATION_PATTERN.test(normalizePhrase(value));
+}
+
+function isExecutableReproText(value: string): boolean {
+  const text = normalizePhrase(value);
+  return (
+    /\bgiven\b.+\bwhen\b.+\bthen\b/i.test(text) ||
+    /\bsetup\b.+\baction\b.+\bexpected\b/i.test(text) ||
+    (/\bwhen\b.+\bthen\b/i.test(text) && isNegativeBehaviorText(text))
+  );
+}
+
+function unresolvedQuestionText(value: string): string {
+  const text = normalizePhrase(value);
+  if (!text) return "";
+  if (/\?$/.test(text)) return normalizeSentence(text);
+  return normalizeSentence(`Confirm unresolved behavior: ${text}`);
+}
+
+function executableScenarioFromNegativePath(value: string): string {
+  const text = normalizePhrase(value);
+  return [
+    `Given the condition is present: ${text}`,
+    "When the relevant workflow is exercised",
+    "Then observe the expected outcome or failure response",
+  ].join(" ");
+}
+
+function splitResolvedItems(args: {
+  values: string[];
+  openQuestions: string[];
+  maxOpenQuestions: number;
+}): string[] {
+  const resolved: string[] = [];
+
+  for (const value of args.values) {
+    if (isUnresolvedText(value) || isReferenceImplementationText(value)) {
+      appendUniqueByPlacementKey(
+        args.openQuestions,
+        isReferenceImplementationText(value)
+          ? normalizeSentence(
+              `Confirm whether this reference implementation is authoritative: ${normalizePhrase(value)}`
+            )
+          : unresolvedQuestionText(value),
+        args.maxOpenQuestions
+      );
+      continue;
+    }
+
+    resolved.push(value);
+  }
+
+  return resolved;
+}
+
+function removeItemsByPlacementKey(
+  values: string[],
+  blockedValues: string[]
+): string[] {
+  const blocked = new Set(blockedValues.map(placementKey).filter(Boolean));
+  return values.filter((value) => {
+    const key = placementKey(value);
+    return key && !blocked.has(key);
+  });
+}
+
 function toOptionalFiniteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -432,7 +570,7 @@ function buildBusinessRules(args: {
 }): string[] {
   const explicitRules = toTrimmedStringArray(args.requirement.businessRules, 12)
     .map((item) => normalizeSentence(item))
-    .filter(Boolean);
+    .filter((item) => item && !isGenericBusinessRule(item));
 
   if (explicitRules.length) {
     return Array.from(new Set(explicitRules.map((item) => item.trim()))).slice(0, 12);
@@ -447,14 +585,6 @@ function buildBusinessRules(args: {
     if (/must|only|shall|cannot|should not|do not|does not/i.test(text)) {
       appendUnique(out, text, 12);
     }
-  }
-
-  if (!out.length && args.objective) {
-    appendUnique(
-      out,
-      `System behavior must satisfy the stated objective: ${normalizePhrase(args.objective)}`,
-      12
-    );
   }
 
   return out.slice(0, 12);
@@ -476,13 +606,18 @@ function buildEdgeCasesNegativePaths(args: {
     .map((item) => normalizeSentence(item))
     .filter(Boolean);
 
-  if (explicit.length) return explicit;
+  if (explicit.length) {
+    return explicit.filter(
+      (item) => isNegativeBehaviorText(item) && !isPositiveCoreText(item)
+    );
+  }
 
   const out: string[] = [];
 
   for (const risk of args.riskAreas) {
     const text = normalizePhrase(risk);
     if (!text) continue;
+    if (!isNegativeBehaviorText(text) || isPositiveCoreText(text)) continue;
 
     appendUnique(out, text, 12);
   }
@@ -532,13 +667,6 @@ function buildCoverageTargets(args: {
 }): string[] {
   const out: string[] = [];
 
-  for (const criterion of args.acceptanceCriteria) {
-    const text = criterion.replace(/\.$/, "").trim();
-    if (!text) continue;
-
-    appendUniqueRaw(out, `Coverage for: ${text}`, 8);
-  }
-
   for (const risk of args.riskAreas) {
     appendUniqueRaw(out, `Risk coverage for: ${risk}`, 8);
   }
@@ -559,7 +687,7 @@ function buildMinimalReproScenarios(args: {
 }): string[] {
   const explicit = buildMinimalRepro(args.requirement)
     .map((item) => normalizeSentence(item))
-    .filter(Boolean);
+    .filter((item) => item && isExecutableReproText(item));
 
   if (explicit.length) return explicit;
 
@@ -568,8 +696,9 @@ function buildMinimalReproScenarios(args: {
   for (const item of args.edgeCasesNegativePaths) {
     const text = normalizePhrase(item);
     if (!text) continue;
+    if (!isNegativeBehaviorText(text) || isUnresolvedText(text)) continue;
 
-    appendUnique(out, text, 8);
+    appendUnique(out, executableScenarioFromNegativePath(text), 8);
   }
 
   return out.slice(0, 8);
@@ -601,11 +730,11 @@ function normalizeRequirementLike(
 ): NormalizedRefinedRequirement | null {
   const objective = toOptionalText(requirement.objective);
   const context = toOptionalText(requirement.context);
-  const inScope = toTrimmedStringArray(requirement.inScope, 12);
+  let inScope = toTrimmedStringArray(requirement.inScope, 12);
   const outOfScope = toTrimmedStringArray(requirement.outOfScope, 12);
   const integrations = toTrimmedStringArray(requirement.integrations, 8);
 
-  const functionalScope = mergeUnique(
+  let functionalScope = mergeUnique(
     [
       toTrimmedStringArray(requirement.functionalScope, 12),
       inScope,
@@ -613,7 +742,7 @@ function normalizeRequirementLike(
     12
   );
 
-  const acceptanceCriteria = toTrimmedStringArray(
+  let acceptanceCriteria = toTrimmedStringArray(
     requirement.acceptanceCriteria,
     12
   )
@@ -626,7 +755,7 @@ function normalizeRequirementLike(
       ? (requirement.testStrategyHooks as Record<string, unknown>)
       : null;
 
-  const riskAreas = mergeUnique(
+  let riskAreas = mergeUnique(
     [
       toTrimmedStringArray(rawHooks?.riskAreas, 8),
       toTrimmedStringArray(requirement.riskAreas, 8),
@@ -637,7 +766,7 @@ function normalizeRequirementLike(
     .map((item) => normalizePhrase(item))
     .filter(Boolean);
 
-  const businessRules = buildBusinessRules({
+  let businessRules = buildBusinessRules({
     requirement,
     objective,
     functionalScope,
@@ -645,7 +774,7 @@ function normalizeRequirementLike(
     riskAreas,
   });
 
-  const edgeCasesNegativePaths = buildEdgeCasesNegativePaths({
+  let edgeCasesNegativePaths = buildEdgeCasesNegativePaths({
     requirement,
     acceptanceCriteria,
     riskAreas,
@@ -659,10 +788,64 @@ function normalizeRequirementLike(
     context,
   });
 
-  const coverageTargets = mergeUnique(
+  let openQuestionsClarifications = buildOpenQuestionsClarifications({
+    requirement,
+    integrations,
+    riskAreas,
+    coverageTargets: [],
+  });
+
+  inScope = splitResolvedItems({
+    values: inScope,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
+  });
+  functionalScope = splitResolvedItems({
+    values: functionalScope,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
+  });
+  acceptanceCriteria = splitResolvedItems({
+    values: acceptanceCriteria,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
+  });
+  businessRules = splitResolvedItems({
+    values: businessRules,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
+  }).filter((item) => !isGenericBusinessRule(item) && !isTestActivityText(item));
+  edgeCasesNegativePaths = splitResolvedItems({
+    values: edgeCasesNegativePaths,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
+  }).filter((item) => isNegativeBehaviorText(item) && !isPositiveCoreText(item));
+  riskAreas = splitResolvedItems({
+    values: riskAreas,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
+  });
+
+  const functionalScopeTestActivities = functionalScope.filter(isTestActivityText);
+  functionalScope = functionalScope.filter((item) => !isTestActivityText(item));
+  inScope = inScope.filter((item) => !isTestActivityText(item));
+
+  edgeCasesNegativePaths = removeItemsByPlacementKey(
+    edgeCasesNegativePaths,
+    acceptanceCriteria
+  );
+  riskAreas = removeItemsByPlacementKey(riskAreas, [
+    ...acceptanceCriteria,
+    ...edgeCasesNegativePaths,
+  ]);
+
+  let coverageTargets = mergeUnique(
     [
       toTrimmedStringArray(rawHooks?.coverageTargets, 8),
       toTrimmedStringArray(requirement.coverageTargets, 8),
+      functionalScopeTestActivities.map((item) =>
+        `Test focus: ${normalizePhrase(item)}`
+      ),
       buildCoverageTargets({
         acceptanceCriteria,
         riskAreas,
@@ -675,18 +858,33 @@ function normalizeRequirementLike(
     .map((item) => normalizePhrase(item))
     .filter(Boolean);
 
-  const minimalReproScenarios = buildMinimalReproScenarios({
+  coverageTargets = splitResolvedItems({
+    values: coverageTargets,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
+  });
+  coverageTargets = removeItemsByPlacementKey(coverageTargets, [
+    ...acceptanceCriteria,
+    ...edgeCasesNegativePaths,
+    ...riskAreas,
+  ]);
+
+  let minimalReproScenarios = buildMinimalReproScenarios({
     requirement,
     edgeCasesNegativePaths,
     acceptanceCriteria,
   });
 
-  const openQuestionsClarifications = buildOpenQuestionsClarifications({
-    requirement,
-    integrations,
-    riskAreas,
-    coverageTargets,
+  minimalReproScenarios = splitResolvedItems({
+    values: minimalReproScenarios,
+    openQuestions: openQuestionsClarifications,
+    maxOpenQuestions: 8,
   });
+  minimalReproScenarios = removeItemsByPlacementKey(minimalReproScenarios, [
+    ...acceptanceCriteria,
+    ...edgeCasesNegativePaths,
+    ...riskAreas,
+  ]);
 
   const signalCount =
     (objective ? 1 : 0) +
