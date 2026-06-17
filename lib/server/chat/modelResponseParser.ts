@@ -286,10 +286,10 @@ function appendUniqueByPlacementKey(
 }
 
 const UNRESOLVED_PATTERN =
-  /\b(need(s|ed)? confirmation|needs to be confirmed|unclear|unknown|to be defined|tbd|pending confirmation|requires alignment|requires clarification|must be clarified|question|whether|which .+\?|how .+\?|what .+\?|confirm whether|confirm if)\b/i;
+  /\b(need(?:s|ed)? confirmation|needs to be confirmed|unclear|to be defined|tbd|pending confirmation|requires alignment|requires clarification|must be clarified|confirm whether|confirm if|which\s+\S.{0,40}\?|how\s+\S.{0,40}\?|what\s+\S.{0,40}\?)\b/i;
 
 const TEST_ACTIVITY_PATTERN =
-  /\b(test|tests|testing|verify|validate|validation|perform e2e|e2e testing|coverage|qa should|tester should)\b/i;
+  /\b(tests|testing|perform e2e|e2e testing|qa should|tester should)\b/i;
 
 const GENERIC_BUSINESS_RULE_PATTERN =
   /\b(system behavior must satisfy the stated objective|system should work as expected|implementation must meet requirements|must meet the requirements|works as expected)\b/i;
