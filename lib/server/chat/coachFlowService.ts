@@ -49,6 +49,7 @@ import {
   parseRefinedRequirementResponse,
 } from "@/lib/server/chat/modelResponseParser";
 import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
+import { normalizeRequirementPatchQuality } from "@/lib/server/chat/requirementQuality";
 
 const TECHNICAL_SIGNAL_PATTERN =
   /\b(GET|POST|PUT|PATCH|DELETE)\b\s+\/|\/[A-Za-z0-9_{}./-]+|\b\d{3}\b|\b[A-Za-z][A-Za-z0-9_]*(?:Id|ID)\b|\bmod_[a-z0-9_]+\b|\bactionResult\b|\bfailureReason\b|\bactionsPerformed\b|\bPHP\b|\bNetCracker\b|['"][^'"]+['"]|=\s*[\w'"]+|request body|path parameter|database|table|response contract/i;
@@ -84,6 +85,20 @@ const EXCLUDABLE_DOMAIN_TERMS = [
   "partial-failure",
   "external integration failure",
   "system logs",
+  "side effects",
+];
+
+const INVENTED_TECH_GUARD_TERMS = [
+  "transaction",
+  "transactions",
+  "rollback",
+  "locking",
+  "serialization",
+  "logging",
+  "monitoring",
+  "atomic",
+  "partial failure",
+  "partial-failure",
   "side effects",
 ];
 
@@ -164,14 +179,26 @@ function containsExcludedTerm(text: string, excludedTerms: string[]): boolean {
   return excludedTerms.some((term) => normalized.includes(term));
 }
 
+function containsUngroundedInventedTerm(text: string, source: string): boolean {
+  const normalizedText = text.toLowerCase();
+  const normalizedSource = source.toLowerCase();
+
+  return INVENTED_TECH_GUARD_TERMS.some(
+    (term) =>
+      normalizedText.includes(term) && !normalizedSource.includes(term)
+  );
+}
+
 function isGroundedLegacyItem(args: {
   text: string;
+  source: string;
   sourceTokenSet: Set<string>;
   excludedTerms: string[];
 }): boolean {
   const text = cleanLegacyRequirementText(args.text);
   if (!text) return false;
   if (containsExcludedTerm(text, args.excludedTerms)) return false;
+  if (containsUngroundedInventedTerm(text, args.source)) return false;
 
   const technical = hasTechnicalSignal(text);
   const overlap = sourceTokenOverlapCount(text, args.sourceTokenSet);
@@ -228,7 +255,7 @@ function legacyCoachToRequirementPatch(args: {
   const grounded = (values: string[], max: number) =>
     uniqueLegacyItems(
       values.filter((text) =>
-        isGroundedLegacyItem({ text, sourceTokenSet, excludedTerms })
+        isGroundedLegacyItem({ text, source, sourceTokenSet, excludedTerms })
       ),
       max
     );
@@ -244,16 +271,11 @@ function legacyCoachToRequirementPatch(args: {
     (args.coach.riskMatrix ?? []).map((risk) => risk.risk),
     8
   );
-  const mitigations = grounded(
-    (args.coach.riskMatrix ?? []).map((risk) => risk.mitigation),
-    8
-  );
   const clarifications = grounded(args.coach.optionalClarifications ?? [], 6);
 
   const functionalScope = uniqueLegacyItems([...goals, ...sourceLines], 12);
   const acceptanceCriteria = uniqueLegacyItems(
     [
-      ...testIdeas,
       ...sourceLines.filter((line) =>
         /acceptance|criteria|expected|response|200|400|404|500|success|bad request|not found|internal server error|actionResult|failureReason|actionsPerformed/i.test(
           line
@@ -268,14 +290,18 @@ function legacyCoachToRequirementPatch(args: {
     [
       ...minimalRepro,
       ...sourceLines.filter((line) =>
-        /delete|cleanup|deleted|retry|restart|success/i.test(line)
+        /delete|cleanup|deleted|retry|restart|success|400|404|500|not found|bad request|internal server error|failureReason|actionResult/i.test(
+          line
+        )
+      ).map(
+        (line) =>
+          `Given ${line} When the source request or workflow step is exercised Then verify the source-defined outcome.`
       ),
     ],
     8
   );
   const businessRules = uniqueLegacyItems(
     [
-      ...mitigations,
       ...sourceLines.filter((line) =>
         /mod_|delete|deleted|deleteNcTfcOrderData|exSystem|PHP|SUCCESS|database|table/i.test(
           line
@@ -290,7 +316,7 @@ function legacyCoachToRequirementPatch(args: {
     sourceLines.find((line) => /\b(GET|POST|PUT|PATCH|DELETE)\b/i.test(line)) ??
     null;
 
-  const patch: Partial<RefinedRequirement> = {
+  const patch: Partial<RefinedRequirement> = normalizeRequirementPatchQuality({
     ...(objective ? { objective } : {}),
     ...(assumptions.length ? { context: assumptions.join(" ") } : {}),
     functionalScope,
@@ -303,7 +329,7 @@ function legacyCoachToRequirementPatch(args: {
     minimalReproScenarios,
     openQuestions: clarifications,
     openQuestionsClarifications: clarifications,
-  };
+  });
 
   const hasSourceTechnicalSignal = hasTechnicalSignal(source);
   const hasMeaningfulLegacyContent =
