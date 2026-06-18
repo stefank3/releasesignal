@@ -19,11 +19,11 @@ const QUALITY_ONLY_PATTERN =
 const CORRECTION_PATTERN =
   /(^|\b)(correction:|actually|instead of|replace|should be\b.+\bnot\b|use\b.+\b(rather than|instead of)\b|change\b.+\bto\b|not\b.+\bbut\b)/i;
 const SCOPE_CHANGE_PATTERN =
-  /\b(out of scope|remove from scope|exclude|do not include|add to scope|include|no longer required|keep unchanged|must not|should remain unchanged)\b/i;
+  /\b(out of scope|remove from scope|add to scope|exclude|do not include|no longer required|keep unchanged|must not|should remain unchanged)\b|\bremove\s+\S(?:.{0,80})?\s+from scope\b|\badd\s+\S(?:.{0,80})?\s+to scope\b/i;
 const FACT_SIGNAL_PATTERN =
-  /\b(is|are|returns?|uses?|stores?|stored|persists?|persisted|succeeds?|fails?|deletes?|updates?|sets?|maps?|has|owns|requires?)\b/i;
+  /\b(is|are|includes?|returns?|uses?|stores?|stored|persists?|persisted|succeeds?|fails?|deletes?|updates?|sets?|maps?|has|owns|requires?)\b/i;
 const TECHNICAL_FACT_PATTERN =
-  /\b(GET|POST|PUT|PATCH|DELETE)\b\s+\/|\/[A-Za-z0-9_{}./-]+|\b\d{3}\b|\b[A-Za-z][A-Za-z0-9_]*(?:Id|ID)\b|\b[A-Z0-9_]{4,}\b|\bmod_[a-z0-9_]+\b|\bactionResult\b|\bfailureReason\b|\bactionsPerformed\b|\bTransaction Number\b|\bGUID\b|\bOrderID\b|\bPaymob\b|\bNetCracker\b|['"][^'"]+['"]|=\s*[\w'"]+/i;
+  /\b(GET|POST|PUT|PATCH|DELETE)\b\s+\/|\/[A-Za-z0-9_{}./-]+|\b\d{3}\b|\b[A-Za-z][A-Za-z0-9_]*(?:Id|ID)\b|\b[A-Z0-9_]{4,}\b|\bmod_[a-z0-9_]+\b|\bactionResult\b|\bfailureReason\b|\bactionsPerformed\b|\bTransaction Number\b|\bGUID\b|\bOrderID\b|\bPaymob\b|\bNetCracker\b|['"][^'"]+['"]|=\s*[\w'"]+/;
 
 const TOKEN_STOP_WORDS = new Set([
   "and",

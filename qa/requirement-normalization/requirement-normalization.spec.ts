@@ -388,6 +388,77 @@ test.describe("refinement intent control", () => {
     });
   });
 
+  test("ordinary repeated include prose is quality-only", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "Response fields include actionResult and failureReason.",
+      existingArtifact: {
+        refinedRequirement: {
+          ...existingManualQualityRequirement,
+          acceptanceCriteria: [
+            ...(existingManualQualityRequirement.acceptanceCriteria ?? []),
+            "Response fields include actionResult and failureReason.",
+          ],
+        },
+      },
+    });
+
+    expect(result.intent).toBe("quality_only");
+    expect(result.newFactDetected).toBe(false);
+    expect(result.scopeChangeDetected).toBe(false);
+  });
+
+  test("include with concrete technical facts is a clarification update", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "Include failureReason CLEANUP_FAILED in the 500 response.",
+      existingArtifact: { refinedRequirement: existingManualQualityRequirement },
+    });
+
+    expect(result.intent).toBe("clarification_update");
+    expect(result.newFactDetected).toBe(true);
+    expect(result.scopeChangeDetected).toBe(false);
+  });
+
+  test("vague include request remains quality-only", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "Include more detail.",
+      existingArtifact: { refinedRequirement: existingManualQualityRequirement },
+    });
+
+    expect(result.intent).toBe("quality_only");
+    expect(result.newFactDetected).toBe(false);
+    expect(result.scopeChangeDetected).toBe(false);
+  });
+
+  test("natural add and remove scope phrasing is scope-change intent", () => {
+    for (const message of [
+      "Remove concurrency handling from scope.",
+      "Add retry ownership to scope.",
+      "Concurrency control is out of scope.",
+      "Exclude logging from this ticket.",
+      "Do not include monitoring.",
+      "Exclude logging and monitoring from this ticket.",
+    ]) {
+      const result = detectRequirementRefinementIntent({
+        message,
+        existingArtifact: { refinedRequirement: existingNoBillRefinementRequirement },
+      });
+
+      expect(result.intent).toBe("scope_change");
+      expect(result.scopeChangeDetected).toBe(true);
+    }
+  });
+
+  test("new technical product fact using include is a clarification update", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "The success response fields include actionResult and actionsPerformed.",
+      existingArtifact: { refinedRequirement: existingNoBillRefinementRequirement },
+    });
+
+    expect(result.intent).toBe("clarification_update");
+    expect(result.newFactDetected).toBe(true);
+    expect(result.scopeChangeDetected).toBe(false);
+  });
+
   test("quality-only NoBill refinement does not add speculative scope", () => {
     const beforeCount = itemCount(existingNoBillRefinementRequirement);
     const requirement = mergedWithIntent({
