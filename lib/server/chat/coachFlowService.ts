@@ -48,7 +48,6 @@ import {
   parseCoachResponse,
   parseRefinedRequirementResponse,
 } from "@/lib/server/chat/modelResponseParser";
-import { saveSessionArtifact } from "@/lib/server/chat/artifactPersistence";
 import { normalizeRequirementPatchQuality } from "@/lib/server/chat/requirementQuality";
 
 const TECHNICAL_SIGNAL_PATTERN =
@@ -101,6 +100,16 @@ const INVENTED_TECH_GUARD_TERMS = [
   "partial-failure",
   "side effects",
 ];
+
+async function saveRequirementArtifact(args: {
+  sessionId: string;
+  artifact: SessionArtifact;
+}): Promise<{ artifact: SessionArtifact; artifactUpdatedAtIso: string }> {
+  const { saveSessionArtifact } = await import(
+    "@/lib/server/chat/artifactPersistence"
+  );
+  return saveSessionArtifact(args);
+}
 
 function cleanLegacyRequirementText(value: string | null | undefined): string {
   return String(value ?? "")
@@ -189,6 +198,16 @@ function containsUngroundedInventedTerm(text: string, source: string): boolean {
   );
 }
 
+function containsUngroundedDeterministicWinnerRule(
+  text: string,
+  source: string
+): boolean {
+  const winnerRule =
+    /only one .*transaction.*accepted.*rejected deterministically/i;
+
+  return winnerRule.test(text) && !winnerRule.test(source);
+}
+
 function isGroundedLegacyItem(args: {
   text: string;
   source: string;
@@ -199,6 +218,7 @@ function isGroundedLegacyItem(args: {
   if (!text) return false;
   if (containsExcludedTerm(text, args.excludedTerms)) return false;
   if (containsUngroundedInventedTerm(text, args.source)) return false;
+  if (containsUngroundedDeterministicWinnerRule(text, args.source)) return false;
 
   const technical = hasTechnicalSignal(text);
   const overlap = sourceTokenOverlapCount(text, args.sourceTokenSet);
@@ -226,6 +246,49 @@ function sourceRequirementLines(source: string): string[] {
   );
 }
 
+export type RequirementRefinementPath =
+  | "strict_requirement"
+  | "legacy_coach_compatibility"
+  | "continuity_fallback"
+  | "rejected";
+
+export type RequirementRefinementDiagnostics = {
+  requestId: string;
+  refinementPath: RequirementRefinementPath;
+  strictRequirementParsed: boolean;
+  legacyCoachParsed: boolean;
+  compatibilityAccepted: boolean;
+  compatibilitySignalCount: number;
+  qualitySectionCounts: {
+    functionalScope: number;
+    acceptanceCriteria: number;
+    edgeCases: number;
+    riskAreas: number;
+    coverageTargets: number;
+    minimalReproScenarios: number;
+    openQuestions: number;
+  };
+  existingArtifactPresent: boolean;
+  refinementMerged: boolean;
+  artifactSaved: boolean;
+  sanitizedFailureReason?: string;
+};
+
+function qualitySectionCounts(
+  patch: Partial<RefinedRequirement> | null | undefined
+): RequirementRefinementDiagnostics["qualitySectionCounts"] {
+  return {
+    functionalScope: patch?.functionalScope?.length ?? 0,
+    acceptanceCriteria: patch?.acceptanceCriteria?.length ?? 0,
+    edgeCases: (patch?.edgeCasesNegativePaths ?? patch?.edgeCases ?? []).length,
+    riskAreas: (patch?.riskAreas ?? patch?.riskFocus ?? []).length,
+    coverageTargets: patch?.coverageTargets?.length ?? 0,
+    minimalReproScenarios: patch?.minimalReproScenarios?.length ?? 0,
+    openQuestions:
+      (patch?.openQuestionsClarifications ?? patch?.openQuestions ?? []).length,
+  };
+}
+
 function compatibilitySignalCount(patch: Partial<RefinedRequirement>): number {
   return (
     (patch.objective ? 1 : 0) +
@@ -239,7 +302,7 @@ function compatibilitySignalCount(patch: Partial<RefinedRequirement>): number {
   );
 }
 
-function legacyCoachToRequirementPatch(args: {
+export function legacyCoachToRequirementPatchForRegression(args: {
   coach: CoachResult | null;
   sourceMessage: string;
 }): Partial<RefinedRequirement> | null {
@@ -379,6 +442,39 @@ function normalizedRequirementToArtifactPatch(
   };
 }
 
+export function buildRequirementRefinementDiagnostics(args: {
+  requestId: string;
+  refinementPath: RequirementRefinementPath;
+  strictRequirementParsed: boolean;
+  legacyCoachParsed: boolean;
+  compatibilityPatch?: Partial<RefinedRequirement> | null;
+  selectedPatch?: Partial<RefinedRequirement> | null;
+  existingArtifactPresent: boolean;
+  refinementMerged: boolean;
+  artifactSaved: boolean;
+  sanitizedFailureReason?: string;
+}): RequirementRefinementDiagnostics {
+  const compatibilityPatch = args.compatibilityPatch ?? null;
+
+  return {
+    requestId: args.requestId,
+    refinementPath: args.refinementPath,
+    strictRequirementParsed: args.strictRequirementParsed,
+    legacyCoachParsed: args.legacyCoachParsed,
+    compatibilityAccepted: Boolean(compatibilityPatch),
+    compatibilitySignalCount: compatibilityPatch
+      ? compatibilitySignalCount(compatibilityPatch)
+      : 0,
+    qualitySectionCounts: qualitySectionCounts(args.selectedPatch),
+    existingArtifactPresent: args.existingArtifactPresent,
+    refinementMerged: args.refinementMerged,
+    artifactSaved: args.artifactSaved,
+    ...(args.sanitizedFailureReason
+      ? { sanitizedFailureReason: args.sanitizedFailureReason }
+      : {}),
+  };
+}
+
 /**
  * M12.18:
  * Apply requirement-refinement side effects after mergeArtifact(...) has stamped
@@ -488,6 +584,7 @@ export async function runCoachFlow(args: {
   replyTextForUser: string;
   sessionArtifact: SessionArtifact | null;
   artifactUpdatedAtIso: string | null;
+  diagnostics: RequirementRefinementDiagnostics;
 }> {
   const [coachParsedRaw, normalizedRequirement] = await Promise.all([
     parseCoachResponse(args.rawReply),
@@ -504,6 +601,10 @@ export async function runCoachFlow(args: {
 
   let sessionArtifact = args.sessionArtifact;
   let artifactUpdatedAtIso = args.artifactUpdatedAtIso;
+  let refinementPath: RequirementRefinementPath = "rejected";
+  let selectedRequirementPatch: Partial<RefinedRequirement> | null = null;
+  let selectedCompatibilityPatch: Partial<RefinedRequirement> | null = null;
+  let sanitizedFailureReason: string | undefined;
 
   if (!coachParsed && !normalizedRequirement) {
     return {
@@ -512,6 +613,16 @@ export async function runCoachFlow(args: {
         "I couldn't format the coach output this time. Please retry.",
       sessionArtifact,
       artifactUpdatedAtIso,
+      diagnostics: buildRequirementRefinementDiagnostics({
+        requestId: args.sessionId,
+        refinementPath: "rejected",
+        strictRequirementParsed: false,
+        legacyCoachParsed: false,
+        existingArtifactPresent: Boolean(args.sessionArtifact?.refinedRequirement),
+        refinementMerged: false,
+        artifactSaved: false,
+        sanitizedFailureReason: "model_output_unparseable",
+      }),
     };
   }
 
@@ -527,6 +638,8 @@ export async function runCoachFlow(args: {
     normalizedRequirementToArtifactPatch(normalizedRequirement);
 
   if (normalizedRequirementPatch) {
+    refinementPath = "strict_requirement";
+    selectedRequirementPatch = normalizedRequirementPatch;
     const mergedArtifact = mergeArtifact(
       requirementMergeBase,
       normalizedRequirementPatch
@@ -541,7 +654,7 @@ export async function runCoachFlow(args: {
       nextArtifact: mergedArtifact,
     });
 
-    const saved = await saveSessionArtifact({
+    const saved = await saveRequirementArtifact({
       sessionId: args.sessionId,
       artifact: nextArtifact,
     });
@@ -550,10 +663,11 @@ export async function runCoachFlow(args: {
     artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
     requirementArtifactUpdated = true;
   } else if (coachParsed) {
-    const compatibilityPatch = legacyCoachToRequirementPatch({
+    const compatibilityPatch = legacyCoachToRequirementPatchForRegression({
       coach: coachParsed,
       sourceMessage: args.message,
     });
+    selectedCompatibilityPatch = compatibilityPatch;
     const continuityPatch =
       compatibilityPatch ??
       (args.explicitRegenerationRequest
@@ -567,6 +681,10 @@ export async function runCoachFlow(args: {
           }));
 
     if (continuityPatch) {
+      refinementPath = compatibilityPatch
+        ? "legacy_coach_compatibility"
+        : "continuity_fallback";
+      selectedRequirementPatch = continuityPatch;
       const mergedArtifact = mergeArtifact(requirementMergeBase, continuityPatch);
 
       // M12.18:
@@ -577,7 +695,7 @@ export async function runCoachFlow(args: {
         nextArtifact: mergedArtifact,
       });
 
-      const saved = await saveSessionArtifact({
+      const saved = await saveRequirementArtifact({
         sessionId: args.sessionId,
         artifact: nextArtifact,
       });
@@ -585,7 +703,11 @@ export async function runCoachFlow(args: {
       sessionArtifact = saved.artifact;
       artifactUpdatedAtIso = saved.artifactUpdatedAtIso;
       requirementArtifactUpdated = true;
+    } else {
+      sanitizedFailureReason = "no_requirement_patch_accepted";
     }
+  } else {
+    sanitizedFailureReason = "no_legacy_coach_fallback";
   }
 
   const effectiveArtifactForReply = args.explicitRegenerationRequest
@@ -607,5 +729,17 @@ export async function runCoachFlow(args: {
     replyTextForUser,
     sessionArtifact,
     artifactUpdatedAtIso,
+    diagnostics: buildRequirementRefinementDiagnostics({
+      requestId: args.sessionId,
+      refinementPath,
+      strictRequirementParsed: Boolean(normalizedRequirement),
+      legacyCoachParsed: Boolean(coachParsed),
+      compatibilityPatch: selectedCompatibilityPatch,
+      selectedPatch: selectedRequirementPatch,
+      existingArtifactPresent: Boolean(args.sessionArtifact?.refinedRequirement),
+      refinementMerged: Boolean(selectedRequirementPatch),
+      artifactSaved: requirementArtifactUpdated,
+      sanitizedFailureReason,
+    }),
   };
 }

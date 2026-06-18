@@ -67,7 +67,7 @@ function appendUniqueByPlacementKey(
 }
 
 const UNRESOLVED_PATTERN =
-  /\b(need(?:s|ed)? confirmation|needs to be confirmed|unclear|to be defined|tbd|pending confirmation|requires alignment|requires clarification|must be clarified|confirm whether|confirm if|which\s+\S.{0,40}\?|how\s+\S.{0,40}\?|what\s+\S.{0,40}\?)\b/i;
+  /\b(need(?:s|ed)? confirmation|needs to be confirmed|unclear|to be defined|tbd|pending confirmation|requires alignment|requires clarification|must be clarified|confirm whether|confirm if|confirm which|confirm what|confirm how|which\s+\S.{0,40}\?|how\s+\S.{0,40}\?|what\s+\S.{0,40}\?)\b/i;
 const TEST_ACTIVITY_PATTERN =
   /\b(tests|testing|perform e2e|e2e testing|qa should|tester should)\b/i;
 const GENERIC_BUSINESS_RULE_PATTERN =
@@ -231,6 +231,11 @@ export function normalizeRequirementQuality(
     openQuestions: openQuestionsClarifications,
     maxOpenQuestions: 8,
   }).filter((item) => !isGenericBusinessRule(item) && !isTestActivityText(item));
+
+  functionalScope = removeItemsByPlacementKey(functionalScope, businessRules);
+  inScope = removeItemsByPlacementKey(inScope, businessRules);
+  functionalScope = removeItemsByPlacementKey(functionalScope, acceptanceCriteria);
+  inScope = removeItemsByPlacementKey(inScope, acceptanceCriteria);
   let edgeCasesNegativePaths = splitResolvedItems({
     values: unique(sections.edgeCasesNegativePaths.map(normalizeQualitySentence), 12),
     openQuestions: openQuestionsClarifications,
