@@ -1535,6 +1535,109 @@ export function getArtifactConsistencyState(
   };
 }
 
+const HTTP_METHOD_PATTERN = /\b(GET|POST|PUT|PATCH|DELETE)\b\s+(\/[A-Za-z0-9_{}./-]+)/i;
+const CONCURRENCY_SCOPE_PATTERN =
+  /\b(concurrency|concurrent|simultaneous|parallel|duplicate transaction|duplicate request|same orderid|only one transaction)\b/i;
+
+function textKey(value: string): string {
+  return normalizeWhitespace(value).toLowerCase();
+}
+
+function endpointSignature(value: string): { method: string; path: string } | null {
+  const match = value.match(HTTP_METHOD_PATTERN);
+  if (!match) return null;
+  return { method: match[1].toUpperCase(), path: match[2].toLowerCase() };
+}
+
+function hasCorrectionSignal(patch: Partial<RefinedRequirement>): boolean {
+  const values = [
+    patch.objective,
+    ...(patch.functionalScope ?? []),
+    ...(patch.acceptanceCriteria ?? []),
+    ...(patch.businessRules ?? []),
+  ];
+
+  return values.some((value) => /\b(correction|corrected|replace|instead)\b/i.test(value ?? ""));
+}
+
+function removeContradictedEndpointItems(args: {
+  existingValues: string[];
+  patchValues: string[];
+  correction: boolean;
+}): string[] {
+  if (!args.correction) return args.existingValues;
+
+  const replacementEndpoints = args.patchValues
+    .map(endpointSignature)
+    .filter((item): item is { method: string; path: string } => item !== null);
+
+  if (!replacementEndpoints.length) return args.existingValues;
+
+  return args.existingValues.filter((existing) => {
+    const current = endpointSignature(existing);
+    if (!current) return true;
+
+    return !replacementEndpoints.some(
+      (replacement) =>
+        replacement.path === current.path && replacement.method !== current.method
+    );
+  });
+}
+
+function tokenSet(value: string): Set<string> {
+  return new Set(
+    textKey(value)
+      .match(/[a-z0-9_{}./-]{4,}/g)
+      ?.filter((token) => !["confirm", "whether", "behavior", "resolved"].includes(token)) ??
+      []
+  );
+}
+
+function overlapCount(a: string, b: string): number {
+  const aTokens = tokenSet(a);
+  const bTokens = tokenSet(b);
+  let count = 0;
+
+  for (const token of aTokens) {
+    if (bTokens.has(token)) count += 1;
+  }
+
+  return count;
+}
+
+function removeResolvedOpenQuestions(args: {
+  existingQuestions: string[];
+  patch: Partial<RefinedRequirement>;
+}): string[] {
+  const confirmedValues = [
+    ...(args.patch.businessRules ?? []),
+    ...(args.patch.acceptanceCriteria ?? []),
+    ...(args.patch.functionalScope ?? []),
+  ];
+
+  if (!confirmedValues.length) return args.existingQuestions;
+
+  return args.existingQuestions.filter((question) => {
+    if (!/[?]|confirm|unclear|tbd|pending|requires clarification/i.test(question)) {
+      return true;
+    }
+
+    return !confirmedValues.some((value) => overlapCount(question, value) >= 2);
+  });
+}
+
+function removesConcurrencyScope(patch: Partial<RefinedRequirement>): boolean {
+  const outOfScopeText = [...(patch.outOfScope ?? []), ...(patch.openQuestions ?? [])].join(" ");
+  return (
+    CONCURRENCY_SCOPE_PATTERN.test(outOfScopeText) &&
+    /\b(out of scope|not in scope|remove|excluded)\b/i.test(outOfScopeText)
+  );
+}
+
+function removeInferredConcurrency(values: string[]): string[] {
+  return values.filter((value) => !CONCURRENCY_SCOPE_PATTERN.test(value));
+}
+
 export function mergeArtifact(
   existing: SessionArtifact | null,
   patch: Partial<RefinedRequirement>
@@ -1575,6 +1678,52 @@ export function mergeArtifact(
     ...(patch.testStrategyHooks ?? []),
   ]);
 
+  const correction = hasCorrectionSignal(patch);
+  const patchEndpointValues = [
+    patch.objective,
+    ...(patch.functionalScope ?? []),
+    ...(patch.acceptanceCriteria ?? []),
+    ...(patch.businessRules ?? []),
+  ].filter((value): value is string => Boolean(value));
+  const concurrencyOutOfScope = removesConcurrencyScope(patch);
+
+  const previousFunctionalScope = concurrencyOutOfScope
+    ? removeInferredConcurrency(prevRR.functionalScope ?? [])
+    : removeContradictedEndpointItems({
+        existingValues: prevRR.functionalScope ?? [],
+        patchValues: patchEndpointValues,
+        correction,
+      });
+  const previousAcceptanceCriteria = concurrencyOutOfScope
+    ? removeInferredConcurrency(prevRR.acceptanceCriteria ?? [])
+    : removeContradictedEndpointItems({
+        existingValues: prevRR.acceptanceCriteria ?? [],
+        patchValues: patchEndpointValues,
+        correction,
+      });
+  const previousBusinessRules = concurrencyOutOfScope
+    ? removeInferredConcurrency(prevRR.businessRules ?? [])
+    : removeContradictedEndpointItems({
+        existingValues: prevRR.businessRules ?? [],
+        patchValues: patchEndpointValues,
+        correction,
+      });
+  const previousRiskAreas = concurrencyOutOfScope
+    ? removeInferredConcurrency(prevRR.riskAreas ?? [])
+    : prevRR.riskAreas ?? [];
+  const previousOpenQuestions = removeResolvedOpenQuestions({
+    existingQuestions: concurrencyOutOfScope
+      ? removeInferredConcurrency(prevRR.openQuestions ?? [])
+      : prevRR.openQuestions ?? [],
+    patch,
+  });
+  const previousOpenQuestionsClarifications = removeResolvedOpenQuestions({
+    existingQuestions: concurrencyOutOfScope
+      ? removeInferredConcurrency(prevRR.openQuestionsClarifications ?? [])
+      : prevRR.openQuestionsClarifications ?? [],
+    patch,
+  });
+
   const candidateRR: RefinedRequirement = {
     ...prevRR,
     ...(patch.objective ? { objective: patch.objective } : {}),
@@ -1600,27 +1749,30 @@ export function mergeArtifact(
       : {}),
 
     // Locked unified fields used by deterministic review and artifact context.
-    ...(normalizedFunctionalScope.length
+    ...(normalizedFunctionalScope.length ||
+    previousFunctionalScope.length !== (prevRR.functionalScope ?? []).length
       ? {
           functionalScope: dedupeStrings([
-            ...(prevRR.functionalScope ?? []),
+            ...previousFunctionalScope,
             ...normalizedFunctionalScope,
           ]),
         }
       : {}),
-    ...(patch.businessRules?.length
+    ...(patch.businessRules?.length ||
+    previousBusinessRules.length !== (prevRR.businessRules ?? []).length
       ? {
           businessRules: dedupeStrings([
-            ...(prevRR.businessRules ?? []),
-            ...patch.businessRules,
+            ...previousBusinessRules,
+            ...(patch.businessRules ?? []),
           ]),
         }
       : {}),
-    ...(patch.acceptanceCriteria?.length
+    ...(patch.acceptanceCriteria?.length ||
+    previousAcceptanceCriteria.length !== (prevRR.acceptanceCriteria ?? []).length
       ? {
           acceptanceCriteria: dedupeStrings([
-            ...(prevRR.acceptanceCriteria ?? []),
-            ...patch.acceptanceCriteria,
+            ...previousAcceptanceCriteria,
+            ...(patch.acceptanceCriteria ?? []),
           ]),
         }
       : {}),
@@ -1652,9 +1804,10 @@ export function mergeArtifact(
           ]),
         }
       : {}),
-    ...(normalizedRiskAreas.length
+    ...(normalizedRiskAreas.length ||
+    previousRiskAreas.length !== (prevRR.riskAreas ?? []).length
       ? {
-          riskAreas: dedupeStrings([...(prevRR.riskAreas ?? []), ...normalizedRiskAreas]),
+          riskAreas: dedupeStrings([...previousRiskAreas, ...normalizedRiskAreas]),
         }
       : {}),
     ...(patch.coverageTargets?.length
@@ -1676,14 +1829,25 @@ export function mergeArtifact(
     ...(normalizedOpenQuestionsClarifications.length
       ? {
           openQuestions: dedupeStrings([
-            ...(prevRR.openQuestions ?? []),
+            ...previousOpenQuestions,
             ...normalizedOpenQuestionsClarifications,
           ]),
           openQuestionsClarifications: dedupeStrings([
-            ...(prevRR.openQuestionsClarifications ?? []),
+            ...previousOpenQuestionsClarifications,
             ...normalizedOpenQuestionsClarifications,
           ]),
         }
+      : previousOpenQuestions.length !== (prevRR.openQuestions ?? []).length ||
+          previousOpenQuestionsClarifications.length !==
+            (prevRR.openQuestionsClarifications ?? []).length ||
+          previousOpenQuestions.length ||
+          previousOpenQuestionsClarifications.length
+        ? {
+            openQuestions: dedupeStrings(previousOpenQuestions),
+            openQuestionsClarifications: dedupeStrings(
+              previousOpenQuestionsClarifications
+            ),
+          }
       : {}),
   };
 

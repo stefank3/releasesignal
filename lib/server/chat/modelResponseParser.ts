@@ -44,7 +44,6 @@
 // - do not infer classifications here; parser only extracts and normalizes
 
 import { extractJsonObject } from "@/lib/chat/json";
-import { repairJsonOnce } from "@/lib/chat/repair";
 import {
   normalizeExecutionCaseResult,
   normalizeExecutionCaseStatus,
@@ -162,6 +161,14 @@ type ExecutionPayloadLike = {
   caseResults?: unknown;
   results?: unknown;
 };
+
+async function repairJson(args: {
+  mode: "coach" | "review";
+  raw: string;
+}): Promise<string> {
+  const { repairJsonOnce } = await import("@/lib/chat/repair");
+  return repairJsonOnce(args);
+}
 
 function toTrimmedStringArray(value: unknown, max = 12): string[] {
   if (!Array.isArray(value)) return [];
@@ -577,7 +584,7 @@ function buildOpenQuestionsClarifications(args: {
   return [];
 }
 
-function normalizeRequirementLike(
+export function normalizeRequirementLikeForRegression(
   requirement: RequirementLike
 ): NormalizedRefinedRequirement | null {
   const objective = toOptionalText(requirement.objective);
@@ -755,7 +762,7 @@ function parseRefinedRequirementPayload(
   try {
     const parsed = JSON.parse(extractJsonObject(txt)) as unknown;
     if (!isRequirementLike(parsed)) return null;
-    return normalizeRequirementLike(parsed);
+    return normalizeRequirementLikeForRegression(parsed);
   } catch {
     return null;
   }
@@ -947,7 +954,7 @@ export async function parseReviewResponse(rawReply: string): Promise<{
   let repaired = false;
 
   if (!reviewObj) {
-    const repairedRaw = await repairJsonOnce({ mode: "review", raw: rawReply });
+    const repairedRaw = await repairJson({ mode: "review", raw: rawReply });
     reviewObj = tryParse(repairedRaw);
     repaired = !!reviewObj;
   }
@@ -965,7 +972,7 @@ export async function parseCoachResponse(
   let coachObj = parseCoachPayload(rawReply);
   if (coachObj) return coachObj;
 
-  const repairedRaw = await repairJsonOnce({ mode: "coach", raw: rawReply });
+  const repairedRaw = await repairJson({ mode: "coach", raw: rawReply });
   coachObj = parseCoachPayload(repairedRaw);
 
   return coachObj;
@@ -977,7 +984,7 @@ export async function parseRefinedRequirementResponse(
   let requirementObj = parseRefinedRequirementPayload(rawReply);
   if (requirementObj) return requirementObj;
 
-  const repairedRaw = await repairJsonOnce({ mode: "coach", raw: rawReply });
+  const repairedRaw = await repairJson({ mode: "coach", raw: rawReply });
   requirementObj = parseRefinedRequirementPayload(repairedRaw);
 
   return requirementObj;
@@ -992,7 +999,7 @@ export async function parseExecutionResponse(rawReply: string): Promise<{
   let repaired = false;
 
   if (!executionObj) {
-    const repairedRaw = await repairJsonOnce({ mode: "coach", raw: rawReply });
+    const repairedRaw = await repairJson({ mode: "coach", raw: rawReply });
     executionObj = parseExecutionPayload(repairedRaw);
     repaired = !!executionObj;
   }
