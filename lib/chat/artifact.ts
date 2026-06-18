@@ -1605,13 +1605,6 @@ function overlapCount(a: string, b: string): number {
   return count;
 }
 
-function resolvesOptionalCleanupQuestion(question: string, value: string): boolean {
-  return (
-    /optional cleanup|deletenctfcorderdata=false/i.test(question) &&
-    /deletenctfcorderdata=false|remain unchanged|only mod_process_flow/i.test(value)
-  );
-}
-
 function removeResolvedOpenQuestions(args: {
   existingQuestions: string[];
   patch: Partial<RefinedRequirement>;
@@ -1629,11 +1622,7 @@ function removeResolvedOpenQuestions(args: {
       return true;
     }
 
-    return !confirmedValues.some(
-      (value) =>
-        overlapCount(question, value) >= 2 ||
-        resolvesOptionalCleanupQuestion(question, value)
-    );
+    return !confirmedValues.some((value) => overlapCount(question, value) >= 2);
   });
 }
 
