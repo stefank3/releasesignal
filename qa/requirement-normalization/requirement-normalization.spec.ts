@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import {
   mergeArtifact,
+  getRefinedRequirementVersion,
   type RefinedRequirement,
 } from "../../lib/chat/artifact";
 import {
@@ -12,9 +13,15 @@ import {
   type NormalizedRefinedRequirement,
 } from "../../lib/server/chat/modelResponseParser";
 import {
+  constrainRequirementPatchForIntent,
+  detectRequirementRefinementIntent,
+} from "../../lib/server/chat/requirementRefinementIntent";
+import {
   casualInputs,
   existingManualRequirement,
+  existingManualQualityRequirement,
   existingNoBillRequirement,
+  existingNoBillRefinementRequirement,
   manualWorkflowLegacy,
   manualWorkflowSource,
   manualWorkflowStrict,
@@ -22,6 +29,9 @@ import {
   noBillLegacy,
   noBillSource,
   noBillStrict,
+  sameNoBillSource,
+  speculativeManualPatch,
+  speculativeNoBillPatch,
   weakStory,
 } from "./fixtures";
 import {
@@ -120,6 +130,37 @@ function expectNoBillQuality(requirement: RefinedRequirement): void {
   expectUnresolvedOnlyInOpenQuestions(requirement);
   expectTestActivityOnlyInCoverage(requirement);
   expectNoGenericMinimalRepro(requirement);
+}
+
+function mergedWithIntent(args: {
+  existing: RefinedRequirement;
+  message: string;
+  modelPatch: Partial<RefinedRequirement>;
+}): RefinedRequirement {
+  const intent = detectRequirementRefinementIntent({
+    message: args.message,
+    existingArtifact: { refinedRequirement: args.existing },
+  });
+  const patch = constrainRequirementPatchForIntent({
+    patch: args.modelPatch,
+    existingArtifact: { refinedRequirement: args.existing },
+    intent: intent.intent,
+  });
+
+  const artifact = mergeArtifact({ refinedRequirement: args.existing }, patch ?? {});
+  return artifact.refinedRequirement!;
+}
+
+function itemCount(requirement: RefinedRequirement): number {
+  return [
+    ...(requirement.functionalScope ?? []),
+    ...(requirement.businessRules ?? []),
+    ...(requirement.acceptanceCriteria ?? []),
+    ...(requirement.edgeCasesNegativePaths ?? []),
+    ...(requirement.riskAreas ?? []),
+    ...(requirement.coverageTargets ?? []),
+    ...(requirement.openQuestionsClarifications ?? []),
+  ].length;
 }
 
 test.describe("requirement normalization regression fixtures", () => {
@@ -332,6 +373,215 @@ test.describe("iterative requirement refinement", () => {
   });
 });
 
+test.describe("refinement intent control", () => {
+  test("detects quality-only generic refinement with no new facts", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "Refine and improve this technical requirement.",
+      existingArtifact: { refinedRequirement: existingNoBillRefinementRequirement },
+    });
+
+    expect(result).toEqual({
+      intent: "quality_only",
+      newFactDetected: false,
+      correctionDetected: false,
+      scopeChangeDetected: false,
+    });
+  });
+
+  test("quality-only NoBill refinement does not add speculative scope", () => {
+    const beforeCount = itemCount(existingNoBillRefinementRequirement);
+    const requirement = mergedWithIntent({
+      existing: existingNoBillRefinementRequirement,
+      message: "Refine and improve this technical requirement.",
+      modelPatch: speculativeNoBillPatch,
+    });
+
+    expectDistinctIdentifiers(requirement);
+    expectSectionContains(
+      requirement,
+      "openQuestionsClarifications",
+      "same OrderID"
+    );
+    expectSectionContains(requirement, "openQuestionsClarifications", "KSA");
+    expectSectionContains(
+      requirement,
+      "openQuestionsClarifications",
+      "OrderID maps to Transaction Number"
+    );
+    expectNotContains(requirement, "Only one transaction is accepted");
+    expectNotContains(requirement, "atomic transaction locking");
+    expectNotContains(requirement, "OrderID is the Transaction Number");
+    expectNotContains(requirement, "409 DUPLICATE_TRANSACTION");
+    expectNotContains(requirement, "monitoring");
+    expectNotContains(requirement, "rollback");
+    expect(itemCount(requirement)).toBeLessThanOrEqual(beforeCount + 2);
+    expect(getRefinedRequirementVersion(requirement)).toBeGreaterThanOrEqual(1);
+  });
+
+  test("repeated same NoBill source is quality-only and does not grow duplicates", () => {
+    const result = detectRequirementRefinementIntent({
+      message: sameNoBillSource,
+      existingArtifact: { refinedRequirement: existingNoBillRefinementRequirement },
+    });
+    const beforeCount = itemCount(existingNoBillRefinementRequirement);
+    const requirement = mergedWithIntent({
+      existing: existingNoBillRefinementRequirement,
+      message: sameNoBillSource,
+      modelPatch: {
+        ...noBillStrict,
+        businessRules: [
+          ...(noBillStrict.businessRules ?? []),
+          "Only one transaction is accepted and all others are rejected deterministically.",
+        ],
+      },
+    });
+
+    expect(result.intent).toBe("quality_only");
+    expectNoDuplicatePlacement(requirement);
+    expectNotContains(requirement, "Only one transaction is accepted");
+    expectSectionContains(
+      requirement,
+      "openQuestionsClarifications",
+      "same OrderID"
+    );
+    expect(itemCount(requirement)).toBeLessThanOrEqual(beforeCount + 2);
+  });
+
+  test("clarification update adds confirmed identifier mapping only", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "OrderID is persisted directly as Transaction Number.",
+      existingArtifact: { refinedRequirement: existingNoBillRefinementRequirement },
+    });
+    const requirement = mergedWithIntent({
+      existing: existingNoBillRefinementRequirement,
+      message: "OrderID is persisted directly as Transaction Number.",
+      modelPatch: {
+        businessRules: ["OrderID is persisted directly as Transaction Number."],
+        acceptanceCriteria: [
+          "The persisted Transaction Number equals the submitted OrderID.",
+        ],
+      },
+    });
+
+    expect(result.intent).toBe("clarification_update");
+    expectContains(requirement, "OrderID is persisted directly as Transaction Number");
+    expectSectionNotContains(
+      requirement,
+      "openQuestionsClarifications",
+      "OrderID maps to Transaction Number"
+    );
+    expectSectionContains(
+      requirement,
+      "openQuestionsClarifications",
+      "same OrderID"
+    );
+    expectNotContains(requirement, "locking");
+    expectNotContains(requirement, "rollback");
+  });
+
+  test("concurrency clarification resolves only matching Open Question", () => {
+    const result = detectRequirementRefinementIntent({
+      message:
+        "First committed request succeeds; later requests with the same OrderID return 409 DUPLICATE_TRANSACTION.",
+      existingArtifact: { refinedRequirement: existingNoBillRefinementRequirement },
+    });
+    const requirement = mergedWithIntent({
+      existing: existingNoBillRefinementRequirement,
+      message:
+        "First committed request succeeds; later requests with the same OrderID return 409 DUPLICATE_TRANSACTION.",
+      modelPatch: {
+        businessRules: [
+          "First committed request succeeds; later requests with the same OrderID return 409 DUPLICATE_TRANSACTION.",
+        ],
+        acceptanceCriteria: [
+          "Later requests with the same OrderID return 409 DUPLICATE_TRANSACTION.",
+        ],
+      },
+    });
+
+    expect(result.intent).toBe("clarification_update");
+    expectContains(requirement, "409 DUPLICATE_TRANSACTION");
+    expectSectionNotContains(
+      requirement,
+      "openQuestionsClarifications",
+      "which transaction is accepted"
+    );
+    expectSectionContains(requirement, "openQuestionsClarifications", "KSA");
+    expectNotContains(requirement, "all others rejected deterministically");
+  });
+
+  test("correction intent replaces old endpoint fact", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "Correction: endpoint is PATCH, not POST.",
+      existingArtifact: { refinedRequirement: existingManualRequirement },
+    });
+    const requirement = mergedWithIntent({
+      existing: existingManualRequirement,
+      message: "Correction: endpoint is PATCH, not POST.",
+      modelPatch: {
+        functionalScope: [
+          "Correction: the endpoint is PATCH /manual-workflow-restart/{orderLineId}.",
+        ],
+      },
+    });
+
+    expect(result.intent).toBe("correction");
+    expectContains(requirement, "PATCH /manual-workflow-restart/{orderLineId}");
+    expectNotContains(requirement, "POST /manual-workflow-restart/{orderLineId}");
+    expectContains(requirement, "mod_process_flow");
+  });
+
+  test("scope-change intent removes inferred concurrency scope", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "Concurrency control is out of scope.",
+      existingArtifact: { refinedRequirement: existingNoBillRefinementRequirement },
+    });
+    const requirement = mergedWithIntent({
+      existing: {
+        ...existingNoBillRefinementRequirement,
+        functionalScope: [
+          ...(existingNoBillRefinementRequirement.functionalScope ?? []),
+          "Concurrent duplicate requests are handled by this ticket.",
+        ],
+        acceptanceCriteria: [
+          ...(existingNoBillRefinementRequirement.acceptanceCriteria ?? []),
+          "Only one transaction is accepted and all others are rejected deterministically.",
+        ],
+      },
+      message: "Concurrency control is out of scope.",
+      modelPatch: {
+        outOfScope: ["Concurrency control is out of scope."],
+      },
+    });
+
+    expect(result.intent).toBe("scope_change");
+    expectSectionContains(requirement, "outOfScope", "Concurrency control");
+    expectSectionNotContains(requirement, "functionalScope", "Concurrent duplicate");
+    expectSectionNotContains(requirement, "acceptanceCriteria", "Only one transaction");
+    expectContains(requirement, "Transaction Number");
+  });
+
+  test("quality-only MANUAL_WORKFLOW_RESTART does not broaden cleanup behavior", () => {
+    const result = detectRequirementRefinementIntent({
+      message: "Improve and broaden this requirement.",
+      existingArtifact: { refinedRequirement: existingManualQualityRequirement },
+    });
+    const requirement = mergedWithIntent({
+      existing: existingManualQualityRequirement,
+      message: "Improve and broaden this requirement.",
+      modelPatch: speculativeManualPatch,
+    });
+
+    expect(result.intent).toBe("quality_only");
+    expectManualWorkflowQuality(requirement);
+    expectNotContains(requirement, "atomic");
+    expectNotContains(requirement, "rollback");
+    expectNotContains(requirement, "serialized");
+    expectNotContains(requirement, "soft-delete");
+    expectNoDuplicatePlacement(requirement);
+  });
+});
+
 test("sanitized diagnostics expose the path without content", () => {
   const compatibilityPatch = legacyCoachToRequirementPatchForRegression({
     coach: manualWorkflowLegacy,
@@ -340,6 +590,7 @@ test("sanitized diagnostics expose the path without content", () => {
   const diagnostics = buildRequirementRefinementDiagnostics({
     requestId: "req-test",
     refinementPath: "legacy_coach_compatibility",
+    refinementIntent: "clarification_update",
     strictRequirementParsed: false,
     legacyCoachParsed: true,
     compatibilityPatch,
@@ -347,11 +598,15 @@ test("sanitized diagnostics expose the path without content", () => {
     existingArtifactPresent: true,
     refinementMerged: true,
     artifactSaved: true,
+    newFactDetected: true,
+    correctionDetected: false,
+    scopeChangeDetected: false,
   });
 
   expect(diagnostics).toEqual({
     requestId: "req-test",
     refinementPath: "legacy_coach_compatibility",
+    refinementIntent: "clarification_update",
     strictRequirementParsed: false,
     legacyCoachParsed: true,
     compatibilityAccepted: true,
@@ -368,6 +623,9 @@ test("sanitized diagnostics expose the path without content", () => {
     existingArtifactPresent: true,
     refinementMerged: true,
     artifactSaved: true,
+    newFactDetected: true,
+    correctionDetected: false,
+    scopeChangeDetected: false,
   });
   expect(JSON.stringify(diagnostics)).not.toContain("manual-workflow-restart");
   expect(JSON.stringify(diagnostics)).not.toContain("NetCracker");
