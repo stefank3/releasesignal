@@ -353,3 +353,86 @@ export const existingManualRequirement: RefinedRequirement = {
   version: 1,
   lastUpdatedAt: "2026-06-17T00:00:00.000Z",
 };
+
+export const noBillDeterministicConcurrencyRequirement: RefinedRequirement = {
+  objective: "Define NoBill Proxy retry and deduplication.",
+  context: "SC Backend owns NoBill retry handling; KSA is reference-only context.",
+  functionalScope: [
+    "NoBill Proxy persists Transaction Number in DB.",
+    "Retry handling remains owned by NoBill Proxy.",
+  ],
+  businessRules: [
+    "When multiple requests with the same OrderID arrive concurrently, only one transaction is accepted and others are rejected deterministically.",
+    "GUID, OrderID, and Transaction Number remain distinct identifiers.",
+  ],
+  acceptanceCriteria: [
+    "For simultaneous requests sharing one OrderID, only one transaction succeeds and all others are rejected deterministically.",
+    "NoBill Proxy retries a failed post-recharge confirmation.",
+  ],
+  edgeCasesNegativePaths: [
+    "Concurrent requests with the same OrderID reject every request after the first accepted transaction.",
+  ],
+  coverageTargets: [
+    "Verify only one concurrent request succeeds and all others are rejected.",
+    "Cover GUID, OrderID, and Transaction Number distinction.",
+  ],
+  openQuestionsClarifications: [
+    "Confirm whether KSA behavior is authoritative or reference-only.",
+    "Confirm whether OrderID maps to Transaction Number.",
+  ],
+  version: 1,
+  lastUpdatedAt: "2026-06-17T00:00:00.000Z",
+};
+
+export const noBillConcurrencyUnresolvedPatch: Partial<RefinedRequirement> = {
+  outOfScope: [
+    "Deterministic acceptance/rejection behavior under concurrency must not be assumed.",
+  ],
+  openQuestionsClarifications: [
+    "Concurrency acceptance/rejection behavior for simultaneous requests with the same OrderID is unresolved.",
+  ],
+};
+
+export const manualConcurrencyScopeRequirement: RefinedRequirement = {
+  ...existingManualQualityRequirement,
+  riskAreas: [
+    "Concurrency issues when multiple restart requests target the same orderLineId.",
+    "deleteNcTfcOrderData mishandling can delete optional table rows.",
+  ],
+  riskFocus: [
+    "Race-condition handling for parallel manual restart requests.",
+    "Wrong exSystem filtering may update unrelated records.",
+  ],
+  coverageTargets: [
+    "Verify simultaneous restart requests are serialized by orderLineId.",
+    "Verify 200 and 500 response fields.",
+  ],
+  minimalReproScenarios: [
+    "Submit two concurrent restart requests for the same orderLineId and verify serialization.",
+    "Set deleteNcTfcOrderData=false and verify optional tables remain unchanged.",
+  ],
+};
+
+export const identifierAuthorityRequirement: RefinedRequirement = {
+  objective: "Define NoBill Proxy deduplication identifiers.",
+  businessRules: [
+    "GUID is used as the authoritative deduplication identifier.",
+    "GUID, OrderID, and Transaction Number are distinct source fields.",
+  ],
+  acceptanceCriteria: [
+    "Duplicate requests are detected using GUID as the deduplication identifier.",
+  ],
+  context: "SC sends GUID and NoBill persists Transaction Number.",
+};
+
+export const conditionalCleanupRequirement: RefinedRequirement = {
+  objective: "Restart a manual workflow for an order line.",
+  businessRules: [
+    "Optional cleanup tables mod_nc_tfc_orders and mod_error_retry are always deleted.",
+    "When deleteNcTfcOrderData=true, delete mod_nc_tfc_orders and mod_error_retry rows.",
+  ],
+  acceptanceCriteria: [
+    "The optional cleanup tables are unconditionally deleted during restart.",
+    "When deleteNcTfcOrderData=true, both optional cleanup tables are deleted.",
+  ],
+};

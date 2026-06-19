@@ -22,6 +22,11 @@ import {
   existingManualQualityRequirement,
   existingNoBillRequirement,
   existingNoBillRefinementRequirement,
+  noBillDeterministicConcurrencyRequirement,
+  noBillConcurrencyUnresolvedPatch,
+  manualConcurrencyScopeRequirement,
+  identifierAuthorityRequirement,
+  conditionalCleanupRequirement,
   manualWorkflowLegacy,
   manualWorkflowSource,
   manualWorkflowStrict,
@@ -370,6 +375,158 @@ test.describe("iterative requirement refinement", () => {
     expectSectionNotContains(requirement, "acceptanceCriteria", "Only one transaction");
     expectSectionNotContains(requirement, "riskAreas", "Concurrency behavior");
     expectSectionNotContains(requirement, "openQuestionsClarifications", "same OrderID");
+  });
+});
+
+test.describe("cross-section contradiction reconciliation", () => {
+  test("NoBill confirmed concurrency outcome becomes unresolved without stale claims", () => {
+    const artifact = mergeArtifact(
+      { refinedRequirement: noBillDeterministicConcurrencyRequirement },
+      noBillConcurrencyUnresolvedPatch
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectNotContains(requirement, "only one transaction is accepted");
+    expectNotContains(requirement, "only one transaction succeeds");
+    expectNotContains(requirement, "every request after the first");
+    expectSectionContains(requirement, "outOfScope", "must not be assumed");
+    expectSectionContains(
+      requirement,
+      "openQuestionsClarifications",
+      "acceptance/rejection behavior"
+    );
+    expectContains(requirement, "GUID, OrderID, and Transaction Number remain distinct");
+    expectContains(requirement, "NoBill Proxy retries");
+    expectSectionContains(requirement, "openQuestionsClarifications", "KSA");
+    expectSectionContains(
+      requirement,
+      "openQuestionsClarifications",
+      "OrderID maps to Transaction Number"
+    );
+  });
+
+  test("MANUAL_WORKFLOW_RESTART concurrency moved out of scope is removed everywhere active", () => {
+    const artifact = mergeArtifact(
+      { refinedRequirement: manualConcurrencyScopeRequirement },
+      { outOfScope: ["Concurrency control is out of scope for manual workflow restart."] }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionContains(requirement, "outOfScope", "Concurrency control");
+    expectSectionNotContains(requirement, "riskAreas", "Concurrency issues");
+    expectSectionNotContains(requirement, "riskFocus", "Race-condition");
+    expectSectionNotContains(requirement, "coverageTargets", "simultaneous restart");
+    expectSectionNotContains(requirement, "minimalReproScenarios", "two concurrent");
+    expectContains(requirement, "deleteNcTfcOrderData=true");
+    expectContains(requirement, "exSystem = 'NetCracker'");
+    expectContains(requirement, "200 OK returns actionResult");
+  });
+
+  test("same-turn additions merge against the reconciled MANUAL_WORKFLOW_RESTART base", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          ...manualConcurrencyScopeRequirement,
+          edgeCases: [
+            "Concurrent restart requests for the same orderLineId may race.",
+          ],
+          edgeCasesNegativePaths: [
+            "Concurrent restart requests for the same orderLineId may race.",
+          ],
+        },
+      },
+      {
+        outOfScope: [
+          "Concurrency control and race-condition handling are out of scope.",
+        ],
+        coverageTargets: [
+          "Verify deleteNcTfcOrderData=false leaves optional cleanup tables unchanged.",
+        ],
+        edgeCasesNegativePaths: [
+          "Invalid deleteNcTfcOrderData value returns a validation error.",
+        ],
+        minimalReproScenarios: [
+          "Given deleteNcTfcOrderData=false, when the restart endpoint is called, then optional cleanup tables remain unchanged.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionNotContains(requirement, "edgeCases", "Concurrent restart");
+    expectSectionNotContains(
+      requirement,
+      "edgeCasesNegativePaths",
+      "Concurrent restart"
+    );
+    expectSectionNotContains(
+      requirement,
+      "coverageTargets",
+      "simultaneous restart"
+    );
+    expectSectionNotContains(
+      requirement,
+      "minimalReproScenarios",
+      "two concurrent"
+    );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "optional cleanup tables"
+    );
+    expectSectionContains(
+      requirement,
+      "edgeCasesNegativePaths",
+      "validation error"
+    );
+    expectSectionContains(
+      requirement,
+      "minimalReproScenarios",
+      "restart endpoint is called"
+    );
+    expectSectionContains(requirement, "outOfScope", "Concurrency control");
+    expect(requirement.edgeCases).toEqual(requirement.edgeCasesNegativePaths);
+    expectContains(requirement, "PATCH /manual-workflow-restart/{orderLineId}");
+    expectContains(requirement, "mod_process_flow");
+    expectContains(requirement, "200 OK returns actionResult");
+    expectContains(requirement, "PHP owns Order Line History updates");
+  });
+
+  test("identifier correction replaces GUID authority while preserving distinct identifiers", () => {
+    const artifact = mergeArtifact(
+      { refinedRequirement: identifierAuthorityRequirement },
+      {
+        businessRules: [
+          "Correction: OrderID must be used as the deduplication identifier instead of GUID; GUID is incorrect for deduplication authority.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectNotContains(requirement, "GUID is used as the authoritative");
+    expectNotContains(requirement, "detected using GUID");
+    expectContains(requirement, "OrderID must be used");
+    expectContains(requirement, "GUID, OrderID, and Transaction Number are distinct");
+    expectContains(requirement, "NoBill persists Transaction Number");
+  });
+
+  test("conditional false-branch correction removes always-delete claims", () => {
+    const artifact = mergeArtifact(
+      { refinedRequirement: conditionalCleanupRequirement },
+      {
+        businessRules: [
+          "When deleteNcTfcOrderData=false, mod_nc_tfc_orders and mod_error_retry remain unchanged.",
+        ],
+        acceptanceCriteria: [
+          "With deleteNcTfcOrderData=false, optional cleanup tables remain unchanged.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectNotContains(requirement, "always deleted");
+    expectNotContains(requirement, "unconditionally deleted");
+    expectContains(requirement, "deleteNcTfcOrderData=false");
+    expectContains(requirement, "deleteNcTfcOrderData=true");
   });
 });
 

@@ -70,6 +70,7 @@
 // - do not clear downstream artifacts in this file; contract/helpers only
 
 import { Prisma } from "@prisma/client";
+import { reconcileExistingRequirementForPatch } from "@/lib/chat/requirementReconciliation";
 
 export type ReviewBreakdown = {
   businessRelevance: number;
@@ -1536,8 +1537,6 @@ export function getArtifactConsistencyState(
 }
 
 const HTTP_METHOD_PATTERN = /\b(GET|POST|PUT|PATCH|DELETE)\b\s+(\/[A-Za-z0-9_{}./-]+)/i;
-const CONCURRENCY_SCOPE_PATTERN =
-  /\b(concurrency|concurrent|simultaneous|parallel|duplicate transaction|duplicate request|same orderid|only one transaction)\b/i;
 
 function textKey(value: string): string {
   return normalizeWhitespace(value).toLowerCase();
@@ -1631,18 +1630,6 @@ function removeResolvedOpenQuestions(args: {
   });
 }
 
-function removesConcurrencyScope(patch: Partial<RefinedRequirement>): boolean {
-  const outOfScopeText = [...(patch.outOfScope ?? []), ...(patch.openQuestions ?? [])].join(" ");
-  return (
-    CONCURRENCY_SCOPE_PATTERN.test(outOfScopeText) &&
-    /\b(out of scope|not in scope|remove|excluded)\b/i.test(outOfScopeText)
-  );
-}
-
-function removeInferredConcurrency(values: string[]): string[] {
-  return values.filter((value) => !CONCURRENCY_SCOPE_PATTERN.test(value));
-}
-
 export function mergeArtifact(
   existing: SessionArtifact | null,
   patch: Partial<RefinedRequirement>
@@ -1653,6 +1640,10 @@ export function mergeArtifact(
     prev.refinedRequirement && typeof prev.refinedRequirement === "object"
       ? prev.refinedRequirement
       : {};
+  const mergeBaseRR = reconcileExistingRequirementForPatch({
+    existing: prevRR,
+    patch,
+  });
 
   const normalizedFunctionalScope = dedupeStrings([
     ...(patch.functionalScope ?? []),
@@ -1690,67 +1681,68 @@ export function mergeArtifact(
     ...(patch.acceptanceCriteria ?? []),
     ...(patch.businessRules ?? []),
   ].filter((value): value is string => Boolean(value));
-  const concurrencyOutOfScope = removesConcurrencyScope(patch);
-
-  const previousFunctionalScope = concurrencyOutOfScope
-    ? removeInferredConcurrency(prevRR.functionalScope ?? [])
-    : removeContradictedEndpointItems({
-        existingValues: prevRR.functionalScope ?? [],
-        patchValues: patchEndpointValues,
-        correction,
-      });
-  const previousAcceptanceCriteria = concurrencyOutOfScope
-    ? removeInferredConcurrency(prevRR.acceptanceCriteria ?? [])
-    : removeContradictedEndpointItems({
-        existingValues: prevRR.acceptanceCriteria ?? [],
-        patchValues: patchEndpointValues,
-        correction,
-      });
-  const previousBusinessRules = concurrencyOutOfScope
-    ? removeInferredConcurrency(prevRR.businessRules ?? [])
-    : removeContradictedEndpointItems({
-        existingValues: prevRR.businessRules ?? [],
-        patchValues: patchEndpointValues,
-        correction,
-      });
-  const previousRiskAreas = concurrencyOutOfScope
-    ? removeInferredConcurrency(prevRR.riskAreas ?? [])
-    : prevRR.riskAreas ?? [];
+  const previousFunctionalScope = removeContradictedEndpointItems({
+    existingValues: mergeBaseRR.functionalScope ?? [],
+    patchValues: patchEndpointValues,
+    correction,
+  });
+  const previousAcceptanceCriteria = removeContradictedEndpointItems({
+    existingValues: mergeBaseRR.acceptanceCriteria ?? [],
+    patchValues: patchEndpointValues,
+    correction,
+  });
+  const previousBusinessRules = removeContradictedEndpointItems({
+    existingValues: mergeBaseRR.businessRules ?? [],
+    patchValues: patchEndpointValues,
+    correction,
+  });
+  const previousRiskAreas = mergeBaseRR.riskAreas ?? [];
   const previousOpenQuestions = removeResolvedOpenQuestions({
-    existingQuestions: concurrencyOutOfScope
-      ? removeInferredConcurrency(prevRR.openQuestions ?? [])
-      : prevRR.openQuestions ?? [],
+    existingQuestions: mergeBaseRR.openQuestions ?? [],
     patch,
   });
   const previousOpenQuestionsClarifications = removeResolvedOpenQuestions({
-    existingQuestions: concurrencyOutOfScope
-      ? removeInferredConcurrency(prevRR.openQuestionsClarifications ?? [])
-      : prevRR.openQuestionsClarifications ?? [],
+    existingQuestions: mergeBaseRR.openQuestionsClarifications ?? [],
     patch,
   });
 
   const candidateRR: RefinedRequirement = {
-    ...prevRR,
+    ...mergeBaseRR,
     ...(patch.objective ? { objective: patch.objective } : {}),
     ...(patch.context ? { context: patch.context } : {}),
 
     // Keep legacy fields for compatibility during migration.
     ...(patch.inScope?.length
-      ? { inScope: dedupeStrings([...(prevRR.inScope ?? []), ...patch.inScope]) }
+      ? {
+          inScope: dedupeStrings([
+            ...(mergeBaseRR.inScope ?? []),
+            ...patch.inScope,
+          ]),
+        }
       : {}),
     ...(patch.outOfScope?.length
-      ? { outOfScope: dedupeStrings([...(prevRR.outOfScope ?? []), ...patch.outOfScope]) }
+      ? {
+          outOfScope: dedupeStrings([
+            ...(mergeBaseRR.outOfScope ?? []),
+            ...patch.outOfScope,
+          ]),
+        }
       : {}),
     ...(patch.integrations?.length
       ? {
           integrations: dedupeStrings([
-            ...(prevRR.integrations ?? []),
+            ...(mergeBaseRR.integrations ?? []),
             ...patch.integrations,
           ]),
         }
       : {}),
     ...(patch.riskFocus?.length
-      ? { riskFocus: dedupeStrings([...(prevRR.riskFocus ?? []), ...patch.riskFocus]) }
+      ? {
+          riskFocus: dedupeStrings([
+            ...(mergeBaseRR.riskFocus ?? []),
+            ...patch.riskFocus,
+          ]),
+        }
       : {}),
 
     // Locked unified fields used by deterministic review and artifact context.
@@ -1784,11 +1776,11 @@ export function mergeArtifact(
     ...(normalizedEdgeCasesNegativePaths.length
       ? {
           edgeCases: dedupeStrings([
-            ...(prevRR.edgeCases ?? []),
+            ...(mergeBaseRR.edgeCases ?? []),
             ...normalizedEdgeCasesNegativePaths,
           ]),
           edgeCasesNegativePaths: dedupeStrings([
-            ...(prevRR.edgeCasesNegativePaths ?? []),
+            ...(mergeBaseRR.edgeCasesNegativePaths ?? []),
             ...normalizedEdgeCasesNegativePaths,
           ]),
         }
@@ -1818,7 +1810,7 @@ export function mergeArtifact(
     ...(patch.coverageTargets?.length
       ? {
           coverageTargets: dedupeStrings([
-            ...(prevRR.coverageTargets ?? []),
+            ...(mergeBaseRR.coverageTargets ?? []),
             ...patch.coverageTargets,
           ]),
         }
@@ -1826,7 +1818,7 @@ export function mergeArtifact(
     ...(patch.minimalReproScenarios?.length
       ? {
           minimalReproScenarios: dedupeStrings([
-            ...(prevRR.minimalReproScenarios ?? []),
+            ...(mergeBaseRR.minimalReproScenarios ?? []),
             ...patch.minimalReproScenarios,
           ]),
         }
