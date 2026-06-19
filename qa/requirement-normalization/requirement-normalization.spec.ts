@@ -422,6 +422,75 @@ test.describe("cross-section contradiction reconciliation", () => {
     expectContains(requirement, "200 OK returns actionResult");
   });
 
+  test("same-turn additions merge against the reconciled MANUAL_WORKFLOW_RESTART base", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          ...manualConcurrencyScopeRequirement,
+          edgeCases: [
+            "Concurrent restart requests for the same orderLineId may race.",
+          ],
+          edgeCasesNegativePaths: [
+            "Concurrent restart requests for the same orderLineId may race.",
+          ],
+        },
+      },
+      {
+        outOfScope: [
+          "Concurrency control and race-condition handling are out of scope.",
+        ],
+        coverageTargets: [
+          "Verify deleteNcTfcOrderData=false leaves optional cleanup tables unchanged.",
+        ],
+        edgeCasesNegativePaths: [
+          "Invalid deleteNcTfcOrderData value returns a validation error.",
+        ],
+        minimalReproScenarios: [
+          "Given deleteNcTfcOrderData=false, when the restart endpoint is called, then optional cleanup tables remain unchanged.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionNotContains(requirement, "edgeCases", "Concurrent restart");
+    expectSectionNotContains(
+      requirement,
+      "edgeCasesNegativePaths",
+      "Concurrent restart"
+    );
+    expectSectionNotContains(
+      requirement,
+      "coverageTargets",
+      "simultaneous restart"
+    );
+    expectSectionNotContains(
+      requirement,
+      "minimalReproScenarios",
+      "two concurrent"
+    );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "optional cleanup tables"
+    );
+    expectSectionContains(
+      requirement,
+      "edgeCasesNegativePaths",
+      "validation error"
+    );
+    expectSectionContains(
+      requirement,
+      "minimalReproScenarios",
+      "restart endpoint is called"
+    );
+    expectSectionContains(requirement, "outOfScope", "Concurrency control");
+    expect(requirement.edgeCases).toEqual(requirement.edgeCasesNegativePaths);
+    expectContains(requirement, "PATCH /manual-workflow-restart/{orderLineId}");
+    expectContains(requirement, "mod_process_flow");
+    expectContains(requirement, "200 OK returns actionResult");
+    expectContains(requirement, "PHP owns Order Line History updates");
+  });
+
   test("identifier correction replaces GUID authority while preserving distinct identifiers", () => {
     const artifact = mergeArtifact(
       { refinedRequirement: identifierAuthorityRequirement },

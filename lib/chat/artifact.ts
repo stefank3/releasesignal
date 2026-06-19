@@ -1776,11 +1776,11 @@ export function mergeArtifact(
     ...(normalizedEdgeCasesNegativePaths.length
       ? {
           edgeCases: dedupeStrings([
-            ...(prevRR.edgeCases ?? []),
+            ...(mergeBaseRR.edgeCases ?? []),
             ...normalizedEdgeCasesNegativePaths,
           ]),
           edgeCasesNegativePaths: dedupeStrings([
-            ...(prevRR.edgeCasesNegativePaths ?? []),
+            ...(mergeBaseRR.edgeCasesNegativePaths ?? []),
             ...normalizedEdgeCasesNegativePaths,
           ]),
         }
@@ -1810,7 +1810,7 @@ export function mergeArtifact(
     ...(patch.coverageTargets?.length
       ? {
           coverageTargets: dedupeStrings([
-            ...(prevRR.coverageTargets ?? []),
+            ...(mergeBaseRR.coverageTargets ?? []),
             ...patch.coverageTargets,
           ]),
         }
@@ -1818,7 +1818,7 @@ export function mergeArtifact(
     ...(patch.minimalReproScenarios?.length
       ? {
           minimalReproScenarios: dedupeStrings([
-            ...(prevRR.minimalReproScenarios ?? []),
+            ...(mergeBaseRR.minimalReproScenarios ?? []),
             ...patch.minimalReproScenarios,
           ]),
         }
