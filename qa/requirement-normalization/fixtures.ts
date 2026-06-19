@@ -239,6 +239,97 @@ export const existingNoBillRequirement: RefinedRequirement = {
   lastUpdatedAt: "2026-06-17T00:00:00.000Z",
 };
 
+export const existingNoBillRefinementRequirement: RefinedRequirement = {
+  objective: "Define NoBill Proxy retry and deduplication.",
+  context: "SC Backend calls Paymob, and KSA is reference context only.",
+  functionalScope: [
+    "NoBill Proxy post-recharge Confirm API retry mechanism.",
+    "NoBill Proxy persists Transaction Number in DB.",
+    "SC sends GUID in the request.",
+    "The expected identifier for deduplication is OrderID.",
+    "Parallel duplicate detection is required.",
+  ],
+  businessRules: [
+    "GUID, OrderID, and Transaction Number remain distinct identifiers.",
+    "OrderID is the expected identifier for deduplication.",
+  ],
+  acceptanceCriteria: [
+    "Source-confirmed deduplication behavior remains preserved for OrderID duplicate detection.",
+  ],
+  riskAreas: [
+    "Concurrency behavior needs confirmation.",
+    "KSA reference handling needs confirmation.",
+  ],
+  coverageTargets: [
+    "Cover GUID, OrderID, and Transaction Number distinction.",
+  ],
+  openQuestions: [
+    "Confirm which transaction is accepted or rejected when simultaneous requests use the same OrderID.",
+    "Confirm whether KSA behavior is authoritative or reference-only.",
+    "Confirm whether OrderID maps to Transaction Number.",
+  ],
+  openQuestionsClarifications: [
+    "Confirm which transaction is accepted or rejected when simultaneous requests use the same OrderID.",
+    "Confirm whether KSA behavior is authoritative or reference-only.",
+    "Confirm whether OrderID maps to Transaction Number.",
+  ],
+  version: 1,
+  lastUpdatedAt: "2026-06-17T00:00:00.000Z",
+};
+
+export const speculativeNoBillPatch: Partial<RefinedRequirement> = {
+  businessRules: [
+    "Only one transaction is accepted and all others are rejected deterministically.",
+    "Duplicate requests are handled through atomic transaction locking.",
+    "OrderID is the Transaction Number.",
+  ],
+  acceptanceCriteria: [
+    "Later concurrent requests with the same OrderID return 409 DUPLICATE_TRANSACTION.",
+    "The system logs every duplicate request for monitoring.",
+  ],
+  riskAreas: [
+    "Rollback must preserve transaction integrity.",
+  ],
+  openQuestionsClarifications: [],
+};
+
+export const sameNoBillSource = noBillSource;
+
+export const existingManualQualityRequirement: RefinedRequirement = {
+  objective: "Restart a manual workflow for an order line.",
+  functionalScope: [
+    "PATCH /manual-workflow-restart/{orderLineId}.",
+    "Request fields are modifiedBy, dateModified, and deleteNcTfcOrderData.",
+  ],
+  businessRules: [
+    "When deleteNcTfcOrderData=true, delete matching mod_nc_tfc_orders rows.",
+    "When deleteNcTfcOrderData=true, delete matching mod_error_retry rows.",
+    "When manual restart succeeds, mod_process_flow is updated with deleted = 1 for all records for the orderLineId.",
+    "When deleteNcTfcOrderData=false, mod_nc_tfc_orders and mod_error_retry remain unchanged.",
+    "Set exSystem = 'NetCracker' for the restart action.",
+    "PHP owns Order Line History updates and process restart orchestration.",
+  ],
+  acceptanceCriteria: [
+    "200 OK returns actionResult and actionsPerformed.",
+    "400 Bad Request returns actionResult and failureReason.",
+    "404 Not Found returns actionResult and failureReason.",
+    "500 Internal Server Error returns actionResult and failureReason.",
+  ],
+};
+
+export const speculativeManualPatch: Partial<RefinedRequirement> = {
+  businessRules: [
+    "Cleanup is atomic across mod_process_flow, mod_nc_tfc_orders, and mod_error_retry.",
+    "Rollback restores all database changes when restart processing fails.",
+  ],
+  acceptanceCriteria: [
+    "Concurrent restart requests are serialized by orderLineId.",
+  ],
+  riskAreas: [
+    "Physical-delete versus soft-delete behavior must be resolved as an implementation rule.",
+  ],
+};
+
 export const existingManualRequirement: RefinedRequirement = {
   objective: "Restart a manual workflow for an order line.",
   functionalScope: [

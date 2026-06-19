@@ -1588,7 +1588,12 @@ function tokenSet(value: string): Set<string> {
   return new Set(
     textKey(value)
       .match(/[a-z0-9_{}./-]{4,}/g)
-      ?.filter((token) => !["confirm", "whether", "behavior", "resolved"].includes(token)) ??
+      ?.filter(
+        (token) =>
+          !["confirm", "whether", "behavior", "resolved", "transaction"].includes(
+            token
+          )
+      ) ??
       []
   );
 }

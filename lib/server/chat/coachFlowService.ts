@@ -49,6 +49,11 @@ import {
   parseRefinedRequirementResponse,
 } from "@/lib/server/chat/modelResponseParser";
 import { normalizeRequirementPatchQuality } from "@/lib/server/chat/requirementQuality";
+import {
+  constrainRequirementPatchForIntent,
+  detectRequirementRefinementIntent,
+  type RequirementRefinementIntent,
+} from "@/lib/server/chat/requirementRefinementIntent";
 
 const TECHNICAL_SIGNAL_PATTERN =
   /\b(GET|POST|PUT|PATCH|DELETE)\b\s+\/|\/[A-Za-z0-9_{}./-]+|\b\d{3}\b|\b[A-Za-z][A-Za-z0-9_]*(?:Id|ID)\b|\bmod_[a-z0-9_]+\b|\bactionResult\b|\bfailureReason\b|\bactionsPerformed\b|\bPHP\b|\bNetCracker\b|['"][^'"]+['"]|=\s*[\w'"]+|request body|path parameter|database|table|response contract/i;
@@ -255,6 +260,7 @@ export type RequirementRefinementPath =
 export type RequirementRefinementDiagnostics = {
   requestId: string;
   refinementPath: RequirementRefinementPath;
+  refinementIntent: RequirementRefinementIntent;
   strictRequirementParsed: boolean;
   legacyCoachParsed: boolean;
   compatibilityAccepted: boolean;
@@ -271,6 +277,9 @@ export type RequirementRefinementDiagnostics = {
   existingArtifactPresent: boolean;
   refinementMerged: boolean;
   artifactSaved: boolean;
+  newFactDetected: boolean;
+  correctionDetected: boolean;
+  scopeChangeDetected: boolean;
   sanitizedFailureReason?: string;
 };
 
@@ -445,6 +454,7 @@ function normalizedRequirementToArtifactPatch(
 export function buildRequirementRefinementDiagnostics(args: {
   requestId: string;
   refinementPath: RequirementRefinementPath;
+  refinementIntent: RequirementRefinementIntent;
   strictRequirementParsed: boolean;
   legacyCoachParsed: boolean;
   compatibilityPatch?: Partial<RefinedRequirement> | null;
@@ -452,6 +462,9 @@ export function buildRequirementRefinementDiagnostics(args: {
   existingArtifactPresent: boolean;
   refinementMerged: boolean;
   artifactSaved: boolean;
+  newFactDetected?: boolean;
+  correctionDetected?: boolean;
+  scopeChangeDetected?: boolean;
   sanitizedFailureReason?: string;
 }): RequirementRefinementDiagnostics {
   const compatibilityPatch = args.compatibilityPatch ?? null;
@@ -459,6 +472,7 @@ export function buildRequirementRefinementDiagnostics(args: {
   return {
     requestId: args.requestId,
     refinementPath: args.refinementPath,
+    refinementIntent: args.refinementIntent,
     strictRequirementParsed: args.strictRequirementParsed,
     legacyCoachParsed: args.legacyCoachParsed,
     compatibilityAccepted: Boolean(compatibilityPatch),
@@ -469,6 +483,9 @@ export function buildRequirementRefinementDiagnostics(args: {
     existingArtifactPresent: args.existingArtifactPresent,
     refinementMerged: args.refinementMerged,
     artifactSaved: args.artifactSaved,
+    newFactDetected: Boolean(args.newFactDetected),
+    correctionDetected: Boolean(args.correctionDetected),
+    scopeChangeDetected: Boolean(args.scopeChangeDetected),
     ...(args.sanitizedFailureReason
       ? { sanitizedFailureReason: args.sanitizedFailureReason }
       : {}),
@@ -605,6 +622,10 @@ export async function runCoachFlow(args: {
   let selectedRequirementPatch: Partial<RefinedRequirement> | null = null;
   let selectedCompatibilityPatch: Partial<RefinedRequirement> | null = null;
   let sanitizedFailureReason: string | undefined;
+  const refinementIntent = detectRequirementRefinementIntent({
+    message: args.message,
+    existingArtifact: args.sessionArtifact,
+  });
 
   if (!coachParsed && !normalizedRequirement) {
     return {
@@ -616,11 +637,15 @@ export async function runCoachFlow(args: {
       diagnostics: buildRequirementRefinementDiagnostics({
         requestId: args.sessionId,
         refinementPath: "rejected",
+        refinementIntent: refinementIntent.intent,
         strictRequirementParsed: false,
         legacyCoachParsed: false,
         existingArtifactPresent: Boolean(args.sessionArtifact?.refinedRequirement),
         refinementMerged: false,
         artifactSaved: false,
+        newFactDetected: refinementIntent.newFactDetected,
+        correctionDetected: refinementIntent.correctionDetected,
+        scopeChangeDetected: refinementIntent.scopeChangeDetected,
         sanitizedFailureReason: "model_output_unparseable",
       }),
     };
@@ -634,8 +659,15 @@ export async function runCoachFlow(args: {
     : sessionArtifact;
   let requirementArtifactUpdated = false;
 
-  const normalizedRequirementPatch =
+  const normalizedRequirementPatchRaw =
     normalizedRequirementToArtifactPatch(normalizedRequirement);
+  const normalizedRequirementPatch = normalizedRequirementPatchRaw
+    ? constrainRequirementPatchForIntent({
+        patch: normalizedRequirementPatchRaw,
+        existingArtifact: requirementMergeBase,
+        intent: refinementIntent.intent,
+      })
+    : null;
 
   if (normalizedRequirementPatch) {
     refinementPath = "strict_requirement";
@@ -667,9 +699,16 @@ export async function runCoachFlow(args: {
       coach: coachParsed,
       sourceMessage: args.message,
     });
-    selectedCompatibilityPatch = compatibilityPatch;
-    const continuityPatch =
-      compatibilityPatch ??
+    const constrainedCompatibilityPatch = compatibilityPatch
+      ? constrainRequirementPatchForIntent({
+          patch: compatibilityPatch,
+          existingArtifact: requirementMergeBase,
+          intent: refinementIntent.intent,
+        })
+      : null;
+    selectedCompatibilityPatch = constrainedCompatibilityPatch;
+    const continuityPatchRaw =
+      constrainedCompatibilityPatch ??
       (args.explicitRegenerationRequest
         ? null
         : buildCoachContinuityArtifactPatch({
@@ -679,9 +718,17 @@ export async function runCoachFlow(args: {
             guidedAnswer: args.guidedAnswer,
             weakInput: args.weakInput,
           }));
+    const continuityPatch =
+      continuityPatchRaw
+        ? constrainRequirementPatchForIntent({
+            patch: continuityPatchRaw,
+            existingArtifact: requirementMergeBase,
+            intent: refinementIntent.intent,
+          })
+        : null;
 
     if (continuityPatch) {
-      refinementPath = compatibilityPatch
+      refinementPath = constrainedCompatibilityPatch
         ? "legacy_coach_compatibility"
         : "continuity_fallback";
       selectedRequirementPatch = continuityPatch;
@@ -732,6 +779,7 @@ export async function runCoachFlow(args: {
     diagnostics: buildRequirementRefinementDiagnostics({
       requestId: args.sessionId,
       refinementPath,
+      refinementIntent: refinementIntent.intent,
       strictRequirementParsed: Boolean(normalizedRequirement),
       legacyCoachParsed: Boolean(coachParsed),
       compatibilityPatch: selectedCompatibilityPatch,
@@ -739,6 +787,9 @@ export async function runCoachFlow(args: {
       existingArtifactPresent: Boolean(args.sessionArtifact?.refinedRequirement),
       refinementMerged: Boolean(selectedRequirementPatch),
       artifactSaved: requirementArtifactUpdated,
+      newFactDetected: refinementIntent.newFactDetected,
+      correctionDetected: refinementIntent.correctionDetected,
+      scopeChangeDetected: refinementIntent.scopeChangeDetected,
       sanitizedFailureReason,
     }),
   };
