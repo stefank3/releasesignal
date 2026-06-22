@@ -25,6 +25,7 @@ import {
   noBillDeterministicConcurrencyRequirement,
   noBillConcurrencyUnresolvedPatch,
   manualConcurrencyScopeRequirement,
+  manualWorkflowLiveConcurrencyRequirement,
   identifierAuthorityRequirement,
   conditionalCleanupRequirement,
   manualWorkflowLegacy,
@@ -420,6 +421,82 @@ test.describe("cross-section contradiction reconciliation", () => {
     expectContains(requirement, "deleteNcTfcOrderData=true");
     expectContains(requirement, "exSystem = 'NetCracker'");
     expectContains(requirement, "200 OK returns actionResult");
+  });
+
+  test("live MANUAL_WORKFLOW_RESTART context exclusion removes stale concurrency wording", () => {
+    const artifact = mergeArtifact(
+      { refinedRequirement: manualWorkflowLiveConcurrencyRequirement },
+      {
+        context:
+          "Concurrency control and race-condition handling are explicitly out of scope.",
+        coverageTargets: [
+          "Verify deleteNcTfcOrderData=false leaves optional cleanup tables unchanged.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionNotContains(requirement, "riskAreas", "Concurrency issues");
+    expectSectionNotContains(requirement, "riskAreas", "simultaneous restarts");
+    expectSectionNotContains(
+      requirement,
+      "coverageTargets",
+      "concurrent requests"
+    );
+    expectSectionNotContains(
+      requirement,
+      "coverageTargets",
+      "check concurrency control"
+    );
+    expectContains(requirement, "explicitly out of scope");
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "optional cleanup tables"
+    );
+    expectContains(requirement, "PATCH /manual-workflow-restart/{orderLineId}");
+    expectContains(requirement, "mod_process_flow");
+    expectContains(requirement, "mod_nc_tfc_orders");
+    expectContains(requirement, "mod_error_retry");
+    expectContains(requirement, "PHP owns Order Line History updates");
+    expectContains(requirement, "200 OK returns actionResult");
+  });
+
+  test("concurrency exclusion preserves generic request and orderLineId content", () => {
+    const artifact = mergeArtifact(
+      { refinedRequirement: manualWorkflowLiveConcurrencyRequirement },
+      {
+        outOfScope: [
+          "Concurrent request handling is out of scope for manual workflow restart.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionContains(
+      requirement,
+      "outOfScope",
+      "Concurrent request handling"
+    );
+    expectSectionContains(requirement, "riskAreas", "non-existent orderLineId");
+    expectSectionContains(requirement, "riskAreas", "request body fields");
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "non-existent orderLineId"
+    );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "invalid deleteNcTfcOrderData"
+    );
+    expectSectionContains(requirement, "coverageTargets", "mod_process_flow records");
+    expectSectionNotContains(requirement, "riskAreas", "simultaneous restarts");
+    expectSectionNotContains(
+      requirement,
+      "coverageTargets",
+      "concurrent requests"
+    );
   });
 
   test("same-turn additions merge against the reconciled MANUAL_WORKFLOW_RESTART base", () => {

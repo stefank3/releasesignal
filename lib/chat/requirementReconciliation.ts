@@ -5,7 +5,7 @@ const CONCURRENCY_TOPIC_PATTERN =
 const DETERMINISTIC_CONCURRENCY_OUTCOME_PATTERN =
   /\b(only one|first|single)\b.{0,80}\b(accepted|succeeds?|committed)\b|\b(others?|subsequent|remaining)\b.{0,80}\b(rejected|fail|409)\b|\bdeterministic(?:ally)?\b/i;
 const FULL_CONCURRENCY_EXCLUSION_PATTERN =
-  /\b(concurrency (?:control|handling)|race[- ]condition handling)\b.{0,80}\b(out of scope|not in scope|excluded|remove)\b|\b(out of scope|not in scope|excluded|remove)\b.{0,80}\b(concurrency (?:control|handling)|race[- ]condition handling)\b/i;
+  /\b(concurrency (?:control|handling)|race[- ]condition handling|simultaneous restarts? handling|concurrent requests? handling)\b.{0,80}\b(out of scope|not in scope|excluded|remove)\b|\b(out of scope|not in scope|excluded|remove)\b.{0,80}\b(concurrency (?:control|handling)|race[- ]condition handling|simultaneous restarts? handling|concurrent requests? handling)\b/i;
 const UNRESOLVED_PATTERN =
   /\b(unresolved|unknown|open question|confirm|clarif|must not be assumed|do not assume)\b/i;
 const IDENTIFIER_CORRECTION_PATTERN =
@@ -68,6 +68,7 @@ function patchValues(patch: Partial<RefinedRequirement>): string[] {
     ...(patch.acceptanceCriteria ?? []),
     ...(patch.edgeCases ?? []),
     ...(patch.edgeCasesNegativePaths ?? []),
+    ...(patch.nonFunctionalConstraints ?? []),
     ...(patch.riskAreas ?? []),
     ...(patch.riskFocus ?? []),
     ...(patch.coverageTargets ?? []),
@@ -102,8 +103,13 @@ export function reconcileExistingRequirementForPatch(args: {
   const values = patchValues(args.patch);
   const questions = questionValues(args.patch);
   const outOfScope = args.patch.outOfScope ?? [];
+  const scopeDecisionValues = [
+    args.patch.context,
+    ...outOfScope,
+    ...(args.patch.nonFunctionalConstraints ?? []),
+  ].filter((value): value is string => Boolean(value));
 
-  const concurrencyFullyExcluded = outOfScope.some((value) =>
+  const concurrencyFullyExcluded = scopeDecisionValues.some((value) =>
     FULL_CONCURRENCY_EXCLUSION_PATTERN.test(value)
   );
   const concurrencyUnresolved =
