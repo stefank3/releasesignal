@@ -413,6 +413,24 @@ export const manualConcurrencyScopeRequirement: RefinedRequirement = {
   ],
 };
 
+export const manualWorkflowLiveConcurrencyRequirement: RefinedRequirement = {
+  ...existingManualQualityRequirement,
+  riskAreas: [
+    "Concurrency issues with multiple simultaneous restarts for the same orderLineId.",
+    "A non-existent orderLineId causes a 404 response.",
+    "Invalid or missing request body fields cause 400 errors.",
+    "Incorrect filtering of mod_error_retry records by exSystem='NetCracker'.",
+    "Incorrect setting of the deleted flag on mod_process_flow records.",
+    "Improper deleteNcTfcOrderData handling may cause unintended data deletion.",
+  ],
+  coverageTargets: [
+    "Test concurrent requests for the same orderLineId to check concurrency control.",
+    "Request with non-existent orderLineId returns 404.",
+    "Request with invalid deleteNcTfcOrderData returns 400.",
+    "All mod_process_flow records for orderLineId are marked deleted.",
+  ],
+};
+
 export const identifierAuthorityRequirement: RefinedRequirement = {
   objective: "Define NoBill Proxy deduplication identifiers.",
   businessRules: [
