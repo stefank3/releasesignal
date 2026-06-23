@@ -1,11 +1,9 @@
 import type { RefinedRequirement } from "@/lib/chat/artifact";
 
 const CONCURRENCY_TOPIC_PATTERN =
-  /\b(concurrency|concurrent|simultaneous|parallel|race[- ]condition|duplicate requests?|same orderid|only one transaction)\b/i;
+  /\b(concurrency|concurrent|simultaneous|parallel|race[- ]condition|duplicate requests?|same orderid|only one transaction|locking)\b/i;
 const DETERMINISTIC_CONCURRENCY_OUTCOME_PATTERN =
   /\b(only one|first|single)\b.{0,80}\b(accepted|succeeds?|committed)\b|\b(others?|subsequent|remaining)\b.{0,80}\b(rejected|fail|409)\b|\bdeterministic(?:ally)?\b/i;
-const FULL_CONCURRENCY_EXCLUSION_PATTERN =
-  /\b(concurrency (?:control|handling)|race[- ]condition handling|simultaneous restarts? handling|concurrent requests? handling)\b.{0,80}\b(out of scope|not in scope|excluded|remove)\b|\b(out of scope|not in scope|excluded|remove)\b.{0,80}\b(concurrency (?:control|handling)|race[- ]condition handling|simultaneous restarts? handling|concurrent requests? handling)\b/i;
 const UNRESOLVED_PATTERN =
   /\b(unresolved|unknown|open question|confirm|clarif|must not be assumed|do not assume)\b/i;
 const IDENTIFIER_CORRECTION_PATTERN =
@@ -20,6 +18,64 @@ const OPTIONAL_CLEANUP_ENTITY_PATTERN =
   /\b(mod_nc_tfc_orders|mod_error_retry|optional (?:cleanup )?tables?)\b/i;
 const GENERIC_REPRO_PATTERN =
   /\bgiven the source condition applies\b|\bwhen the relevant workflow is exercised\b|\bthen verify the source-defined response\b/i;
+const EXCLUSION_VERB_PATTERN =
+  /\b(out of scope|not in scope|excluded|remove)\b/i;
+const CONTRASTIVE_CONJUNCTION_PATTERN = /\b(but|however|although)\b/i;
+
+type ExclusionTopicFamily = {
+  name:
+    | "concurrency"
+    | "loggingMonitoring"
+    | "rollbackAtomicity"
+    | "paginationBatchSize"
+    | "pathBodyIdMatching";
+  topicPattern: RegExp;
+  activePattern: RegExp;
+  exclusionWindow: number;
+};
+
+const EXCLUSION_TOPIC_FAMILIES: ExclusionTopicFamily[] = [
+  {
+    name: "concurrency",
+    topicPattern:
+      /\b(concurrency (?:control|handling)|race[- ]condition handling|simultaneous restarts? handling|concurrent requests? handling|parallel processing handling|locking)\b/i,
+    activePattern:
+      /\b(concurrency issues?|concurrency handling|race[- ]conditions?|initiated simultaneously|simultaneous restarts?|multiple simultaneous restarts?|parallel processing|same second|same time|locking|only one transaction|duplicate requests?)\b|\bconcurrent\b.{0,50}\brequests?\b|\bsimultaneous\b.{0,50}\brequests?\b/i,
+    exclusionWindow: 220,
+  },
+  {
+    name: "loggingMonitoring",
+    topicPattern:
+      /\b(logging|monitoring|observability|visibility of decisions|audit trails?|auditing)\b/i,
+    activePattern:
+      /\b(logging|monitoring|observability|visibility of decisions|audit trails?|auditing)\b/i,
+    exclusionWindow: 150,
+  },
+  {
+    name: "rollbackAtomicity",
+    topicPattern:
+      /\b(rollback|atomicity|transaction rollback|compensation|partial rollback|transactional guarantees?)\b/i,
+    activePattern:
+      /\b(rollback|atomicity|compensation|partial rollback|transactional guarantees?)\b/i,
+    exclusionWindow: 150,
+  },
+  {
+    name: "paginationBatchSize",
+    topicPattern:
+      /\b(pagination|page size|batch size|batch-size|batching limits?)\b/i,
+    activePattern:
+      /\b(pagination|page size|batch size|batch-size|batching limits?)\b/i,
+    exclusionWindow: 150,
+  },
+  {
+    name: "pathBodyIdMatching",
+    topicPattern:
+      /\b(path\/body (?:id|identifier) (?:matching|comparison)|body (?:identifier|id|field|[a-z][\w-]*) must match path (?:identifier|parameter|id|field|[a-z][\w-]*)|request body id must match path parameter|path\/body identifier mismatch|path id and body id mismatch|mismatched path\/body (?:id|identifier))\b/i,
+    activePattern:
+      /\b(path\/body (?:id|identifier) (?:matching|comparison)|body (?:identifier|id|field|[a-z][\w-]*) must match path (?:identifier|parameter|id|field|[a-z][\w-]*)|request body id must match path parameter|path\/body identifier mismatch|path id and body id mismatch|mismatched path\/body (?:id|identifier))\b/i,
+    exclusionWindow: 150,
+  },
+];
 
 type StringArrayKey =
   | "inScope"
@@ -95,6 +151,46 @@ function filterSection(
   (requirement as Record<StringArrayKey, string[] | undefined>)[key] = values.filter(keep);
 }
 
+function matchRanges(
+  value: string,
+  pattern: RegExp
+): { start: number; end: number }[] {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const matcher = new RegExp(pattern.source, flags);
+  return [...value.matchAll(matcher)].map((match) => ({
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+  }));
+}
+
+function hasConnectedExclusionSignal(
+  value: string,
+  family: ExclusionTopicFamily
+): boolean {
+  const topics = matchRanges(value, family.topicPattern);
+  const exclusions = matchRanges(value, EXCLUSION_VERB_PATTERN);
+
+  for (const topic of topics) {
+    for (const exclusion of exclusions) {
+      const betweenStart =
+        topic.end <= exclusion.start ? topic.end : exclusion.end;
+      const betweenEnd =
+        topic.end <= exclusion.start ? exclusion.start : topic.start;
+      const between = value.slice(betweenStart, betweenEnd);
+
+      if (between.length > family.exclusionWindow) {
+        continue;
+      }
+      if (CONTRASTIVE_CONJUNCTION_PATTERN.test(between)) {
+        continue;
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function reconcileExistingRequirementForPatch(args: {
   existing: RefinedRequirement;
   patch: Partial<RefinedRequirement>;
@@ -109,8 +205,13 @@ export function reconcileExistingRequirementForPatch(args: {
     ...(args.patch.nonFunctionalConstraints ?? []),
   ].filter((value): value is string => Boolean(value));
 
-  const concurrencyFullyExcluded = scopeDecisionValues.some((value) =>
-    FULL_CONCURRENCY_EXCLUSION_PATTERN.test(value)
+  const excludedTopicFamilies = EXCLUSION_TOPIC_FAMILIES.filter((family) =>
+    scopeDecisionValues.some((value) =>
+      hasConnectedExclusionSignal(value, family)
+    )
+  );
+  const concurrencyFullyExcluded = excludedTopicFamilies.some(
+    (family) => family.name === "concurrency"
   );
   const concurrencyUnresolved =
     !concurrencyFullyExcluded &&
@@ -138,7 +239,9 @@ export function reconcileExistingRequirementForPatch(args: {
 
   for (const key of ACTIVE_SECTION_KEYS) {
     filterSection(reconciled, key, (value) => {
-      if (concurrencyFullyExcluded && CONCURRENCY_TOPIC_PATTERN.test(value)) {
+      if (
+        excludedTopicFamilies.some((family) => family.activePattern.test(value))
+      ) {
         return false;
       }
       if (
@@ -169,12 +272,13 @@ export function reconcileExistingRequirementForPatch(args: {
     });
   }
 
-  if (concurrencyFullyExcluded) {
+  if (excludedTopicFamilies.length) {
     for (const key of QUESTION_SECTION_KEYS) {
       filterSection(
         reconciled,
         key,
-        (value) => !CONCURRENCY_TOPIC_PATTERN.test(value)
+        (value) =>
+          !excludedTopicFamilies.some((family) => family.activePattern.test(value))
       );
     }
   }
