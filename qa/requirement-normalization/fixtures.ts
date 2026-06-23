@@ -416,18 +416,18 @@ export const manualConcurrencyScopeRequirement: RefinedRequirement = {
 export const manualWorkflowLiveConcurrencyRequirement: RefinedRequirement = {
   ...existingManualQualityRequirement,
   riskAreas: [
-    "Concurrency issues with multiple simultaneous restarts for the same orderLineId.",
-    "A non-existent orderLineId causes a 404 response.",
-    "Invalid or missing request body fields cause 400 errors.",
-    "Incorrect filtering of mod_error_retry records by exSystem='NetCracker'.",
-    "Incorrect setting of the deleted flag on mod_process_flow records.",
-    "Improper deleteNcTfcOrderData handling may cause unintended data deletion.",
+    "Invalid or missing request body fields causing validation failures.",
+    "OrderLineId not found in mod_process_flow or related tables.",
+    "Partial cleanup failure where some database updates or deletes succeed and others fail.",
+    "Concurrency issues when multiple manual workflow restarts are initiated simultaneously for the same orderLineId.",
   ],
   coverageTargets: [
-    "Test concurrent requests for the same orderLineId to check concurrency control.",
-    "Request with non-existent orderLineId returns 404.",
-    "Request with invalid deleteNcTfcOrderData returns 400.",
-    "All mod_process_flow records for orderLineId are marked deleted.",
+    "Test API with valid orderLineId and deleteNcTfcOrderData true to verify all related records are cleaned up.",
+    "Test API with valid orderLineId and deleteNcTfcOrderData false to verify only mod_process_flow records are marked deleted.",
+    "Test API with non-existent orderLineId to verify HTTP 404 response.",
+    "Test API with missing or invalid request body fields to verify HTTP 400 response.",
+    "Simulate database failure during cleanup to verify HTTP 500 response.",
+    "Test concurrent requests for the same orderLineId to observe concurrency handling.",
   ],
 };
 

@@ -169,6 +169,21 @@ function itemCount(requirement: RefinedRequirement): number {
   ].length;
 }
 
+function activeRequirementText(requirement: RefinedRequirement): string {
+  return [
+    ...(requirement.inScope ?? []),
+    ...(requirement.functionalScope ?? []),
+    ...(requirement.businessRules ?? []),
+    ...(requirement.acceptanceCriteria ?? []),
+    ...(requirement.edgeCases ?? []),
+    ...(requirement.edgeCasesNegativePaths ?? []),
+    ...(requirement.riskAreas ?? []),
+    ...(requirement.riskFocus ?? []),
+    ...(requirement.coverageTargets ?? []),
+    ...(requirement.minimalReproScenarios ?? []),
+  ].join("\n");
+}
+
 test.describe("requirement normalization regression fixtures", () => {
   test("strict MANUAL_WORKFLOW_RESTART preserves source technical rules", () => {
     const requirement = strictToRequirement(
@@ -382,7 +397,20 @@ test.describe("iterative requirement refinement", () => {
 test.describe("cross-section contradiction reconciliation", () => {
   test("NoBill confirmed concurrency outcome becomes unresolved without stale claims", () => {
     const artifact = mergeArtifact(
-      { refinedRequirement: noBillDeterministicConcurrencyRequirement },
+      {
+        refinedRequirement: {
+          ...noBillDeterministicConcurrencyRequirement,
+          coverageTargets: [
+            ...(noBillDeterministicConcurrencyRequirement.coverageTargets ?? []),
+            "Observe concurrent post-recharge requests to characterize unresolved duplicate handling.",
+          ],
+          openQuestionsClarifications: [
+            ...(noBillDeterministicConcurrencyRequirement.openQuestionsClarifications ??
+              []),
+            "Concurrency acceptance/rejection behavior remains unresolved for simultaneous OrderID requests.",
+          ],
+        },
+      },
       noBillConcurrencyUnresolvedPatch
     );
     const requirement = artifact.refinedRequirement!;
@@ -395,6 +423,11 @@ test.describe("cross-section contradiction reconciliation", () => {
       requirement,
       "openQuestionsClarifications",
       "acceptance/rejection behavior"
+    );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "characterize unresolved duplicate handling"
     );
     expectContains(requirement, "GUID, OrderID, and Transaction Number remain distinct");
     expectContains(requirement, "NoBill Proxy retries");
@@ -428,7 +461,7 @@ test.describe("cross-section contradiction reconciliation", () => {
       { refinedRequirement: manualWorkflowLiveConcurrencyRequirement },
       {
         context:
-          "Concurrency control and race-condition handling are explicitly out of scope.",
+          "Concurrency control, race-condition handling, locking, rollback, atomicity, logging, monitoring, pagination, batch-size, and path/body ID matching are explicitly out of scope.",
         coverageTargets: [
           "Verify deleteNcTfcOrderData=false leaves optional cleanup tables unchanged.",
         ],
@@ -437,7 +470,7 @@ test.describe("cross-section contradiction reconciliation", () => {
     const requirement = artifact.refinedRequirement!;
 
     expectSectionNotContains(requirement, "riskAreas", "Concurrency issues");
-    expectSectionNotContains(requirement, "riskAreas", "simultaneous restarts");
+    expectSectionNotContains(requirement, "riskAreas", "initiated simultaneously");
     expectSectionNotContains(
       requirement,
       "coverageTargets",
@@ -446,14 +479,40 @@ test.describe("cross-section contradiction reconciliation", () => {
     expectSectionNotContains(
       requirement,
       "coverageTargets",
-      "check concurrency control"
+      "concurrency handling"
     );
+    const activeText = activeRequirementText(requirement);
+    expect(activeText).not.toContain("manual workflow restarts are initiated simultaneously");
+    expect(activeText).not.toContain("race-condition");
     expectContains(requirement, "explicitly out of scope");
+    expectContains(requirement, "Concurrency control, race-condition handling");
     expectSectionContains(
       requirement,
       "coverageTargets",
       "optional cleanup tables"
     );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "non-existent orderLineId"
+    );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "missing or invalid request body fields"
+    );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "deleteNcTfcOrderData true"
+    );
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "deleteNcTfcOrderData false"
+    );
+    expectSectionContains(requirement, "coverageTargets", "HTTP 500 response");
+    expectSectionContains(requirement, "riskAreas", "Partial cleanup failure");
     expectContains(requirement, "PATCH /manual-workflow-restart/{orderLineId}");
     expectContains(requirement, "mod_process_flow");
     expectContains(requirement, "mod_nc_tfc_orders");
@@ -464,7 +523,17 @@ test.describe("cross-section contradiction reconciliation", () => {
 
   test("concurrency exclusion preserves generic request and orderLineId content", () => {
     const artifact = mergeArtifact(
-      { refinedRequirement: manualWorkflowLiveConcurrencyRequirement },
+      {
+        refinedRequirement: {
+          ...manualWorkflowLiveConcurrencyRequirement,
+          functionalScope: [
+            "Request with non-existent orderLineId returns 404.",
+            "Request with invalid deleteNcTfcOrderData returns 400.",
+            "All mod_process_flow records for orderLineId are marked deleted.",
+            "Multiple mod_process_flow records for the same orderLineId are handled.",
+          ],
+        },
+      },
       {
         outOfScope: [
           "Concurrent request handling is out of scope for manual workflow restart.",
@@ -478,8 +547,12 @@ test.describe("cross-section contradiction reconciliation", () => {
       "outOfScope",
       "Concurrent request handling"
     );
-    expectSectionContains(requirement, "riskAreas", "non-existent orderLineId");
+    expectSectionContains(requirement, "riskAreas", "OrderLineId not found");
     expectSectionContains(requirement, "riskAreas", "request body fields");
+    expectSectionContains(requirement, "functionalScope", "non-existent orderLineId");
+    expectSectionContains(requirement, "functionalScope", "invalid deleteNcTfcOrderData");
+    expectSectionContains(requirement, "functionalScope", "mod_process_flow records");
+    expectSectionContains(requirement, "functionalScope", "Multiple mod_process_flow");
     expectSectionContains(
       requirement,
       "coverageTargets",
@@ -488,7 +561,7 @@ test.describe("cross-section contradiction reconciliation", () => {
     expectSectionContains(
       requirement,
       "coverageTargets",
-      "invalid deleteNcTfcOrderData"
+      "missing or invalid request body fields"
     );
     expectSectionContains(requirement, "coverageTargets", "mod_process_flow records");
     expectSectionNotContains(requirement, "riskAreas", "simultaneous restarts");
@@ -497,6 +570,64 @@ test.describe("cross-section contradiction reconciliation", () => {
       "coverageTargets",
       "concurrent requests"
     );
+  });
+
+  test("logging and monitoring exclusion preserves structured responses", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          objective: "Restart a manual workflow.",
+          acceptanceCriteria: [
+            "The API returns structured 200, 400, 404, and 500 JSON responses.",
+            "Invalid request body validation returns a structured 400 response.",
+          ],
+          coverageTargets: [
+            "Verify logging and monitoring coverage for cleanup decisions.",
+            "Verify validation response coverage for malformed request bodies.",
+          ],
+        },
+      },
+      {
+        nonFunctionalConstraints: [
+          "Logging and monitoring are explicitly out of scope for this correction.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionContains(requirement, "nonFunctionalConstraints", "Logging");
+    expectSectionNotContains(requirement, "coverageTargets", "logging");
+    expectSectionNotContains(requirement, "coverageTargets", "monitoring");
+    expectSectionContains(requirement, "acceptanceCriteria", "200, 400, 404, and 500");
+    expectSectionContains(requirement, "acceptanceCriteria", "structured 400 response");
+    expectSectionContains(requirement, "coverageTargets", "validation response");
+  });
+
+  test("pagination and batch-size exclusion preserves multiple-record handling", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          objective: "Restart a manual workflow.",
+          businessRules: [
+            "API must handle multiple mod_process_flow records per orderLineId.",
+          ],
+          coverageTargets: [
+            "Test pagination behavior for large cleanup result sets.",
+            "Test batch-size limits when many records match the orderLineId.",
+          ],
+        },
+      },
+      {
+        context:
+          "Pagination and batch-size are explicitly out of scope for this requirement.",
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectContains(requirement, "Pagination and batch-size");
+    expectSectionContains(requirement, "businessRules", "multiple mod_process_flow");
+    expectSectionNotContains(requirement, "coverageTargets", "pagination");
+    expectSectionNotContains(requirement, "coverageTargets", "batch-size");
   });
 
   test("same-turn additions merge against the reconciled MANUAL_WORKFLOW_RESTART base", () => {
