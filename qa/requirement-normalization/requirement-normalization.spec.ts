@@ -563,7 +563,11 @@ test.describe("cross-section contradiction reconciliation", () => {
       "coverageTargets",
       "missing or invalid request body fields"
     );
-    expectSectionContains(requirement, "coverageTargets", "mod_process_flow records");
+    expectSectionContains(
+      requirement,
+      "coverageTargets",
+      "only mod_process_flow records are marked deleted"
+    );
     expectSectionNotContains(requirement, "riskAreas", "simultaneous restarts");
     expectSectionNotContains(
       requirement,
@@ -628,6 +632,105 @@ test.describe("cross-section contradiction reconciliation", () => {
     expectSectionContains(requirement, "businessRules", "multiple mod_process_flow");
     expectSectionNotContains(requirement, "coverageTargets", "pagination");
     expectSectionNotContains(requirement, "coverageTargets", "batch-size");
+  });
+
+  test("rollback and atomicity exclusion preserves structured failure responses", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          objective: "Restart a manual workflow.",
+          businessRules: [
+            "Cleanup must provide rollback, atomicity, and compensation guarantees.",
+            "Cleanup failure returns a structured 500 response.",
+          ],
+          riskAreas: [
+            "Partial cleanup failure where some database updates or deletes succeed and others fail.",
+            "Rollback or compensation failure may leave data inconsistent.",
+          ],
+          coverageTargets: [
+            "Verify rollback and compensation behavior for failed cleanup.",
+            "Verify structured 500 response handling for cleanup failure.",
+          ],
+        },
+      },
+      {
+        nonFunctionalConstraints: [
+          "Rollback, atomicity, and compensation are explicitly out of scope.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionContains(requirement, "nonFunctionalConstraints", "Rollback");
+    expectSectionNotContains(requirement, "businessRules", "rollback");
+    expectSectionNotContains(requirement, "businessRules", "atomicity");
+    expectSectionNotContains(requirement, "riskAreas", "compensation");
+    expectSectionNotContains(requirement, "coverageTargets", "rollback");
+    expectSectionContains(requirement, "businessRules", "structured 500 response");
+    expectSectionContains(requirement, "riskAreas", "Partial cleanup failure");
+    expectSectionContains(requirement, "coverageTargets", "structured 500 response");
+  });
+
+  test("contrastive exclusion guard preserves non-excluded rollback content", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          objective: "Restart a manual workflow.",
+          businessRules: [
+            "Rollback is required for failed cleanup operations.",
+            "Logging captures cleanup decisions.",
+          ],
+          coverageTargets: [
+            "Verify rollback behavior for failed cleanup.",
+            "Verify logging coverage for cleanup decisions.",
+          ],
+        },
+      },
+      {
+        context: "Rollback is required, but logging is out of scope.",
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectContains(requirement, "Rollback is required, but logging is out of scope");
+    expectSectionContains(requirement, "businessRules", "Rollback is required");
+    expectSectionContains(requirement, "coverageTargets", "rollback behavior");
+    expectSectionNotContains(requirement, "businessRules", "Logging captures");
+    expectSectionNotContains(requirement, "coverageTargets", "logging coverage");
+  });
+
+  test("path/body ID matching exclusion preserves path and body validation", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          objective: "Update an entity by path identifier.",
+          acceptanceCriteria: [
+            "Body identifier must match path identifier before processing.",
+            "Missing path parameter returns 400.",
+            "Invalid request body fields return 400.",
+          ],
+          coverageTargets: [
+            "Test path/body identifier mismatch.",
+            "Test missing path parameter validation.",
+            "Test invalid request body validation.",
+          ],
+        },
+      },
+      {
+        outOfScope: [
+          "Path/body ID matching is explicitly out of scope for this correction.",
+        ],
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionContains(requirement, "outOfScope", "Path/body ID matching");
+    expectSectionNotContains(requirement, "acceptanceCriteria", "match path identifier");
+    expectSectionNotContains(requirement, "coverageTargets", "path/body identifier mismatch");
+    expectSectionContains(requirement, "acceptanceCriteria", "Missing path parameter");
+    expectSectionContains(requirement, "acceptanceCriteria", "Invalid request body");
+    expectSectionContains(requirement, "coverageTargets", "path parameter validation");
+    expectSectionContains(requirement, "coverageTargets", "request body validation");
   });
 
   test("same-turn additions merge against the reconciled MANUAL_WORKFLOW_RESTART base", () => {
