@@ -40,7 +40,7 @@ const EXCLUSION_TOPIC_FAMILIES: ExclusionTopicFamily[] = [
     topicPattern:
       /\b(concurrency (?:control|handling)|race[- ]condition handling|simultaneous restarts? handling|concurrent requests? handling|parallel processing handling|locking)\b/i,
     activePattern:
-      /\b(concurrency issues?|concurrency handling|race[- ]conditions?|initiated simultaneously|simultaneous restarts?|multiple simultaneous restarts?|parallel processing|same second|same time|locking|only one transaction|duplicate requests?)\b|\bconcurrent\b.{0,50}\brequests?\b|\bsimultaneous\b.{0,50}\brequests?\b/i,
+      /\b(concurrency issues?|concurrency handling|handle concurrency safely|concurrency-safe|safe handling of concurrent requests?|race[- ]conditions?|initiated simultaneously|simultaneous restarts?|multiple simultaneous restarts?|parallel processing|same second|same time|locking|only one transaction|duplicate requests?)\b|\bconcurrent\b.{0,50}\brequests?\b|\bsimultaneous\b.{0,50}\brequests?\b/i,
     exclusionWindow: 220,
   },
   {

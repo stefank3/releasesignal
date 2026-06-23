@@ -576,6 +576,72 @@ test.describe("cross-section contradiction reconciliation", () => {
     );
   });
 
+  test("concurrency exclusion removes stale functional scope while preserving database integrity", () => {
+    const artifact = mergeArtifact(
+      {
+        refinedRequirement: {
+          objective: "Restart a manual workflow.",
+          functionalScope: [
+            "Implement a robust PATCH API to restart workflow by cleaning up existing order execution data.",
+            "Ensure all relevant records are updated or deleted according to input flags.",
+            "Provide clear and accurate HTTP responses reflecting success or failure states.",
+            "Maintain database integrity and handle concurrency safely.",
+            "Maintain database integrity during cleanup.",
+          ],
+          inScope: [
+            "Handle concurrency safely.",
+            "Ensure safe handling of concurrent requests.",
+            "Maintain database integrity during cleanup.",
+          ],
+          riskAreas: [
+            "Multiple mod_process_flow records for the same orderLineId not all marked deleted.",
+            "Incorrect conditional deletion of mod_nc_tfc_orders and mod_error_retry records.",
+          ],
+          coverageTargets: [
+            "Test API with non-existent orderLineId to confirm HTTP 404 response.",
+            "Test API with missing or invalid parameters to confirm HTTP 400 response.",
+          ],
+        },
+      },
+      {
+        context:
+          "Concurrency control, race-condition handling, locking, rollback, atomicity, logging, monitoring, pagination, batch-size, and path/body ID matching are explicitly out of scope.",
+      }
+    );
+    const requirement = artifact.refinedRequirement!;
+
+    expectSectionNotContains(
+      requirement,
+      "functionalScope",
+      "Maintain database integrity and handle concurrency safely"
+    );
+    expectSectionNotContains(requirement, "functionalScope", "handle concurrency safely");
+    expectSectionNotContains(requirement, "inScope", "Handle concurrency safely");
+    expectSectionNotContains(
+      requirement,
+      "inScope",
+      "safe handling of concurrent requests"
+    );
+    expectSectionContains(requirement, "functionalScope", "robust PATCH API");
+    expectSectionContains(requirement, "functionalScope", "input flags");
+    expectSectionContains(requirement, "functionalScope", "HTTP responses");
+    expectSectionContains(
+      requirement,
+      "functionalScope",
+      "Maintain database integrity during cleanup"
+    );
+    expectSectionContains(
+      requirement,
+      "inScope",
+      "Maintain database integrity during cleanup"
+    );
+    expectSectionContains(requirement, "riskAreas", "Multiple mod_process_flow records");
+    expectSectionContains(requirement, "riskAreas", "Incorrect conditional deletion");
+    expectSectionContains(requirement, "coverageTargets", "HTTP 404 response");
+    expectSectionContains(requirement, "coverageTargets", "HTTP 400 response");
+    expectContains(requirement, "Concurrency control, race-condition handling");
+  });
+
   test("logging and monitoring exclusion preserves structured responses", () => {
     const artifact = mergeArtifact(
       {
