@@ -106,6 +106,7 @@ type BillingPrecheckResult =
       ok: true;
       orgId: string | undefined;
       orgState: Awaited<ReturnType<typeof ensureOrgForUser>>;
+      skipCreditCharge: boolean;
     };
 
 type RateLimitResult =
@@ -354,16 +355,27 @@ export async function ensureBillingPreconditions(args: {
   startTime: number;
   recordChatMetric: MetricRecorder;
 }): Promise<BillingPrecheckResult> {
+  const isAdmin = await isAdminFromAccessToken();
   const orgState = await ensureOrgForUser({
     auth0Sub: args.auth0Sub,
     name: (args.user.name as string | undefined) ?? null,
     email: (args.user.email as string | undefined) ?? null,
+    isAuth0Admin: isAdmin,
   });
 
   const orgId =
     typeof orgState.organizationId === "string"
       ? orgState.organizationId
       : undefined;
+
+  if (isAdmin) {
+    return {
+      ok: true,
+      orgId,
+      orgState,
+      skipCreditCharge: true,
+    };
+  }
 
   const accountAccess = await evaluateAccountAccess({
     organizationId: orgId,
@@ -375,6 +387,7 @@ export async function ensureBillingPreconditions(args: {
       ok: true,
       orgId,
       orgState,
+      skipCreditCharge: false,
     };
   }
 

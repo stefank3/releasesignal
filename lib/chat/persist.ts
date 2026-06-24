@@ -28,17 +28,20 @@ export async function persistAssistantWithBillingTx(args: {
   auth0Sub: string;
   requestId: string;
   creditsCharged: number;
+  skipCreditCharge?: boolean;
   assistantContentToStore: string;
   promptTokens: number;
   completionTokens: number;
 }) {
   const creditsRemaining = await prisma.$transaction(
     async (tx) => {
-      const remainingBal = await chargeCreditsTx(tx, {
-        auth0Sub: args.auth0Sub,
-        credits: args.creditsCharged,
-        requestId: args.requestId,
-      });
+      const remainingBal = args.skipCreditCharge
+        ? null
+        : await chargeCreditsTx(tx, {
+            auth0Sub: args.auth0Sub,
+            credits: args.creditsCharged,
+            requestId: args.requestId,
+          });
 
       await tx.chatMessage
         .create({
