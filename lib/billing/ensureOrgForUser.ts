@@ -20,8 +20,9 @@ export async function ensureOrgForUser(params: {
   auth0Sub: string;
   name?: string | null;
   email?: string | null;
+  isAuth0Admin?: boolean;
 }): Promise<EnsureOrgState> {
-  const { auth0Sub, name } = params;
+  const { auth0Sub, name, isAuth0Admin = false } = params;
 
   const member = await prisma.orgMember.findFirst({
     where: { auth0Sub },
@@ -48,6 +49,27 @@ export async function ensureOrgForUser(params: {
   const periodEnd = new Date(now.getTime() + TRIAL_DURATION_DAYS * DAY_IN_MS);
 
   return prisma.$transaction(async (tx) => {
+    if (isAuth0Admin) {
+      const org = await tx.organization.create({
+        data: {
+          name: name ? `${name}'s Admin Workspace` : "Admin Workspace",
+          members: { create: { auth0Sub, role: "admin" } },
+          wallets: { create: { currency: CREDIT_CURRENCY, balance: 0 } },
+        },
+        select: {
+          id: true,
+          members: { select: { role: true }, take: 1 },
+          wallets: { select: { id: true, balance: true }, take: 1 },
+        },
+      });
+
+      return {
+        organizationId: org.id,
+        role: org.members[0]?.role ?? "admin",
+        wallet: org.wallets[0]!,
+      };
+    }
+
     const org = await tx.organization.create({
       data: {
         name: name ? `${name}'s Office` : "New Office",

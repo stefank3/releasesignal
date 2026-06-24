@@ -78,7 +78,7 @@ export async function GET(req: Request) {
     // Auth0 Next.js SDK v4: namespaced claims may not be present in session.user
     // so we use the Access Token for role checks.
     const isAdmin = await isAdminFromAccessToken();
-    const orgState = await ensureOrgForUser({ auth0Sub, name, email });
+    const orgState = await ensureOrgForUser({ auth0Sub, name, email, isAuth0Admin: isAdmin });
     const subscription = await prisma.subscription.findFirst({
       where: { organizationId: orgState.organizationId },
       orderBy: { createdAt: "desc" },
