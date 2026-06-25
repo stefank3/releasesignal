@@ -107,6 +107,11 @@ type MeIdentityResponse =
   | { authenticated: true; auth0Sub: string }
   | { authenticated: false };
 
+type IdentityResolution =
+  | { status: "authenticated"; auth0Sub: string }
+  | { status: "unauthenticated" }
+  | { status: "unknown" };
+
 type WorkflowAction =
   | "generate_tests_from_requirement"
   | "generate_next_batch_of_tests"
@@ -341,6 +346,31 @@ export function useChatSession(): UseChatSessionReturn {
     setWorkflowActionError(null);
   };
 
+  const resolveCurrentIdentity = async (
+    signal: AbortSignal
+  ): Promise<IdentityResolution> => {
+    try {
+      const res = await fetch("/api/me", {
+        cache: "no-store",
+        signal,
+      });
+
+      if (!res.ok) {
+        return { status: "unknown" };
+      }
+
+      const me = (await res.json()) as MeIdentityResponse;
+
+      if (me.authenticated) {
+        return { status: "authenticated", auth0Sub: me.auth0Sub };
+      }
+
+      return { status: "unauthenticated" };
+    } catch {
+      return { status: "unknown" };
+    }
+  };
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SIDEBAR_KEY);
@@ -362,33 +392,34 @@ export function useChatSession(): UseChatSessionReturn {
     const controller = new AbortController();
 
     (async () => {
+      const identity = await resolveCurrentIdentity(controller.signal);
+
+      if (controller.signal.aborted) return;
+
+      if (identity.status === "unknown") {
+        resetUserScopedWorkspaceState();
+        return;
+      }
+
       try {
-        const res = await fetch("/api/me", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-
-        const me = res.ok
-          ? ((await res.json()) as MeIdentityResponse)
-          : ({ authenticated: false } as const);
-
-        if (!me.authenticated) {
+        if (identity.status === "unauthenticated") {
           localStorage.removeItem(STORAGE_KEY);
           localStorage.removeItem(LAST_AUTH0_SUB_KEY);
           resetUserScopedWorkspaceState();
+          setIdentityReady(true);
           return;
         }
 
         const lastSeenAuth0Sub = localStorage.getItem(LAST_AUTH0_SUB_KEY);
         const auth0SubChanged =
-          !!lastSeenAuth0Sub && lastSeenAuth0Sub !== me.auth0Sub;
+          !!lastSeenAuth0Sub && lastSeenAuth0Sub !== identity.auth0Sub;
 
         if (auth0SubChanged) {
           localStorage.removeItem(STORAGE_KEY);
           resetUserScopedWorkspaceState();
         }
 
-        localStorage.setItem(LAST_AUTH0_SUB_KEY, me.auth0Sub);
+        localStorage.setItem(LAST_AUTH0_SUB_KEY, identity.auth0Sub);
 
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
