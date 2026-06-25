@@ -20,6 +20,7 @@ import { log } from "@/lib/logger";
 type MeResponse =
   | {
       authenticated: true;
+      auth0Sub: string;
       email: string;
       isAdmin: boolean;
       organizationId: string;
@@ -94,6 +95,7 @@ export async function GET(req: Request) {
     return NextResponse.json<MeResponse>(
       {
         authenticated: true,
+        auth0Sub,
         email,
         isAdmin,
         organizationId: orgState.organizationId,
