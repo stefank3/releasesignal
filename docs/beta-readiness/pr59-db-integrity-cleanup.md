@@ -8,19 +8,21 @@ During QA validation, a normal Auth0 user with no Auth0 roles appeared in more t
 
 Observed user:
 
-- Email: `qa-user-a@releasesignal.io`
-- Auth0 subject: `auth0|6a3d044c91d7e6dd01677b4b`
+- Email: `<REVIEWED_QA_USER_EMAIL>`
+- Auth0 subject: `<REVIEWED_AUTH0_SUB>`
 - Auth0 roles: none
 
 Runtime `/api/me` returned the expected active account state:
 
 - `isAdmin=false`
-- active `organizationId=604738e5-cc8d-4710-a81f-58d24c30865d`
+- active `organizationId=<REVIEWED_ACTIVE_ORGANIZATION_ID>`
 - `planCode=trial_v1`
 - `planStatus=trialing`
 - wallet balance reflected trial grant and chat usage
 
 Database inspection found duplicate provisioning records and stale `OrgMember.role = 'admin'` values for a user that is not an Auth0 app-admin.
+
+The real QA identifiers observed during validation are intentionally sanitized in committed artifacts. Use locally reviewed values when running the audit against a target database.
 
 ## Risk classification
 
@@ -75,6 +77,8 @@ The audit is read-only. It reports rows with:
 - `organization_id`
 - `details`
 
+The `expected_auth0_roles` CTE in the SQL file is a local/manual review input area. It is empty by default so committed repo artifacts do not contain real QA identifiers and unchanged audit runs do not emit placeholder evidence. When Auth0 role evidence has been reviewed, replace the empty CTE body locally with reviewed `VALUES` rows before running the audit.
+
 ### Categories
 
 #### `safeToClean`
@@ -92,6 +96,7 @@ Records that need Auth0/runtime/DB comparison before cleanup.
 Examples:
 
 - same `auth0Sub` linked to multiple organizations
+- all stored `OrgMember.role = 'admin'` rows, listed unconditionally for manual verification
 - normal users stored as `OrgMember.role = 'admin'` when Auth0 evidence says no roles
 - Auth0 admins with `trial_v1`
 - duplicate trial subscriptions
@@ -155,6 +160,7 @@ Do not clean production data from Codex. This PR only prepares the audit and cle
 - No billing semantics were changed.
 - No prompts, artifact contracts, workflow semantics, or UI were changed.
 - No PR #60 automated regression work was implemented.
+- Runtime app-admin access remains Auth0-claim based; the stored org-admin role audit is for DB hygiene/manual verification only.
 
 ## Recommended follow-ups
 

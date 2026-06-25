@@ -10,17 +10,21 @@
 -- - futureHardeningNeeded: schema/provisioning risks that need a later implementation PR.
 --
 -- Optional Auth0 role evidence:
--- Add reviewed Auth0 users to expected_auth0_roles before running. The observed QA user
--- from PR #59 is included with is_auth0_admin=false because Auth0 roles were empty.
+-- This CTE is intentionally empty by default so committed repo artifacts do not
+-- contain real QA identifiers and unchanged audit runs do not emit placeholder
+-- evidence. Before running a reviewed audit locally, replace the SELECT with
+-- VALUES rows such as:
+--
+--   VALUES
+--     ('<REVIEWED_AUTH0_SUB>', '<REVIEWED_EMAIL>', false, 'Manual Auth0 check: no roles')
 
 WITH expected_auth0_roles(auth0_sub, email, is_auth0_admin, evidence) AS (
-  VALUES
-    (
-      'auth0|6a3d044c91d7e6dd01677b4b',
-      'qa-user-a@releasesignal.io',
-      false,
-      'PR #59 manual Auth0 check: no roles'
-    )
+  SELECT
+    NULL::text AS auth0_sub,
+    NULL::text AS email,
+    NULL::boolean AS is_auth0_admin,
+    NULL::text AS evidence
+  WHERE false
 ),
 org_activity AS (
   SELECT
@@ -106,6 +110,33 @@ normal_users_stored_as_admin AS (
   JOIN expected_auth0_roles er ON er.auth0_sub = om."auth0Sub"
   WHERE er.is_auth0_admin = false
     AND om.role = 'admin'
+),
+all_stored_org_admin_roles AS (
+  SELECT
+    om."auth0Sub",
+    om."organizationId",
+    om.id AS org_member_id,
+    om.role,
+    om."createdAt",
+    o.name AS organization_name,
+    s.id AS latest_subscription_id,
+    s.status AS latest_subscription_status,
+    s."planCode" AS latest_subscription_plan_code,
+    s."createdAt" AS latest_subscription_created_at
+  FROM "OrgMember" om
+  JOIN "Organization" o ON o.id = om."organizationId"
+  LEFT JOIN LATERAL (
+    SELECT
+      sub.id,
+      sub.status,
+      sub."planCode",
+      sub."createdAt"
+    FROM "Subscription" sub
+    WHERE sub."organizationId" = om."organizationId"
+    ORDER BY sub."createdAt" DESC
+    LIMIT 1
+  ) s ON true
+  WHERE om.role = 'admin'
 ),
 auth0_admins_with_trial AS (
   SELECT
@@ -204,6 +235,25 @@ audit_rows AS (
       'note', 'Runtime app-admin remains Auth0-claim based; this flags DB hygiene only.'
     )
   FROM normal_users_stored_as_admin n
+
+  UNION ALL
+  SELECT
+    'manualReviewRequired',
+    'allStoredOrgAdminRolesForReview',
+    a."auth0Sub",
+    a."organizationId",
+    jsonb_build_object(
+      'orgMemberId', a.org_member_id,
+      'storedRole', a.role,
+      'orgMemberCreatedAt', a."createdAt",
+      'organizationName', a.organization_name,
+      'latestSubscriptionId', a.latest_subscription_id,
+      'latestSubscriptionStatus', a.latest_subscription_status,
+      'latestSubscriptionPlanCode', a.latest_subscription_plan_code,
+      'latestSubscriptionCreatedAt', a.latest_subscription_created_at,
+      'note', 'Manual verification list only. Runtime app-admin access is Auth0-claim based, not OrgMember.role based.'
+    )
+  FROM all_stored_org_admin_roles a
 
   UNION ALL
   SELECT
