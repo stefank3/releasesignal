@@ -17,6 +17,7 @@ import { PRODUCT_PACKAGE_LABELS, PRODUCT_PLAN_CODES } from "@/lib/product/packag
 type MeResponse =
   | {
       authenticated: true;
+      auth0Sub: string;
       email: string;
       isAdmin: boolean;
       planCode: string | null;

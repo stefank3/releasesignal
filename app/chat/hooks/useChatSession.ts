@@ -101,6 +101,16 @@ import {
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 const SIDEBAR_KEY = "stefans-mvp-sidebar-collapsed-v1";
+const LAST_AUTH0_SUB_KEY = "stefans-mvp-chat-last-auth0-sub-v1";
+
+type MeIdentityResponse =
+  | { authenticated: true; auth0Sub: string }
+  | { authenticated: false };
+
+type IdentityResolution =
+  | { status: "authenticated"; auth0Sub: string }
+  | { status: "unauthenticated" }
+  | { status: "unknown" };
 
 type WorkflowAction =
   | "generate_tests_from_requirement"
@@ -297,6 +307,7 @@ export function useChatSession(): UseChatSessionReturn {
 
   const currentSessionArtifactRef = useRef<SessionArtifact | null>(null);
   const currentArtifactUpdatedAtRef = useRef<string | null>(null);
+  const [identityReady, setIdentityReady] = useState(false);
 
   useEffect(() => {
     currentSessionArtifactRef.current = sessionArtifact;
@@ -311,6 +322,54 @@ export function useChatSession(): UseChatSessionReturn {
   LOCAL PERSISTENCE
   ---------------------------------------------------------
   */
+
+  const resetUserScopedWorkspaceState = () => {
+    setMode("coach");
+    setInput("");
+    setItems([]);
+    setActiveSessionId(null);
+    setActiveSessionMode("coach");
+    setPendingSessionClientId(null);
+    setMessagesCursor(null);
+    setRate(null);
+    setRateLimitMsg(null);
+    setLastRequestId(null);
+    setModeLockMsg(null);
+    setLastPending(null);
+    setSessions([]);
+    setSessionsCursor(null);
+    setRenamingId(null);
+    setRenameValue("");
+    setDeletingId(null);
+    setSessionArtifact(null);
+    setArtifactUpdatedAt(null);
+    setWorkflowActionError(null);
+  };
+
+  const resolveCurrentIdentity = async (
+    signal: AbortSignal
+  ): Promise<IdentityResolution> => {
+    try {
+      const res = await fetch("/api/me", {
+        cache: "no-store",
+        signal,
+      });
+
+      if (!res.ok) {
+        return { status: "unknown" };
+      }
+
+      const me = (await res.json()) as MeIdentityResponse;
+
+      if (me.authenticated) {
+        return { status: "authenticated", auth0Sub: me.auth0Sub };
+      }
+
+      return { status: "unauthenticated" };
+    } catch {
+      return { status: "unknown" };
+    }
+  };
 
   useEffect(() => {
     try {
@@ -330,23 +389,70 @@ export function useChatSession(): UseChatSessionReturn {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
+    const controller = new AbortController();
 
-      const parsed = JSON.parse(raw) as PersistedState;
-      if (parsed?.mode) setMode(parsed.mode);
-      if (Array.isArray(parsed.items)) setItems(parsed.items);
-      if (typeof parsed.input === "string") setInput(parsed.input);
-    } catch {
-      localStorage.removeItem(STORAGE_KEY);
-    }
+    (async () => {
+      const identity = await resolveCurrentIdentity(controller.signal);
+
+      if (controller.signal.aborted) return;
+
+      if (identity.status === "unknown") {
+        resetUserScopedWorkspaceState();
+        return;
+      }
+
+      try {
+        if (identity.status === "unauthenticated") {
+          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem(LAST_AUTH0_SUB_KEY);
+          resetUserScopedWorkspaceState();
+          setIdentityReady(true);
+          return;
+        }
+
+        const lastSeenAuth0Sub = localStorage.getItem(LAST_AUTH0_SUB_KEY);
+        const auth0SubChanged =
+          !!lastSeenAuth0Sub && lastSeenAuth0Sub !== identity.auth0Sub;
+
+        if (auth0SubChanged) {
+          localStorage.removeItem(STORAGE_KEY);
+          resetUserScopedWorkspaceState();
+        }
+
+        localStorage.setItem(LAST_AUTH0_SUB_KEY, identity.auth0Sub);
+
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+
+        const parsed = JSON.parse(raw) as PersistedState;
+        if (parsed?.mode) setMode(parsed.mode);
+        if (Array.isArray(parsed.items)) setItems(parsed.items);
+        if (typeof parsed.input === "string") setInput(parsed.input);
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          localStorage.removeItem(STORAGE_KEY);
+          resetUserScopedWorkspaceState();
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIdentityReady(true);
+        }
+      }
+    })();
+
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    const payload: PersistedState = { mode, items, input };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [mode, items, input]);
+    if (!identityReady) return;
+
+    try {
+      const payload: PersistedState = { mode, items, input };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }, [identityReady, mode, items, input]);
 
   /*
   ---------------------------------------------------------
@@ -398,9 +504,11 @@ export function useChatSession(): UseChatSessionReturn {
   };
 
   useEffect(() => {
+    if (!identityReady) return;
+
     void loadSessions(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [identityReady]);
 
   /*
   ---------------------------------------------------------
