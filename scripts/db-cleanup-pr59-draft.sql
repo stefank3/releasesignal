@@ -1,0 +1,107 @@
+-- Release Signal PR #59 cleanup readiness draft
+--
+-- MANUAL REVIEW ONLY.
+-- This file intentionally contains commented SQL templates. Do not run any
+-- destructive statement until the audit output from scripts/audit-beta-db-integrity.sql
+-- has been reviewed and the human lead explicitly approves exact IDs.
+--
+-- Recommended manual workflow:
+-- 1. Run scripts/audit-beta-db-integrity.sql.
+-- 2. Copy candidate IDs into a private review note.
+-- 3. Decide one active organization per auth0Sub using runtime /api/me, Auth0 role evidence,
+--    ChatSession/ChatMessage activity, ledger history, and telemetry.
+-- 4. Replace placeholder IDs below with reviewed IDs.
+-- 5. Run in a transaction.
+-- 6. Inspect RETURNING rows.
+-- 7. ROLLBACK first. Only COMMIT after a second review.
+
+BEGIN;
+
+-- ---------------------------------------------------------------------------
+-- 1) Remove duplicate non-active trial orgs with no user activity
+-- ---------------------------------------------------------------------------
+-- Criteria before considering:
+-- - organization appears as safeToClean / emptyDuplicateOrgCandidate in audit.
+-- - organization has no ChatSession/ChatMessage activity for its auth0Sub.
+-- - organization has no chat_usage ledger rows.
+-- - organization has no telemetry.
+-- - at most one trial_grant exists and no evidence-bearing ledger rows exist.
+-- - one reviewed active org remains for the auth0Sub.
+--
+-- DELETE FROM "Organization"
+-- WHERE id IN (
+--   'REVIEWED_EMPTY_DUPLICATE_ORG_ID'
+-- )
+-- RETURNING id, name, "createdAt";
+
+-- ---------------------------------------------------------------------------
+-- 2) Correct stale OrgMember.role = 'admin' for reviewed normal Auth0 users
+-- ---------------------------------------------------------------------------
+-- Criteria before considering:
+-- - Auth0 role evidence confirms no app-admin role.
+-- - Runtime /api/me returns isAdmin=false for the same auth0Sub.
+-- - This is DB hygiene only; app-admin access remains controlled by Auth0 claim.
+--
+-- UPDATE "OrgMember"
+-- SET role = 'member'
+-- WHERE id IN (
+--   'REVIEWED_ORG_MEMBER_ID'
+-- )
+--   AND role = 'admin'
+-- RETURNING id, "organizationId", "auth0Sub", role;
+
+-- ---------------------------------------------------------------------------
+-- 3) Remove exact duplicate trial_grant rows
+-- ---------------------------------------------------------------------------
+-- Criteria before considering:
+-- - Audit shows duplicateTrialGrants for the same wallet/auth0Sub.
+-- - Duplicate rows are confirmed accidental, not distinct grants.
+-- - Keep the earliest reviewed trial_grant row.
+-- - Reconcile wallet balance in the same reviewed transaction if needed.
+--
+-- DELETE FROM "CreditLedger"
+-- WHERE id IN (
+--   'REVIEWED_DUPLICATE_TRIAL_GRANT_LEDGER_ID'
+-- )
+-- RETURNING id, "walletId", "auth0Sub", delta, reason, "requestId", "createdAt";
+
+-- ---------------------------------------------------------------------------
+-- 4) Reconcile wallet balance to reviewed ledger sum
+-- ---------------------------------------------------------------------------
+-- Criteria before considering:
+-- - Audit shows walletBalanceDoesNotMatchLedgerSum.
+-- - Ledger sum is confirmed authoritative after reviewing admin_adjust/manual rows.
+-- - Any duplicate ledger deletion above has already been applied in this transaction.
+--
+-- UPDATE "CreditWallet" cw
+-- SET balance = reviewed.ledger_sum
+-- FROM (
+--   SELECT
+--     cl."walletId",
+--     COALESCE(SUM(cl.delta), 0)::int AS ledger_sum
+--   FROM "CreditLedger" cl
+--   WHERE cl."walletId" IN ('REVIEWED_WALLET_ID')
+--   GROUP BY cl."walletId"
+-- ) reviewed
+-- WHERE cw.id = reviewed."walletId"
+-- RETURNING cw.id, cw."organizationId", cw.currency, cw.balance;
+
+-- ---------------------------------------------------------------------------
+-- 5) Remove duplicate trial subscriptions
+-- ---------------------------------------------------------------------------
+-- Criteria before considering:
+-- - Audit shows duplicateTrialSubscriptions.
+-- - Keep the newest or human-approved active trial row.
+-- - Deleting a subscription changes account access behavior; validate /api/me after.
+--
+-- DELETE FROM "Subscription"
+-- WHERE id IN (
+--   'REVIEWED_DUPLICATE_TRIAL_SUBSCRIPTION_ID'
+-- )
+-- RETURNING id, "organizationId", status, "planCode", "createdAt";
+
+-- Stop here by default. Inspect RETURNING output and rerun the audit before commit.
+ROLLBACK;
+
+-- Replace ROLLBACK with COMMIT only after explicit human approval.
+-- COMMIT;
