@@ -10,6 +10,8 @@
     "smoke": "playwright test tests/smoke.spec.ts",
     "smoke:prod": "playwright test tests/smoke.spec.ts --grep-invert \"Export buttons|Session survives\"",
     "regression": "playwright test tests/regression.spec.ts",
+    "pr60:gate": "playwright test -c playwright.pr60.config.ts",
+    "pr60:list": "playwright test -c playwright.pr60.config.ts --list",
     "test:all": "playwright test",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug"
