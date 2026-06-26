@@ -67,6 +67,7 @@ npm run regression
 The PR #60 gate is isolated from the default single-account global auth setup.
 It uses explicit Playwright storage-state files for live beta test accounts, and
 skips tests with setup guidance when required accounts or opt-ins are missing.
+It runs headless by default; set `HEADLESS=false` for headed/manual debugging.
 
 ```bash
 npm run pr60:list
@@ -90,6 +91,11 @@ Opt-in live validations:
 Do not use personal, customer, or production admin accounts for PR #60. Use
 dedicated beta test accounts and controlled seeded workspaces only. The PR #60
 suite does not execute DB cleanup and does not interpret PR #59 DB audit results.
+
+PR #60 adds the isolated gate tooling only. A follow-up PR should wire
+`npm run pr60:gate` into CI and ensure the gate cannot report green from
+all-skipped live checks once dedicated PR60 live accounts/storage states are
+configured.
 
 ### Run everything
 
