@@ -68,11 +68,23 @@ The PR #60 gate is isolated from the default single-account global auth setup.
 It uses explicit Playwright storage-state files for live beta test accounts, and
 skips tests with setup guidance when required accounts or opt-ins are missing.
 It runs headless by default; set `HEADLESS=false` for headed/manual debugging.
+This is a manual beta pre-deploy gate for Vercel deploy readiness, not a CI or
+GitHub Actions workflow.
 
 ```bash
 npm run pr60:list
 npm run pr60:gate
 ```
+
+`npm run pr60:list` verifies that the isolated PR60 Playwright config discovers
+the expected PR60 regression tests without executing live Auth0 or AI-backed
+flows.
+
+`npm run pr60:gate` executes the isolated PR60 suite. Before dedicated live
+test accounts and Playwright storage-state files are configured, the acceptable
+result is that all PR60 live checks skip clearly because setup is missing.
+Unexpected failures are not acceptable, and skipped output must not be reported
+as full live coverage.
 
 Required live-account setup:
 
@@ -92,10 +104,50 @@ Do not use personal, customer, or production admin accounts for PR #60. Use
 dedicated beta test accounts and controlled seeded workspaces only. The PR #60
 suite does not execute DB cleanup and does not interpret PR #59 DB audit results.
 
-PR #60 adds the isolated gate tooling only. A follow-up PR should wire
-`npm run pr60:gate` into CI and ensure the gate cannot report green from
-all-skipped live checks once dedicated PR60 live accounts/storage states are
-configured.
+Once dedicated live accounts and storage states are configured, all-skipped PR60
+live checks are no longer acceptable for beta release. At that point, skipped
+checks must be reviewed individually and treated as either expected setup gaps
+or release blockers.
+
+### Manual beta pre-deploy checklist
+
+Release Signal deploys through Vercel. Vercel continues to validate the app
+mainly through `npm run build`; the PR60 regression gate remains a manual
+pre-deploy discipline for now. Do not add GitHub Actions or CI wiring for this
+manual gate.
+
+Level 1 - always required before merge/deploy:
+
+```bash
+npx tsc --noEmit
+npm run build
+git diff --check
+cd qa
+npx playwright test --list
+npm run pr60:list
+```
+
+Level 2 - PR60 manual gate before live Auth0 setup:
+
+```bash
+cd qa
+npm run pr60:gate
+```
+
+Before live PR60 accounts exist, 8 discovered PR60 tests with clear setup skips
+is acceptable. Do not claim full live coverage from all-skipped output.
+
+Level 3 - PR60 live beta gate:
+
+- Configure dedicated normal trial, second normal, and admin users.
+- Create Playwright storage-state files for those users.
+- Seed owner/session state when needed for session isolation checks.
+- Set explicit Auth0/AI/credit-consuming opt-ins.
+- Run `npm run pr60:gate` and treat all-skipped output as unacceptable for beta
+  release once the live setup exists.
+
+See `../docs/beta-predeploy-checklist.md` for the full manual checklist and
+reporting template.
 
 ### Run everything
 
