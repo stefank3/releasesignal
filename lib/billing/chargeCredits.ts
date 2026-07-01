@@ -51,6 +51,7 @@ export async function chargeCreditsTx(tx: PrismaTx, params: ChargeCreditsParams)
   // ------------------------------------------------------------
   const member = await tx.orgMember.findFirst({
     where: { auth0Sub },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { organizationId: true },
   });
   if (!member) throw new Error("User has no organization");
