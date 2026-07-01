@@ -1,4 +1,6 @@
 // lib/billing/ensureOrgForUser.ts
+import { createHash } from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 const CREDIT_CURRENCY = "credits";
@@ -9,12 +11,31 @@ const TRIAL_STATUS = "trialing";
 const TRIAL_SEATS = 1;
 const TRIAL_GRANT_REASON = "trial_grant";
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const PROVISIONING_LOCK_NAMESPACE = "release-signal:auth0-provisioning:v1";
 
 export type EnsureOrgState = {
   organizationId: string;
   role: "admin" | "member" | string; // keep flexible if you want
   wallet: { id: string; balance: number };
 };
+
+function provisioningLockKey(auth0Sub: string): bigint {
+  return createHash("sha256")
+    .update(PROVISIONING_LOCK_NAMESPACE)
+    .update(":")
+    .update(auth0Sub)
+    .digest()
+    .readBigInt64BE(0);
+}
+
+async function lockProvisioningForAuth0Sub(
+  tx: Prisma.TransactionClient,
+  auth0Sub: string
+) {
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(${provisioningLockKey(auth0Sub)})
+  `;
+}
 
 export async function ensureOrgForUser(params: {
   auth0Sub: string;
@@ -26,6 +47,7 @@ export async function ensureOrgForUser(params: {
 
   const member = await prisma.orgMember.findFirst({
     where: { auth0Sub },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { organizationId: true, role: true },
   });
 
@@ -49,6 +71,41 @@ export async function ensureOrgForUser(params: {
   const periodEnd = new Date(now.getTime() + TRIAL_DURATION_DAYS * DAY_IN_MS);
 
   return prisma.$transaction(async (tx) => {
+    await lockProvisioningForAuth0Sub(tx, auth0Sub);
+
+    const lockedMember = await tx.orgMember.findFirst({
+      where: { auth0Sub },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { organizationId: true, role: true },
+    });
+
+    if (lockedMember) {
+      const wallet =
+        (await tx.creditWallet.findUnique({
+          where: {
+            organizationId_currency: {
+              organizationId: lockedMember.organizationId,
+              currency: CREDIT_CURRENCY,
+            },
+          },
+          select: { id: true, balance: true },
+        })) ??
+        (await tx.creditWallet.create({
+          data: {
+            organizationId: lockedMember.organizationId,
+            currency: CREDIT_CURRENCY,
+            balance: 0,
+          },
+          select: { id: true, balance: true },
+        }));
+
+      return {
+        organizationId: lockedMember.organizationId,
+        role: lockedMember.role,
+        wallet,
+      };
+    }
+
     if (isAuth0Admin) {
       const org = await tx.organization.create({
         data: {
@@ -110,5 +167,9 @@ export async function ensureOrgForUser(params: {
       role: org.members[0]?.role ?? "admin",
       wallet,
     };
+  },
+  {
+    maxWait: 5000,
+    timeout: 10000,
   });
 }
