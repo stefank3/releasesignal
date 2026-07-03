@@ -6,7 +6,7 @@ type Props = {
   resolvedTheme?: "light" | "dark";
   isNarrow?: boolean;
   children: React.ReactNode;
-  inputSlot: React.ReactNode;
+  inputSlot?: React.ReactNode;
 };
 
 export const ActivityTimelinePanel = React.forwardRef<HTMLDivElement, Props>(
@@ -75,17 +75,21 @@ export const ActivityTimelinePanel = React.forwardRef<HTMLDivElement, Props>(
           {children}
         </div>
 
-        <div
-          style={{
-            borderTop: isDark
-              ? "1px solid rgba(255,255,255,0.10)"
-              : "1px solid rgba(15,23,42,0.10)",
-            padding: 12,
-            background: isDark ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.55)",
-          }}
-        >
-          {inputSlot}
-        </div>
+        {inputSlot ? (
+          <div
+            style={{
+              borderTop: isDark
+                ? "1px solid rgba(255,255,255,0.10)"
+                : "1px solid rgba(15,23,42,0.10)",
+              padding: 12,
+              background: isDark
+                ? "rgba(0,0,0,0.16)"
+                : "rgba(255,255,255,0.55)",
+            }}
+          >
+            {inputSlot}
+          </div>
+        ) : null}
       </section>
     );
   }

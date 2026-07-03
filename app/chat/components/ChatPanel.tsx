@@ -81,7 +81,7 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { isNearBottom } from "../hooks/useChatSession.helpers";
 
@@ -245,6 +245,219 @@ function EmptyWorkspaceHint(args: { resolvedTheme: "light" | "dark" }) {
   );
 }
 
+const strategyExampleChips = [
+  "Login + MFA",
+  "Checkout flow",
+  "Password reset",
+  "API workflow restart",
+];
+
+const strategyWorkflowSteps = [
+  "Refine requirement",
+  "Generate test suite",
+  "Review coverage",
+  "Close gaps",
+  "Add execution results",
+  "Outcome: Release readiness",
+];
+
+function StrategyWorkspaceStart(args: {
+  chat: UseChatSessionReturn;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  isBusy: boolean;
+  resolvedTheme: "light" | "dark";
+  onAfterSendAction?: () => void;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const textColor = isDark ? "#ffffff" : "#0f172a";
+  const mutedText = isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.66)";
+
+  const surfaceStyle: React.CSSProperties = {
+    marginBottom: 14,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.12)"
+      : "1px solid rgba(15,23,42,0.10)",
+    borderRadius: 18,
+    padding: 16,
+    background: isDark ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.72)",
+    color: textColor,
+    boxShadow: isDark
+      ? "0 8px 30px rgba(0,0,0,0.14)"
+      : "0 8px 24px rgba(15,23,42,0.05)",
+  };
+
+  const chipStyle: React.CSSProperties = {
+    borderRadius: 999,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.16)"
+      : "1px solid rgba(15,23,42,0.14)",
+    background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+    color: textColor,
+    padding: "7px 10px",
+    fontSize: 12,
+    fontWeight: 850,
+    cursor: args.isBusy ? "not-allowed" : "pointer",
+    opacity: args.isBusy ? 0.58 : 1,
+    boxShadow: isDark ? "none" : "0 3px 8px rgba(15,23,42,0.04)",
+  };
+
+  return (
+    <section aria-label="Strategy workspace start" style={surfaceStyle}>
+      <div style={{ display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gap: 8 }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <span
+              style={{
+                borderRadius: 999,
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.16)"
+                  : "1px solid rgba(15,23,42,0.12)",
+                background: isDark
+                  ? "rgba(255,255,255,0.06)"
+                  : "rgba(15,23,42,0.04)",
+                color: textColor,
+                padding: "4px 8px",
+                fontSize: 11,
+                fontWeight: 950,
+              }}
+            >
+              Step 1
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 850, color: mutedText }}>
+              Strategy workspace start
+            </span>
+          </div>
+
+          <div>
+            <h2
+              style={{
+                margin: 0,
+                color: textColor,
+                fontSize: 28,
+                lineHeight: 1.12,
+                fontWeight: 950,
+              }}
+            >
+              Describe what you&apos;re testing.
+            </h2>
+            <p
+              style={{
+                margin: "8px 0 0",
+                maxWidth: 760,
+                color: mutedText,
+                fontSize: 14,
+                lineHeight: 1.6,
+              }}
+            >
+              Paste a feature, release area, Jira ticket, API change, or rough
+              requirement. Release Signal will help clarify scope and risks
+              before building the test suite.
+            </p>
+          </div>
+        </div>
+
+        <div
+          aria-label="Workflow preview"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
+        >
+          {strategyWorkflowSteps.map((step, index) => (
+            <span
+              key={step}
+              style={{
+                borderRadius: 999,
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.12)"
+                  : "1px solid rgba(15,23,42,0.10)",
+                background:
+                  index === 0
+                    ? isDark
+                      ? "rgba(255,255,255,0.12)"
+                      : "rgba(15,23,42,0.07)"
+                    : isDark
+                      ? "rgba(255,255,255,0.04)"
+                      : "rgba(15,23,42,0.03)",
+                color: index === 0 ? textColor : mutedText,
+                padding: "5px 8px",
+                fontSize: 11,
+                fontWeight: index === 0 ? 900 : 760,
+              }}
+            >
+              {step}
+            </span>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            {strategyExampleChips.map((example) => (
+              <button
+                key={example}
+                type="button"
+                disabled={args.isBusy}
+                onClick={() => {
+                  args.chat.setInput(example);
+                  requestAnimationFrame(() => args.inputRef.current?.focus());
+                }}
+                style={chipStyle}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+
+          <ChatInput
+            ref={args.inputRef}
+            mode={args.chat.mode}
+            value={args.chat.input}
+            disabled={args.isBusy}
+            resolvedTheme={args.resolvedTheme}
+            onChangeAction={(next: string) => args.chat.setInput(next)}
+            onSendAction={() => {
+              void (async () => {
+                await args.chat.send();
+                args.onAfterSendAction?.();
+              })();
+            }}
+          />
+
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
+              AI-assisted — review before you rely on it.
+            </div>
+            <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
+              Release Signal supports your release decision; it does not approve
+              releases. Final judgment stays with your QA/release owner.
+            </div>
+          </div>
+        </div>
+
+        <StrategyPanel
+          chat={args.chat}
+          resolvedTheme={args.resolvedTheme}
+        />
+      </div>
+    </section>
+  );
+}
+
 function buildRefinedRequirementInput(
   artifact: UseChatSessionReturn["sessionArtifact"]
 ): string | null {
@@ -309,7 +522,6 @@ export default function ChatPanel({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const [isNarrow, setIsNarrow] = useState(false);
-  const [showStrategyPanel, setShowStrategyPanel] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 980px)");
@@ -351,13 +563,6 @@ export default function ChatPanel({
 
   const isBusy = chat.isSending || chat.isRunningWorkflowAction;
 
-  const gridTemplateColumns = useMemo(() => {
-    if (!isCoachSession) return "1fr";
-    if (isNarrow) return "1fr";
-    if (!showStrategyPanel) return "1fr";
-    return "minmax(0, 1fr) 400px";
-  }, [isCoachSession, isNarrow, showStrategyPanel]);
-
   const processingBannerStyle: React.CSSProperties = {
     marginBottom: 10,
     padding: "10px 12px",
@@ -370,19 +575,6 @@ export default function ChatPanel({
     fontSize: 12,
     fontWeight: 800,
     lineHeight: 1.35,
-  };
-
-  const strategyPanelWrapStyle: React.CSSProperties = {
-    border: isDark
-      ? "1px solid rgba(255,255,255,0.12)"
-      : "1px solid rgba(15,23,42,0.12)",
-    borderRadius: 18,
-    background: isDark ? "rgba(255,255,255,0.05)" : "rgba(15,23,42,0.04)",
-    padding: 12,
-    minHeight: isNarrow ? undefined : "68vh",
-    boxShadow: isDark
-      ? "0 8px 30px rgba(0,0,0,0.18)"
-      : "0 8px 24px rgba(15,23,42,0.06)",
   };
 
   const helperBannerStyle: React.CSSProperties = {
@@ -414,22 +606,6 @@ export default function ChatPanel({
     whiteSpace: "nowrap",
   };
 
-  const strategyHelperStyle: React.CSSProperties = {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 12,
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: isDark
-      ? "1px solid rgba(255,255,255,0.10)"
-      : "1px solid rgba(15,23,42,0.10)",
-    background: isDark ? "rgba(255,255,255,0.035)" : "rgba(15,23,42,0.025)",
-    color: isDark ? "#ffffff" : "#0f172a",
-  };
-
   // M12.10 CHANGE:
   // - separate the summary area from the workflow guidance area
   // - keep both artifact-driven, but give each a distinct visual role
@@ -439,7 +615,7 @@ export default function ChatPanel({
     marginBottom: 12,
   };
 
-  const showOnboardingHint = chat.items.length === 0 && !isBusy;
+  const showOnboardingHint = chat.items.length === 0 && !isBusy && !isCoachSession;
 
   const canUseRefinedRequirement =
     isTestDesignSession &&
@@ -457,13 +633,15 @@ export default function ChatPanel({
     chat.hasPersistentTestSuite ||
     chat.hasReviewArtifact;
 
+  const showWorkspaceOverview = hasWorkspaceArtifacts || !isCoachSession;
+
   return (
     <div
       style={{
         display: "grid",
         gap: 12,
         alignItems: "start",
-        gridTemplateColumns,
+        gridTemplateColumns: "1fr",
       }}
     >
       <div>
@@ -476,6 +654,17 @@ export default function ChatPanel({
           />
         ) : null}
 
+        {isCoachSession ? (
+          <StrategyWorkspaceStart
+            chat={chat}
+            inputRef={inputRef}
+            isBusy={isBusy}
+            resolvedTheme={resolvedTheme}
+            onAfterSendAction={onAfterSendAction}
+          />
+        ) : null}
+
+        {showWorkspaceOverview ? (
         <div style={workspaceOverviewWrapStyle}>
           <div data-tour-anchor="artifact-summary">
             <WorkspaceSectionLabel
@@ -551,27 +740,6 @@ export default function ChatPanel({
             </div>
           </div>
         </div>
-
-        {isCoachSession && !showStrategyPanel ? (
-          <div style={strategyHelperStyle}>
-            <div style={{ display: "grid", gap: 3 }}>
-              <div style={{ fontSize: 12, fontWeight: 950 }}>
-                Strategy is optional
-              </div>
-              <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.4 }}>
-                Paste rough notes in the main input, or open the structured
-                form when you want a guided outline first.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowStrategyPanel(true)}
-              style={helperButtonStyle}
-              disabled={isBusy}
-            >
-              Open structured Strategy
-            </button>
-          </div>
         ) : null}
 
         <div data-tour-anchor="workflow-start">
@@ -580,6 +748,7 @@ export default function ChatPanel({
             resolvedTheme={resolvedTheme}
             isNarrow={isNarrow}
             inputSlot={
+              isCoachSession ? null :
               <>
                 {canUseRefinedRequirement ? (
                   <div style={helperBannerStyle}>
@@ -680,17 +849,6 @@ export default function ChatPanel({
           </ActivityTimelinePanel>
         </div>
       </div>
-
-      {isCoachSession && showStrategyPanel ? (
-        <div style={strategyPanelWrapStyle}>
-          <StrategyPanel
-            chat={chat}
-            resolvedTheme={resolvedTheme}
-            defaultStructuredFormOpen
-            onCloseAction={() => setShowStrategyPanel(false)}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

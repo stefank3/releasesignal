@@ -1,35 +1,6 @@
 // app/chat/components/StrategyPanel.tsx
-// M7 (Locked): StrategyPanel — structured requirement input + pinned refined requirement.
-//
-// CHANGE (M7.5 UX Polish):
-// - tighter spacing and clearer visual hierarchy
-// - form block + preview block + pinned requirement block
-// - same structured artifact pipeline, no backend contract changes
-//
-// CHANGE (M8.5 Strategy Panel Alignment):
-// - removes heavy outer framing so the panel fits cleanly inside ChatPanel
-// - aligns visible naming with Strategy / Refined Requirement terminology
-// - improves helper text for beta workflow clarity
-// - keeps all existing behavior and artifact usage intact
-//
-// CHANGE (M8.10 Strategy Screen Cleanup):
-// - removes duplicated Refined Requirement block from the right panel
-// - keeps the center-column requirement as the single source of truth
-// - keeps the panel focused on refinement inputs + preview only
-//
-// CHANGE (M10 UI Pass):
-// - add theme-aware rendering for light / dark mode
-// - remove dark-only text / field styling assumptions
-//
-// CHANGE (M10 Remaining Work - Assistant Tone Alignment):
-// - shift helper copy from chatbot-style interaction to workflow-assistant guidance
-// - keep the panel focused on requirement refinement as part of the QA workflow
-//
-// M12.11 CHANGE:
-// - improve first-run clarity for the Strategy panel
-// - make the paste-and-run flow easier to understand
-// - add lightweight onboarding/help copy only
-// - keep all workflow behavior unchanged
+// Inline guided Strategy fields for the authenticated workspace start surface.
+// UI-only: preserves existing local field values, paste behavior, and refine flow.
 
 "use client";
 
@@ -60,35 +31,6 @@ function SectionTitle({
     >
       {children}
     </div>
-  );
-}
-
-function Pill({
-  children,
-  resolvedTheme = "dark",
-}: {
-  children: React.ReactNode;
-  resolvedTheme?: ResolvedTheme;
-}) {
-  const isDark = resolvedTheme === "dark";
-
-  return (
-    <span
-      style={{
-        fontSize: 11,
-        fontWeight: 900,
-        padding: "4px 8px",
-        borderRadius: 999,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.18)"
-          : "1px solid rgba(15,23,42,0.14)",
-        background: isDark ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.04)",
-        color: isDark ? "#fff" : "#0f172a",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </span>
   );
 }
 
@@ -235,61 +177,10 @@ function Surface({
   );
 }
 
-function HelpBox({
-  title,
-  text,
-  resolvedTheme = "dark",
-}: {
-  title: string;
-  text: string;
-  resolvedTheme?: ResolvedTheme;
-}) {
-  const isDark = resolvedTheme === "dark";
-
-  return (
-    <div
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.08)"
-          : "1px solid rgba(15,23,42,0.08)",
-        background: isDark
-          ? "rgba(255,255,255,0.03)"
-          : "rgba(255,255,255,0.72)",
-        display: "grid",
-        gap: 4,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 900,
-          opacity: 0.82,
-          color: isDark ? "#fff" : "#0f172a",
-        }}
-      >
-        {title}
-      </div>
-      <div
-        style={{
-          fontSize: 11,
-          lineHeight: 1.45,
-          opacity: 0.72,
-          color: isDark ? "#fff" : "#0f172a",
-        }}
-      >
-        {text}
-      </div>
-    </div>
-  );
-}
-
 function focusChatInputBestEffort() {
-  const el = document.querySelector("input:not([disabled]), textarea:not([disabled])") as
-    | HTMLInputElement
-    | HTMLTextAreaElement
-    | null;
+  const el = document.querySelector(
+    "input:not([disabled]), textarea:not([disabled])"
+  ) as HTMLInputElement | HTMLTextAreaElement | null;
 
   if (!el) return;
 
@@ -297,7 +188,7 @@ function focusChatInputBestEffort() {
   try {
     el.scrollIntoView({ block: "center", behavior: "smooth" });
   } catch {
-    // ignore
+    // Best-effort focus only.
   }
 }
 
@@ -305,12 +196,10 @@ export default function StrategyPanel({
   chat,
   resolvedTheme = "dark",
   defaultStructuredFormOpen = false,
-  onCloseAction,
 }: {
   chat: UseChatSessionReturn;
   resolvedTheme?: ResolvedTheme;
   defaultStructuredFormOpen?: boolean;
-  onCloseAction?: () => void;
 }) {
   const [objective, setObjective] = useState("");
   const [primaryRisk, setPrimaryRisk] = useState("");
@@ -334,7 +223,6 @@ export default function StrategyPanel({
   }, [objective, primaryRisk, integrations, constraints, scope, successCriteria]);
 
   const isCoachSession = chat.mode === "coach" && chat.activeSessionMode === "coach";
-  const hasPinned = !!chat.sessionArtifact?.refinedRequirement;
   const isDark = resolvedTheme === "dark";
 
   const hasAnyInput = Boolean(
@@ -345,273 +233,192 @@ export default function StrategyPanel({
       scope.trim() ||
       successCriteria.trim()
   );
-  const shouldShowStructuredForm = showStructuredForm || hasAnyInput;
 
   if (!isCoachSession) return null;
 
   return (
-    <div
+    <details
+      open={showStructuredForm}
+      onToggle={(event) => {
+        setShowStructuredForm(event.currentTarget.open);
+      }}
       style={{
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.12)"
+          : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 14,
+        background: isDark ? "rgba(255,255,255,0.035)" : "rgba(15,23,42,0.025)",
         color: isDark ? "#fff" : "#0f172a",
-        display: "grid",
-        gap: 12,
+        overflow: "hidden",
       }}
     >
-      <div
+      <summary
         style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
+          cursor: "pointer",
+          padding: "12px 14px",
+          listStyle: "none",
         }}
       >
-        <div style={{ display: "grid", gap: 3 }}>
-          <div style={{ fontWeight: 950, color: isDark ? "#fff" : "#0f172a" }}>
-            Strategy
+        <div style={{ display: "grid", gap: 4 }}>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 950,
+              color: isDark ? "#fff" : "#0f172a",
+            }}
+          >
+            Need structure? Use guided fields.
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              lineHeight: 1.45,
+              color: isDark
+                ? "rgba(255,255,255,0.70)"
+                : "rgba(15,23,42,0.64)",
+            }}
+          >
+            Optional — add context before refining your requirement.
+          </div>
+        </div>
+      </summary>
+
+      <div style={{ display: "grid", gap: 12, padding: "0 12px 12px" }}>
+        <Surface resolvedTheme={resolvedTheme}>
+          <SectionTitle resolvedTheme={resolvedTheme}>
+            Guided context
+          </SectionTitle>
+
+          <div
+            style={{
+              fontSize: 12,
+              opacity: 0.78,
+              lineHeight: 1.45,
+              marginBottom: 10,
+              color: isDark ? "#fff" : "#0f172a",
+            }}
+          >
+            Capture the same optional Strategy fields here. Paste the structured
+            result into the main input when it helps; you can also refine a rough
+            requirement without filling these out.
+          </div>
+
+          <div style={{ display: "grid", gap: 9 }}>
+            <Field
+              label="Objective"
+              value={objective}
+              onChange={setObjective}
+              placeholder="What is the main business or QA objective?"
+              rows={2}
+              resolvedTheme={resolvedTheme}
+            />
+
+            <Field
+              label="Primary Risk"
+              value={primaryRisk}
+              onChange={setPrimaryRisk}
+              placeholder="What failure or uncertainty matters most?"
+              rows={2}
+              resolvedTheme={resolvedTheme}
+            />
+
+            <Field
+              label="Integrations"
+              value={integrations}
+              onChange={setIntegrations}
+              placeholder="Auth0, email service, API gateway, payment provider..."
+              rows={2}
+              resolvedTheme={resolvedTheme}
+            />
+
+            <Field
+              label="Constraints"
+              value={constraints}
+              onChange={setConstraints}
+              placeholder="Environment limits, timeline, non-goals, technical restrictions..."
+              rows={2}
+              resolvedTheme={resolvedTheme}
+            />
+
+            <Field
+              label="Scope"
+              value={scope}
+              onChange={setScope}
+              placeholder="In: login, MFA challenge / Out: admin portal, audit exports"
+              rows={2}
+              resolvedTheme={resolvedTheme}
+            />
+
+            <Field
+              label="Success Criteria"
+              value={successCriteria}
+              onChange={setSuccessCriteria}
+              placeholder="What must be true for this to be considered successful?"
+              rows={2}
+              resolvedTheme={resolvedTheme}
+            />
+          </div>
+
+          <div
+            style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}
+          >
+            <SmallButton
+              onClick={() => {
+                chat.setInput(generatedStructuredText);
+                requestAnimationFrame(() => focusChatInputBestEffort());
+              }}
+              disabled={!hasAnyInput}
+              title="Paste structured requirement content into the main workflow input"
+              resolvedTheme={resolvedTheme}
+            >
+              Paste into input
+            </SmallButton>
+
+            <SmallButton
+              onClick={() => {
+                setObjective("");
+                setPrimaryRisk("");
+                setIntegrations("");
+                setConstraints("");
+                setScope("");
+                setSuccessCriteria("");
+              }}
+              disabled={!hasAnyInput}
+              title="Clear all refinement fields"
+              resolvedTheme={resolvedTheme}
+            >
+              Clear form
+            </SmallButton>
+          </div>
+        </Surface>
+
+        <Surface dashed resolvedTheme={resolvedTheme}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 950,
+              opacity: 0.82,
+              marginBottom: 6,
+              color: isDark ? "#fff" : "#0f172a",
+            }}
+          >
+            Preview
           </div>
           <div
             style={{
               fontSize: 11,
-              opacity: 0.7,
-              lineHeight: 1.4,
+              opacity: 0.78,
+              lineHeight: 1.45,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              minHeight: 84,
               color: isDark ? "#fff" : "#0f172a",
             }}
           >
-            Optional starting point for turning early notes into a clearer
-            technical requirement.
+            {generatedStructuredText}
           </div>
-        </div>
-        <Pill resolvedTheme={resolvedTheme}>
-          {hasPinned ? "Pinned ✓" : "Not pinned"}
-        </Pill>
+        </Surface>
       </div>
-
-      <HelpBox
-        title="Use Strategy when scope is still forming"
-        text="Start with a short feature idea, user problem, acceptance criteria, or risk notes. Release Signal will help structure the input before Test Design."
-        resolvedTheme={resolvedTheme}
-      />
-
-      {onCloseAction ? (
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <SmallButton
-            onClick={onCloseAction}
-            resolvedTheme={resolvedTheme}
-          >
-            Hide Strategy panel
-          </SmallButton>
-        </div>
-      ) : null}
-
-      <Surface dashed resolvedTheme={resolvedTheme}>
-        <SectionTitle resolvedTheme={resolvedTheme}>
-          Not sure where to start?
-        </SectionTitle>
-
-        <div
-          style={{
-            display: "grid",
-            gap: 8,
-            fontSize: 12,
-            lineHeight: 1.45,
-            color: isDark ? "#fff" : "#0f172a",
-          }}
-        >
-          <div style={{ opacity: 0.78 }}>
-            Paste rough notes into the main input and run Strategy, or use the
-            structured form here if you want a guided outline first.
-          </div>
-          <div style={{ opacity: 0.68 }}>
-            Already have a clear requirement? Go directly to Test Design.
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-          <SmallButton
-            onClick={() => setShowStructuredForm((current) => !current)}
-            resolvedTheme={resolvedTheme}
-          >
-            {shouldShowStructuredForm
-              ? "Hide structured form"
-              : "Use structured form"}
-          </SmallButton>
-
-          <SmallButton
-            onClick={focusChatInputBestEffort}
-            resolvedTheme={resolvedTheme}
-          >
-            Focus main input
-          </SmallButton>
-        </div>
-      </Surface>
-
-      {shouldShowStructuredForm ? (
-        <Surface resolvedTheme={resolvedTheme}>
-        <SectionTitle resolvedTheme={resolvedTheme}>
-          Refine requirement
-        </SectionTitle>
-
-        <div
-          style={{
-            fontSize: 12,
-            opacity: 0.78,
-            lineHeight: 1.45,
-            marginBottom: 10,
-            color: isDark ? "#fff" : "#0f172a",
-          }}
-        >
-          Capture the main objective, risks, scope, and success criteria here.
-          Then paste the structured result into the main workflow input.
-        </div>
-
-        <div style={{ display: "grid", gap: 9 }}>
-          <Field
-            label="Objective"
-            value={objective}
-            onChange={setObjective}
-            placeholder="What is the main business or QA objective?"
-            rows={2}
-            resolvedTheme={resolvedTheme}
-          />
-
-          <Field
-            label="Primary Risk"
-            value={primaryRisk}
-            onChange={setPrimaryRisk}
-            placeholder="What failure or uncertainty matters most?"
-            rows={2}
-            resolvedTheme={resolvedTheme}
-          />
-
-          <Field
-            label="Integrations"
-            value={integrations}
-            onChange={setIntegrations}
-            placeholder="Auth0, email service, API gateway, payment provider..."
-            rows={2}
-            resolvedTheme={resolvedTheme}
-          />
-
-          <Field
-            label="Constraints"
-            value={constraints}
-            onChange={setConstraints}
-            placeholder="Environment limits, timeline, non-goals, technical restrictions..."
-            rows={2}
-            resolvedTheme={resolvedTheme}
-          />
-
-          <Field
-            label="Scope"
-            value={scope}
-            onChange={setScope}
-            placeholder="In: login, MFA challenge / Out: admin portal, audit exports"
-            rows={2}
-            resolvedTheme={resolvedTheme}
-          />
-
-          <Field
-            label="Success Criteria"
-            value={successCriteria}
-            onChange={setSuccessCriteria}
-            placeholder="What must be true for this to be considered successful?"
-            rows={2}
-            resolvedTheme={resolvedTheme}
-          />
-        </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-          <SmallButton
-            onClick={() => {
-              chat.setInput(generatedStructuredText);
-              requestAnimationFrame(() => focusChatInputBestEffort());
-            }}
-            disabled={!hasAnyInput}
-            title="Paste structured requirement content into the main workflow input"
-            resolvedTheme={resolvedTheme}
-          >
-            Paste into input
-          </SmallButton>
-
-          <SmallButton
-            onClick={() => {
-              setObjective("");
-              setPrimaryRisk("");
-              setIntegrations("");
-              setConstraints("");
-              setScope("");
-              setSuccessCriteria("");
-            }}
-            disabled={!hasAnyInput}
-            title="Clear all refinement fields"
-            resolvedTheme={resolvedTheme}
-          >
-            Clear form
-          </SmallButton>
-        </div>
-        </Surface>
-      ) : null}
-
-      {shouldShowStructuredForm ? (
-        <Surface dashed resolvedTheme={resolvedTheme}>
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 950,
-            opacity: 0.82,
-            marginBottom: 6,
-            color: isDark ? "#fff" : "#0f172a",
-          }}
-        >
-          Preview
-        </div>
-        <div
-          style={{
-            fontSize: 11,
-            opacity: 0.78,
-            lineHeight: 1.45,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            minHeight: 84,
-            color: isDark ? "#fff" : "#0f172a",
-          }}
-        >
-          {generatedStructuredText}
-        </div>
-        </Surface>
-      ) : null}
-
-      <HelpBox
-        title="What Strategy creates"
-        text="Run Strategy from the main input to create a refined requirement. That artifact becomes the basis for downstream test design."
-        resolvedTheme={resolvedTheme}
-      />
-
-      {hasPinned ? (
-        <div
-          style={{
-            fontSize: 11,
-            opacity: 0.68,
-            lineHeight: 1.4,
-            color: isDark ? "#fff" : "#0f172a",
-          }}
-        >
-          The latest Refined Requirement is shown in the main conversation area
-          and will be reused by Test Design.
-        </div>
-      ) : (
-        <div
-          style={{
-            fontSize: 11,
-            opacity: 0.68,
-            lineHeight: 1.4,
-            color: isDark ? "#fff" : "#0f172a",
-          }}
-        >
-          Nothing is pinned yet. Use the main input or the optional structured
-          form to create the Refined Requirement.
-        </div>
-      )}
-    </div>
+    </details>
   );
 }
