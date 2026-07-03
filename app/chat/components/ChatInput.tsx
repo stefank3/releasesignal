@@ -43,7 +43,7 @@ function getPlaceholder(mode: Mode): string {
     return "Describe the feature, refined requirement, or additional coverage to generate.";
   }
 
-  return "Describe the feature, workflow, scope, or requirement to refine.";
+  return "Paste a feature, Jira ticket, API change, release area, or rough requirement.";
 }
 
 function getButtonLabel(mode: Mode, disabled?: boolean): string {
@@ -51,7 +51,7 @@ function getButtonLabel(mode: Mode, disabled?: boolean): string {
 
   if (mode === "review") return "Review";
   if (mode === "cases") return "Generate Tests";
-  return "Refine";
+  return "Refine Requirement";
 }
 
 function getHelperText(
