@@ -92,7 +92,7 @@ function StatusChip(args: {
         color: isDark ? "#ffffff" : "#0f172a",
       }}
     >
-      {args.ready ? "Ready" : "Pending"}
+      {args.ready ? "Available" : "Needed"}
     </span>
   );
 }
@@ -514,8 +514,8 @@ export default function FeatureWorkspaceSummary({
       tone: requirementReady ? "info" : "neutral",
     },
     {
-      label: "Readiness",
-      value: requirementReady ? "Ready" : "Pending",
+      label: "Workspace",
+      value: requirementReady ? "Available" : "Needed",
       tone: requirementReady ? "positive" : "neutral",
     },
   ] as const;
@@ -537,8 +537,8 @@ export default function FeatureWorkspaceSummary({
       tone: suiteReady ? "positive" : "warning",
     },
     {
-      label: "Readiness",
-      value: suiteReady ? "Ready" : "Pending",
+      label: "Workspace",
+      value: suiteReady ? "Available" : "Needed",
       tone: suiteReady ? "positive" : "neutral",
     },
   ] as const;
@@ -580,8 +580,8 @@ export default function FeatureWorkspaceSummary({
       tone: reviewReady ? "positive" : "warning",
     },
     {
-      label: "Readiness",
-      value: reviewReady ? "Ready" : "Pending",
+      label: "Workspace",
+      value: reviewReady ? "Available" : "Needed",
       tone: reviewReady ? "positive" : "neutral",
     },
   ] as const;
@@ -613,13 +613,14 @@ export default function FeatureWorkspaceSummary({
           </div>
 
           <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
-            This session is tracked as a QA workspace backed by persisted artifacts.
+            This session is tracked as a QA workspace backed by persisted
+            artifacts, not free-form AI text.
           </div>
 
           <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
             {hasAnyArtifacts
               ? "The cards below show the latest saved requirement, suite, review, and execution evidence."
-              : "No saved workspace artifacts exist yet. Start with the next recommended step below to begin building the workspace state."}
+              : "No saved workspace artifacts exist yet. Start by refining a requirement or pasting a Jira/API change description."}
           </div>
         </div>
       </div>

@@ -154,7 +154,7 @@ function OnboardingHint(args: {
         </div>
 
         <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
-          Describe the feature, release area, or system under test.
+          Start by refining a requirement or pasting a Jira/API change description.
           {args.showStrategyHint
             ? " Use Strategy to clarify scope and risks first, then continue into Test Design."
             : ""}
@@ -170,8 +170,8 @@ function OnboardingHint(args: {
         Example:
         <br />
         <span style={{ opacity: 0.88 }}>
-          Clarify the login flow with MFA, identify the main risks, then generate
-          a structured test suite.
+          Paste a Jira ticket for login with MFA, clarify scope and risks, then
+          generate a structured test suite.
         </span>
       </div>
 
@@ -357,8 +357,9 @@ function StrategyWorkspaceStart(args: {
               }}
             >
               Paste a feature, release area, Jira ticket, API change, or rough
-              requirement. Release Signal will help clarify scope and risks
-              before building the test suite.
+              requirement. Release Signal will help structure the requirement,
+              generate a test suite, review coverage gaps, and summarize
+              readiness.
             </p>
           </div>
         </div>
@@ -440,7 +441,8 @@ function StrategyWorkspaceStart(args: {
 
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
-              AI-assisted — review before you rely on it.
+              AI assists with generation and analysis; review generated
+              requirements and tests before using them.
             </div>
             <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
               Release Signal supports your release decision; it does not approve

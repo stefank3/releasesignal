@@ -42,7 +42,7 @@ function getGuidanceFromStatus(status: WorkflowStatus): {
     return {
       helpLabel: "How to start",
       helpText:
-        "Begin by shaping the requirement. Once the requirement is clear, generate the test suite from the saved artifact.",
+        "Start by refining a requirement or pasting a Jira/API change description. Review the saved requirement before using it for test design.",
     };
   }
 
@@ -54,7 +54,7 @@ function getGuidanceFromStatus(status: WorkflowStatus): {
     return {
       helpLabel: "What to do here",
       helpText:
-        "Use this step to create or refine the test suite. The workspace stays centered on the latest saved requirement and suite.",
+        "Use this step to create or refine the test suite from saved artifacts. Review generated tests before using them.",
     };
   }
 
@@ -66,14 +66,14 @@ function getGuidanceFromStatus(status: WorkflowStatus): {
     return {
       helpLabel: "What to expect",
       helpText:
-        "Review evaluates the current saved suite against the current saved requirement and highlights gaps, risks, and improvement areas.",
+        "Review compares the saved suite with the saved requirement and highlights coverage gaps, risks, and improvement areas.",
     };
   }
 
   return {
     helpLabel: "Need a starting point?",
     helpText:
-      "Follow the next suggested action below. The workspace will keep showing the latest saved artifacts for this session.",
+      "Follow the next suggested action below. Release Signal keeps the latest saved artifacts visible as the workspace state.",
   };
 }
 

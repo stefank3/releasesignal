@@ -94,6 +94,10 @@ export function ReleaseReadinessSummary({
           <p className="text-sm leading-relaxed text-slate-300">
             {readiness.summary}
           </p>
+          <p className="text-xs leading-relaxed text-slate-400">
+            Release readiness is a decision-support signal. Your QA/release
+            owner remains responsible for final approval.
+          </p>
         </div>
 
         <div

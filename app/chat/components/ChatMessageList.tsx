@@ -508,17 +508,17 @@ function EmptyStateCard(args: {
 
   const body =
     args.mode === "coach"
-      ? "Describe the feature, release area, or system under test. The workspace will help clarify scope, risks, and the next step."
+      ? "Start by refining a requirement or pasting a Jira/API change description. The workspace will help clarify scope, risks, and the next step."
       : args.mode === "review"
-        ? "Paste the current test suite or plan to review. The workspace will return a score, coverage breakdown, and prioritized improvements."
-        : "Describe the feature under test or use the saved refined requirement to generate a persistent test suite for this workspace.";
+        ? "Paste the current test suite or plan to review. The workspace will return a score, coverage breakdown, and prioritized improvement areas."
+        : "Use the saved refined requirement or describe additional coverage to generate a persistent test suite for this workspace.";
 
   const footer =
     args.mode === "coach"
-      ? "Once the requirement is clear and saved, continue into test design."
+      ? "Release Signal helps structure the requirement, generate a test suite, review coverage gaps, and summarize readiness."
       : args.mode === "review"
-        ? "Use review after a suite exists and is ready for evaluation."
-        : "Generated suites can then be reviewed and improved as the session evolves.";
+        ? "Release readiness is a signal; your QA/release owner remains responsible for final approval."
+        : "Generated suites can then be reviewed and improved as the session evolves. Review generated tests before using them.";
 
   return (
     <div

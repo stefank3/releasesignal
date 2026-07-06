@@ -58,15 +58,15 @@ const MODE_META: Record<
 > = {
   coach: {
     label: "Strategy",
-    hint: "Clarify requirements and risks",
+    hint: "Refine requirements and risks first",
   },
   cases: {
     label: "Test Design",
-    hint: "Generate structured test cases",
+    hint: "Generate structured test suites",
   },
   review: {
     label: "Test Review",
-    hint: "Evaluate coverage and gaps",
+    hint: "Review coverage gaps and risks",
   },
 };
 
@@ -140,7 +140,7 @@ export default function ChatHeader({
               marginTop: 4,
             }}
           >
-            AI-assisted QA review, strategy refinement, and test design
+            AI-assisted QA workspace for requirements, test design, and readiness signals
           </div>
         </div>
 
