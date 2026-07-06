@@ -20,7 +20,7 @@ type Props = {
 };
 
 const STATUS_LABELS: Record<ReleaseReadinessStatus, string> = {
-  insufficient_data: "Insufficient Data",
+  insufficient_data: "Not enough data yet",
   not_ready: "Not Ready",
   weak: "Weak Readiness",
   partial: "Partial Readiness",
@@ -28,6 +28,22 @@ const STATUS_LABELS: Record<ReleaseReadinessStatus, string> = {
   ready: "Ready",
   blocked: "Blocked",
 };
+
+function getReadinessBand(status: ReleaseReadinessStatus): string {
+  switch (status) {
+    case "ready":
+    case "ready_with_risk":
+      return "Strong";
+    case "partial":
+    case "weak":
+      return "Moderate";
+    case "not_ready":
+    case "blocked":
+    case "insufficient_data":
+    default:
+      return "Low";
+  }
+}
 
 function getStatusTone(status: ReleaseReadinessStatus): {
   border: string;
@@ -74,6 +90,8 @@ export function ReleaseReadinessPanel({
   );
 
   const tone = getStatusTone(readiness.status);
+  const reviewScore = readiness.factors.reviewScore;
+  const readinessBand = getReadinessBand(readiness.status);
 
   return (
     <section
@@ -98,9 +116,9 @@ export function ReleaseReadinessPanel({
           background: "transparent",
           color: "inherit",
           cursor: "pointer",
-          padding: 14,
+          padding: 16,
           display: "grid",
-          gap: 10,
+          gap: 12,
           textAlign: "left",
         }}
       >
@@ -122,7 +140,7 @@ export function ReleaseReadinessPanel({
               for final approval.
             </div>
             <ArtifactProvenanceLabel
-              label="Release Readiness · Deterministic signal from saved artifacts and evidence"
+              label="Calculated from your saved artifacts using fixed rules - the same inputs always give the same result"
               resolvedTheme={resolvedTheme}
             />
           </div>
@@ -183,12 +201,74 @@ export function ReleaseReadinessPanel({
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45 }}>
-          {readiness.summary}
+          {readiness.status === "insufficient_data"
+            ? "Add a test suite, a coverage review, and execution results to generate your readiness signal."
+            : readiness.summary}
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          }}
+        >
+          <div
+            style={{
+              border: isDark
+                ? "1px solid rgba(255,255,255,0.10)"
+                : "1px solid rgba(15,23,42,0.10)",
+              borderRadius: 12,
+              padding: "10px 12px",
+              background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.70)",
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+              Score
+            </div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
+              {typeof reviewScore === "number" ? `${reviewScore}/100` : "-"}
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: tone.border,
+              borderRadius: 12,
+              padding: "10px 12px",
+              background: tone.background,
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+              Band
+            </div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
+              {readinessBand}
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: isDark
+                ? "1px solid rgba(255,255,255,0.10)"
+                : "1px solid rgba(15,23,42,0.10)",
+              borderRadius: 12,
+              padding: "10px 12px",
+              background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.70)",
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+              Confidence
+            </div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
+              {readiness.confidence}
+            </div>
+          </div>
         </div>
 
         <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
-          AI assists with generation and analysis. Persisted artifacts and
-          deterministic checks drive this workspace state.
+          A decision-support signal calculated from your saved artifacts using
+          fixed rules - final release approval stays with your QA/release owner.
         </div>
       </button>
 

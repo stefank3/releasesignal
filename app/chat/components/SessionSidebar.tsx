@@ -341,7 +341,7 @@ export default function SessionSidebar({
               Workspaces
             </div>
             <div style={{ color: subtleText, fontSize: 11, lineHeight: 1.35 }}>
-              Persisted QA workspace sessions
+              Your saved QA sessions
             </div>
           </div>
         ) : (
@@ -716,7 +716,7 @@ export default function SessionSidebar({
 
         {sessions.length === 0 && !sidebarCollapsed && (
           <div style={{ color: subtleText, fontSize: 12, lineHeight: 1.45 }}>
-            No workspaces yet. Send your first message to create one.
+            No sessions yet - describe a requirement to create your first workspace.
           </div>
         )}
 

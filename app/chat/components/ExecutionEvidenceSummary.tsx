@@ -223,7 +223,7 @@ function StatusChip(args: {
         color: isDark ? "#ffffff" : "#0f172a",
       }}
     >
-      {args.ready ? "Available" : "Pending"}
+      {args.ready ? "Complete" : "Not started yet"}
     </span>
   );
 }
@@ -336,8 +336,8 @@ export function ExecutionEvidenceSummary({
       >
         <EvidenceTile
           label="Status"
-          value={ready ? toDisplayLabel(execution?.suiteStatus) : "Not Started"}
-          tone={ready ? statusTone : "warning"}
+          value={ready ? toDisplayLabel(execution?.suiteStatus) : "Not started yet"}
+          tone={ready ? statusTone : "neutral"}
           resolvedTheme={resolvedTheme}
         />
         <EvidenceTile

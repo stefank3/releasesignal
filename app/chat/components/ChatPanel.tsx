@@ -249,17 +249,113 @@ const strategyExampleChips = [
   "Login + MFA",
   "Checkout flow",
   "Password reset",
-  "API workflow restart",
 ];
 
 const strategyWorkflowSteps = [
-  "Refine requirement",
-  "Generate test suite",
-  "Review coverage",
-  "Close gaps",
-  "Add execution results",
-  "Outcome: Release readiness",
+  {
+    title: "Refine requirement",
+    body: "Clarify scope, rules, risks.",
+  },
+  {
+    title: "Generate test suite",
+    body: "Structured, reviewable cases.",
+  },
+  {
+    title: "Review coverage",
+    body: "Find gaps and weak checks.",
+  },
+  {
+    title: "Add execution results",
+    body: "Upload pass/fail evidence.",
+  },
+  {
+    title: "Release readiness",
+    body: "Your decision-support signal.",
+  },
 ];
+
+function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 950,
+          letterSpacing: 0.8,
+          textTransform: "uppercase",
+          color: isDark ? "rgba(255,255,255,0.58)" : "rgba(15,23,42,0.56)",
+        }}
+      >
+        What happens next
+      </div>
+
+      <div
+        aria-label="What happens next"
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))",
+        }}
+      >
+        {strategyWorkflowSteps.map((step, index) => (
+          <div
+            key={step.title}
+            style={{
+              borderRadius: 12,
+              border: isDark
+                ? "1px dashed rgba(255,255,255,0.12)"
+                : "1px dashed rgba(15,23,42,0.14)",
+              background: isDark ? "rgba(255,255,255,0.025)" : "rgba(15,23,42,0.025)",
+              padding: 12,
+              display: "grid",
+              gap: 8,
+              minHeight: 118,
+            }}
+          >
+            <div
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 999,
+                display: "grid",
+                placeItems: "center",
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.12)"
+                  : "1px solid rgba(15,23,42,0.12)",
+                color: isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.68)",
+                fontSize: 12,
+                fontWeight: 900,
+              }}
+            >
+              {index + 1}
+            </div>
+            <div
+              style={{
+                color: isDark ? "rgba(255,255,255,0.82)" : "rgba(15,23,42,0.82)",
+                fontSize: 13,
+                fontWeight: 900,
+                lineHeight: 1.25,
+              }}
+            >
+              {step.title}
+            </div>
+            <div
+              style={{
+                color: isDark ? "rgba(255,255,255,0.58)" : "rgba(15,23,42,0.58)",
+                fontSize: 11,
+                lineHeight: 1.45,
+              }}
+            >
+              {step.body}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function StrategyWorkspaceStart(args: {
   chat: UseChatSessionReturn;
@@ -278,7 +374,7 @@ function StrategyWorkspaceStart(args: {
       ? "1px solid rgba(255,255,255,0.12)"
       : "1px solid rgba(15,23,42,0.10)",
     borderRadius: 18,
-    padding: 16,
+    padding: 20,
     background: isDark ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.72)",
     color: textColor,
     boxShadow: isDark
@@ -302,7 +398,11 @@ function StrategyWorkspaceStart(args: {
   };
 
   return (
-    <section aria-label="Strategy workspace start" style={surfaceStyle}>
+    <section
+      aria-label="Strategy workspace start"
+      data-tour-anchor="workflow-start"
+      style={surfaceStyle}
+    >
       <div style={{ display: "grid", gap: 14 }}>
         <div style={{ display: "grid", gap: 8 }}>
           <div
@@ -328,10 +428,10 @@ function StrategyWorkspaceStart(args: {
                 fontWeight: 950,
               }}
             >
-              Step 1
+              Start here
             </span>
             <span style={{ fontSize: 12, fontWeight: 850, color: mutedText }}>
-              Strategy workspace start
+              Turn a requirement into a reviewed test suite and readiness signal
             </span>
           </div>
 
@@ -350,56 +450,36 @@ function StrategyWorkspaceStart(args: {
             <p
               style={{
                 margin: "8px 0 0",
-                maxWidth: 760,
+                maxWidth: 840,
                 color: mutedText,
                 fontSize: 14,
                 lineHeight: 1.6,
               }}
             >
-              Paste a feature, release area, Jira ticket, API change, or rough
-              requirement. Release Signal will help structure the requirement,
-              generate a test suite, review coverage gaps, and summarize
-              readiness.
+              Turn a requirement into a reviewed test suite and a clear
+              release-readiness signal. Release Signal supports your release
+              decision; it does not approve releases. The QA/release owner has
+              the final call.
             </p>
           </div>
         </div>
 
-        <div
-          aria-label="Workflow preview"
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          {strategyWorkflowSteps.map((step, index) => (
-            <span
-              key={step}
-              style={{
-                borderRadius: 999,
-                border: isDark
-                  ? "1px solid rgba(255,255,255,0.12)"
-                  : "1px solid rgba(15,23,42,0.10)",
-                background:
-                  index === 0
-                    ? isDark
-                      ? "rgba(255,255,255,0.12)"
-                      : "rgba(15,23,42,0.07)"
-                    : isDark
-                      ? "rgba(255,255,255,0.04)"
-                      : "rgba(15,23,42,0.03)",
-                color: index === 0 ? textColor : mutedText,
-                padding: "5px 8px",
-                fontSize: 11,
-                fontWeight: index === 0 ? 900 : 760,
-              }}
-            >
-              {step}
-            </span>
-          ))}
-        </div>
-
         <div style={{ display: "grid", gap: 8 }}>
+          <ChatInput
+            ref={args.inputRef}
+            mode={args.chat.mode}
+            value={args.chat.input}
+            disabled={args.isBusy}
+            resolvedTheme={args.resolvedTheme}
+            onChangeAction={(next: string) => args.chat.setInput(next)}
+            onSendAction={() => {
+              void (async () => {
+                await args.chat.send();
+                args.onAfterSendAction?.();
+              })();
+            }}
+          />
+
           <div
             style={{
               display: "flex",
@@ -424,29 +504,10 @@ function StrategyWorkspaceStart(args: {
             ))}
           </div>
 
-          <ChatInput
-            ref={args.inputRef}
-            mode={args.chat.mode}
-            value={args.chat.input}
-            disabled={args.isBusy}
-            resolvedTheme={args.resolvedTheme}
-            onChangeAction={(next: string) => args.chat.setInput(next)}
-            onSendAction={() => {
-              void (async () => {
-                await args.chat.send();
-                args.onAfterSendAction?.();
-              })();
-            }}
-          />
-
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
-              AI assists with generation and analysis; review generated
-              requirements and tests before using them.
-            </div>
-            <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
-              Release Signal supports your release decision; it does not approve
-              releases. Final judgment stays with your QA/release owner.
+              AI-assisted - you review generated requirements and tests before
+              using them.
             </div>
           </div>
         </div>
@@ -455,6 +516,8 @@ function StrategyWorkspaceStart(args: {
           chat={args.chat}
           resolvedTheme={args.resolvedTheme}
         />
+
+        <WorkflowPreview resolvedTheme={args.resolvedTheme} />
       </div>
     </section>
   );
@@ -635,7 +698,11 @@ export default function ChatPanel({
     chat.hasPersistentTestSuite ||
     chat.hasReviewArtifact;
 
+  const hasExecutionEvidence = !!chat.sessionArtifact?.executionIntelligence;
+  const showReleaseReadiness =
+    chat.hasPersistentTestSuite || chat.hasReviewArtifact || hasExecutionEvidence;
   const showWorkspaceOverview = hasWorkspaceArtifacts || !isCoachSession;
+  const showActivityTimeline = !isCoachSession || chat.items.length > 0 || isBusy;
 
   return (
     <div
@@ -684,10 +751,12 @@ export default function ChatPanel({
               resolvedTheme={resolvedTheme}
             />
 
-            <ReleaseReadinessPanel
-              sessionArtifact={chat.sessionArtifact}
-              resolvedTheme={resolvedTheme}
-            />
+            {showReleaseReadiness ? (
+              <ReleaseReadinessPanel
+                sessionArtifact={chat.sessionArtifact}
+                resolvedTheme={resolvedTheme}
+              />
+            ) : null}
 
             <ArtifactDocumentSurface
               items={chat.items}
@@ -744,7 +813,8 @@ export default function ChatPanel({
         </div>
         ) : null}
 
-        <div data-tour-anchor="workflow-start">
+        {showActivityTimeline ? (
+        <div>
           <ActivityTimelinePanel
             ref={chatBoxRef}
             resolvedTheme={resolvedTheme}
@@ -850,6 +920,7 @@ export default function ChatPanel({
             />
           </ActivityTimelinePanel>
         </div>
+        ) : null}
       </div>
     </div>
   );
