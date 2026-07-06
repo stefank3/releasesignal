@@ -245,12 +245,6 @@ function EmptyWorkspaceHint(args: { resolvedTheme: "light" | "dark" }) {
   );
 }
 
-const strategyExampleChips = [
-  "Login + MFA",
-  "Checkout flow",
-  "Password reset",
-];
-
 const strategyWorkflowSteps = [
   {
     title: "Refine requirement",
@@ -388,21 +382,6 @@ function StrategyWorkspaceStart(args: {
       : "0 8px 24px rgba(15,23,42,0.05)",
   };
 
-  const chipStyle: React.CSSProperties = {
-    borderRadius: 999,
-    border: isDark
-      ? "1px solid rgba(255,255,255,0.16)"
-      : "1px solid rgba(15,23,42,0.14)",
-    background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
-    color: textColor,
-    padding: "7px 10px",
-    fontSize: 12,
-    fontWeight: 850,
-    cursor: args.isBusy ? "not-allowed" : "pointer",
-    opacity: args.isBusy ? 0.58 : 1,
-    boxShadow: isDark ? "none" : "0 3px 8px rgba(15,23,42,0.04)",
-  };
-
   return (
     <section
       aria-label="Strategy workspace start"
@@ -485,30 +464,6 @@ function StrategyWorkspaceStart(args: {
               })();
             }}
           />
-
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            {strategyExampleChips.map((example) => (
-              <button
-                key={example}
-                type="button"
-                disabled={args.isBusy}
-                onClick={() => {
-                  args.chat.setInput(example);
-                  requestAnimationFrame(() => args.inputRef.current?.focus());
-                }}
-                style={chipStyle}
-              >
-                {example}
-              </button>
-            ))}
-          </div>
 
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
