@@ -17,14 +17,15 @@ const TOUR_STEPS: TourStep[] = [
   {
     title: "Sprint Planning",
     body:
-      "Start with a Jira-style story, acceptance criteria, or rough requirement from sprint planning.",
+      "Start by refining a requirement or pasting a Jira/API change description.",
     missingBody:
-      "Start with the main workspace input. Paste a Jira-style story, acceptance criteria, or rough requirement from sprint planning.",
+      "Start with the main workspace input. Paste a Jira-style story, API change, acceptance criteria, or rough requirement.",
     anchorSelectors: ['[data-tour-anchor="workflow-start"]'],
   },
   {
     title: "Requirement Refinement",
-    body: "Release Signal turns weak input into a clearer, testable requirement.",
+    body:
+      "Release Signal helps structure rough input into a clearer, testable requirement.",
     missingBody:
       "The requirement card appears after you refine and save requirement context for the workspace.",
     anchorSelectors: [
@@ -34,9 +35,9 @@ const TOUR_STEPS: TourStep[] = [
   },
   {
     title: "Test Design",
-    body: "Generate structured QA coverage from the refined requirement.",
+    body: "Generate structured QA coverage from the reviewed requirement.",
     missingBody:
-      "The test suite area appears after the requirement is ready and tests are generated.",
+      "The test suite area appears after the requirement is available and tests are generated.",
     anchorSelectors: [
       '[data-tour-anchor="test-suite-card"]',
       '[data-tour-anchor="artifact-documents"]',
@@ -80,9 +81,9 @@ const TOUR_STEPS: TourStep[] = [
   {
     title: "Release Readiness",
     body:
-      "Release Readiness is derived from structured artifacts and deterministic rules.",
+      "Release Readiness is a decision-support signal from structured artifacts and deterministic checks.",
     missingBody:
-      "The Release Readiness panel stays available as the release-decision signal, even before all evidence exists.",
+      "The Release Readiness panel stays available as a signal; your QA/release owner remains responsible for final approval.",
     anchorSelectors: ['[data-tour-anchor="release-readiness-panel"]'],
   },
 ];
@@ -320,6 +321,7 @@ export default function GuidedOnboardingTour({
             <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>
               This tour is guidance only. It does not change workflow state,
               artifacts, review scoring, execution evidence, or Release Readiness.
+              Review generated requirements and tests before using them.
             </div>
 
             <div

@@ -43,7 +43,7 @@ function getPlaceholder(mode: Mode): string {
     return "Describe the feature, refined requirement, or additional coverage to generate.";
   }
 
-  return "Paste a feature, Jira ticket, API change, release area, or rough requirement.";
+  return "Refine a requirement or paste a Jira/API change description.";
 }
 
 function getButtonLabel(mode: Mode, disabled?: boolean): string {

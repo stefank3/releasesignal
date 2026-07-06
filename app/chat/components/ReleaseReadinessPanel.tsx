@@ -117,11 +117,12 @@ export function ReleaseReadinessPanel({
               Release Readiness Report
             </div>
             <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
-              Deterministic release signal derived from requirement, suite,
-              review, and execution evidence.
+              Decision-support signal derived from requirement, suite, review,
+              and execution evidence. Your QA/release owner remains responsible
+              for final approval.
             </div>
             <ArtifactProvenanceLabel
-              label="Release Readiness · Calculated from requirement, suite, review, and execution evidence"
+              label="Release Readiness · Deterministic signal from saved artifacts and evidence"
               resolvedTheme={resolvedTheme}
             />
           </div>
@@ -183,6 +184,11 @@ export function ReleaseReadinessPanel({
 
         <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45 }}>
           {readiness.summary}
+        </div>
+
+        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
+          AI assists with generation and analysis. Persisted artifacts and
+          deterministic checks drive this workspace state.
         </div>
       </button>
 
