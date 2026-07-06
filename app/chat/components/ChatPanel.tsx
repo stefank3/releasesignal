@@ -255,22 +255,27 @@ const strategyWorkflowSteps = [
   {
     title: "Refine requirement",
     body: "Clarify scope, rules, risks.",
+    tourAnchor: "workflow-preview-requirement",
   },
   {
     title: "Generate test suite",
     body: "Structured, reviewable cases.",
+    tourAnchor: "workflow-preview-test-design",
   },
   {
     title: "Review coverage",
     body: "Find gaps and weak checks.",
+    tourAnchor: "workflow-preview-review",
   },
   {
     title: "Add execution results",
     body: "Upload pass/fail evidence.",
+    tourAnchor: "workflow-preview-results",
   },
   {
     title: "Release readiness",
     body: "Your decision-support signal.",
+    tourAnchor: "workflow-preview-readiness",
   },
 ];
 
@@ -302,6 +307,7 @@ function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
         {strategyWorkflowSteps.map((step, index) => (
           <div
             key={step.title}
+            data-tour-anchor={step.tourAnchor}
             style={{
               borderRadius: 12,
               border: isDark
@@ -464,7 +470,7 @@ function StrategyWorkspaceStart(args: {
           </div>
         </div>
 
-        <div style={{ display: "grid", gap: 8 }}>
+        <div data-tour-anchor="start-here-input" style={{ display: "grid", gap: 8 }}>
           <ChatInput
             ref={args.inputRef}
             mode={args.chat.mode}

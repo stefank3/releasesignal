@@ -17,74 +17,57 @@ const TOUR_STEPS: TourStep[] = [
   {
     title: "Start with a requirement",
     body:
-      "Start by refining a requirement or pasting a Jira/API change description.",
+      "Use Start Here to paste a requirement, Jira/API change, acceptance criteria, or rough scope. AI-assisted - review before you rely on it.",
     missingBody:
       "Start with the main workspace input. Paste a Jira-style story, API change, acceptance criteria, or rough requirement.",
-    anchorSelectors: ['[data-tour-anchor="workflow-start"]'],
-  },
-  {
-    title: "Requirement Refinement",
-    body:
-      "Release Signal helps structure rough input into a clearer, testable requirement.",
-    missingBody:
-      "The requirement card appears after you refine and save requirement context for the workspace.",
     anchorSelectors: [
-      '[data-tour-anchor="requirement-card"]',
-      '[data-tour-anchor="artifact-summary"]',
+      '[data-tour-anchor="start-here-input"]',
+      '[data-tour-anchor="workflow-start"]',
     ],
   },
   {
     title: "Generate your test suite",
-    body: "Generate structured QA coverage from the refined requirement.",
+    body:
+      "Move into Test Design when the refined requirement is ready, then generate structured QA coverage from that requirement.",
     missingBody:
-      "The test suite area appears after the requirement is available and tests are generated.",
+      "The Test Design step remains reachable through the top tabs and artifact-driven workflow state.",
     anchorSelectors: [
+      '[data-tour-anchor="workflow-preview-test-design"]',
       '[data-tour-anchor="test-suite-card"]',
-      '[data-tour-anchor="artifact-documents"]',
-      '[data-tour-anchor="artifact-summary"]',
     ],
   },
   {
     title: "Review coverage",
-    body: "Review identifies coverage gaps, risks, and improvement opportunities.",
-    missingBody:
-      "The review area appears after a suite is available and the review step is run.",
-    anchorSelectors: [
-      '[data-tour-anchor="review-card"]',
-      '[data-tour-anchor="artifact-documents"]',
-      '[data-tour-anchor="workflow-guidance"]',
-    ],
-  },
-  {
-    title: "Generate from Gaps / Improve",
     body:
-      "Use review findings to improve the suite or generate targeted follow-up tests.",
+      "Review the generated suite for gaps, weak checks, and risk areas before relying on it.",
     missingBody:
-      "Review-driven improvement actions appear after a review result exists for the current suite.",
+      "The Test Review step remains reachable through the top tabs and artifact-driven workflow state.",
     anchorSelectors: [
-      '[data-tour-anchor="review-actions"]',
+      '[data-tour-anchor="workflow-preview-review"]',
       '[data-tour-anchor="review-card"]',
-      '[data-tour-anchor="workflow-guidance"]',
     ],
   },
   {
     title: "Add results",
-    body: "Export a template, upload results, and capture execution evidence.",
+    body:
+      "After execution, add pass/fail results and evidence so readiness can use structured artifacts.",
     missingBody:
-      "Execution evidence controls become useful after a persisted test suite exists.",
+      "Execution evidence becomes useful after a persisted test suite exists.",
     anchorSelectors: [
+      '[data-tour-anchor="workflow-preview-results"]',
       '[data-tour-anchor="execution-evidence-card"]',
-      '[data-tour-anchor="test-suite-card"]',
-      '[data-tour-anchor="artifact-summary"]',
     ],
   },
   {
     title: "Get your readiness signal",
     body:
-      "Release Readiness is a decision-support signal from structured artifacts and deterministic checks.",
+      "Release Signal supports your release decision; it does not approve releases. The QA/release owner has the final call.",
     missingBody:
-      "The Release Readiness panel stays available as a signal; your QA/release owner remains responsible for final approval.",
-    anchorSelectors: ['[data-tour-anchor="release-readiness-panel"]'],
+      "Release Readiness stays available as a decision-support signal from structured artifacts and deterministic checks.",
+    anchorSelectors: [
+      '[data-tour-anchor="workflow-preview-readiness"]',
+      '[data-tour-anchor="release-readiness-panel"]',
+    ],
   },
 ];
 
@@ -200,13 +183,36 @@ export default function GuidedOnboardingTour({
     setIsOpen(true);
   };
 
-  const popoverWidth = 340;
+  const popoverWidth = Math.min(340, Math.max(280, viewport.width - 32));
+  const popoverHeightEstimate = stepIndex === 0 ? 282 : 238;
+  const hasRoomRight = anchorRect
+    ? anchorRect.right + 12 + popoverWidth <= viewport.width - 16
+    : false;
+  const hasRoomLeft = anchorRect
+    ? anchorRect.left - 12 - popoverWidth >= 16
+    : false;
+  const sidePlacement = hasRoomRight || hasRoomLeft;
   const popoverLeft = anchorRect
-    ? clamp(anchorRect.left, 16, Math.max(16, viewport.width - popoverWidth - 16))
+    ? hasRoomRight
+      ? anchorRect.right + 12
+      : hasRoomLeft
+        ? anchorRect.left - popoverWidth - 12
+        : clamp(anchorRect.left, 16, Math.max(16, viewport.width - popoverWidth - 16))
     : Math.max(16, viewport.width - popoverWidth - 22);
-  const popoverTop = anchorRect
-    ? clamp(anchorRect.bottom + 12, 16, Math.max(16, viewport.height - 260))
-    : Math.max(16, viewport.height - 270);
+  const belowTop = anchorRect ? anchorRect.bottom + 12 : viewport.height - 270;
+  const aboveTop = anchorRect ? anchorRect.top - popoverHeightEstimate - 12 : belowTop;
+  const preferredTop = anchorRect
+    ? sidePlacement
+      ? anchorRect.top
+      : belowTop + popoverHeightEstimate <= viewport.height - 16
+        ? belowTop
+        : aboveTop
+    : belowTop;
+  const popoverTop = clamp(
+    preferredTop,
+    16,
+    Math.max(16, viewport.height - popoverHeightEstimate - 16)
+  );
 
   const buttonStyle: React.CSSProperties = {
     borderRadius: 999,
@@ -233,8 +239,8 @@ export default function GuidedOnboardingTour({
           ...buttonStyle,
           position: "fixed",
           right: 18,
-          bottom: 18,
-          zIndex: 50,
+          bottom: "calc(18px + env(safe-area-inset-bottom, 0px))",
+          zIndex: 60,
         }}
       >
         Help / Tour
@@ -322,7 +328,8 @@ export default function GuidedOnboardingTour({
               <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>
                 This tour is guidance only. It does not change workflow state,
                 artifacts, review scoring, execution evidence, or Release
-                Readiness. Reopen it from Help / Tour.
+                Readiness. Release Signal supports your release decision; it does
+                not approve releases. Reopen it from Help / Tour.
               </div>
             ) : null}
 
