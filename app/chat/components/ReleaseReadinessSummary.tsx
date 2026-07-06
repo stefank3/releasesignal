@@ -14,7 +14,7 @@ type ReleaseReadinessSummaryProps = {
 };
 
 const STATUS_LABELS: Record<ReleaseReadinessSummaryModel["status"], string> = {
-  insufficient_data: "Insufficient Data",
+  insufficient_data: "Not enough data yet",
   not_ready: "Not Ready",
   weak: "Weak Readiness",
   partial: "Partial Readiness",

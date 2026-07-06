@@ -60,6 +60,7 @@ type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
 
 function StatusChip(args: {
   ready: boolean;
+  active?: boolean;
   resolvedTheme: "light" | "dark";
 }) {
   const isDark = args.resolvedTheme === "dark";
@@ -79,6 +80,10 @@ function StatusChip(args: {
           ? isDark
             ? "1px solid rgba(34,197,94,0.28)"
             : "1px solid rgba(22,163,74,0.25)"
+          : args.active
+            ? isDark
+              ? "1px solid rgba(96,165,250,0.28)"
+              : "1px solid rgba(37,99,235,0.22)"
           : isDark
             ? "1px solid rgba(255,255,255,0.10)"
             : "1px solid rgba(15,23,42,0.10)",
@@ -86,13 +91,17 @@ function StatusChip(args: {
           ? isDark
             ? "rgba(34,197,94,0.14)"
             : "rgba(22,163,74,0.10)"
+          : args.active
+            ? isDark
+              ? "rgba(96,165,250,0.14)"
+              : "rgba(37,99,235,0.08)"
           : isDark
             ? "rgba(255,255,255,0.05)"
             : "rgba(15,23,42,0.04)",
         color: isDark ? "#ffffff" : "#0f172a",
       }}
     >
-      {args.ready ? "Available" : "Needed"}
+      {args.ready ? "Complete" : args.active ? "In progress" : "Not started yet"}
     </span>
   );
 }
@@ -220,6 +229,8 @@ function DashboardTile(args: {
 function DashboardSummaryCard(args: {
   title: string;
   ready: boolean;
+  active?: boolean;
+  stepLabel: string;
   emphasis: string;
   description: string;
   tiles: Array<{
@@ -234,7 +245,7 @@ function DashboardSummaryCard(args: {
   resolvedTheme: "light" | "dark";
 }) {
   const isDark = args.resolvedTheme === "dark";
-  const accentTone: Tone = args.ready ? "info" : "neutral";
+  const accentTone: Tone = args.active ? "info" : args.ready ? "positive" : "neutral";
 
   return (
     <div
@@ -246,6 +257,7 @@ function DashboardSummaryCard(args: {
         background: getAccentBackground(accentTone, isDark),
         display: "grid",
         gap: 10,
+        minHeight: 250,
       }}
     >
       <div
@@ -256,17 +268,40 @@ function DashboardSummaryCard(args: {
           justifyContent: "space-between",
         }}
       >
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 950,
-            color: isDark ? "#ffffff" : "#0f172a",
-          }}
-        >
-          {args.title}
+        <div style={{ display: "grid", gap: 4 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 950,
+              letterSpacing: 0.6,
+              textTransform: "uppercase",
+              color: args.active
+                ? isDark
+                  ? "rgba(147,197,253,0.95)"
+                  : "rgba(37,99,235,0.86)"
+                : isDark
+                  ? "rgba(255,255,255,0.58)"
+                  : "rgba(15,23,42,0.55)",
+            }}
+          >
+            {args.stepLabel}
+          </div>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 950,
+              color: isDark ? "#ffffff" : "#0f172a",
+            }}
+          >
+            {args.title}
+          </div>
         </div>
 
-        <StatusChip ready={args.ready} resolvedTheme={args.resolvedTheme} />
+        <StatusChip
+          ready={args.ready}
+          active={args.active}
+          resolvedTheme={args.resolvedTheme}
+        />
       </div>
 
       <div
@@ -334,6 +369,23 @@ function normalizeStageTitle(title: string | undefined): string {
   return (
     String(title ?? "").replace(/^Workspace stage:\s*/i, "").trim() || "Unknown"
   );
+}
+
+function getStageIndex(args: {
+  currentStage: string;
+  requirementReady: boolean;
+  suiteReady: boolean;
+  reviewReady: boolean;
+  executionEvidenceReady: boolean;
+}): number {
+  const stage = args.currentStage.toLowerCase();
+
+  if (stage.includes("execution") || args.executionEvidenceReady) return 4;
+  if (stage.includes("review") || args.reviewReady) return 3;
+  if (stage.includes("test design") || stage.includes("suite") || args.suiteReady) {
+    return 2;
+  }
+  return 1;
 }
 
 function toRelativeStrength(score: number | null | undefined): string | null {
@@ -473,6 +525,13 @@ export default function FeatureWorkspaceSummary({
 
   const currentStage = normalizeStageTitle(chat.workflowStatus.title);
   const nextAction = chat.workflowStatus.nextAction;
+  const stageIndex = getStageIndex({
+    currentStage,
+    requirementReady,
+    suiteReady,
+    reviewReady,
+    executionEvidenceReady,
+  });
 
   const hasAnyArtifacts =
     requirementReady ||
@@ -500,13 +559,13 @@ export default function FeatureWorkspaceSummary({
   const requirementTiles = [
     {
       label: "State",
-      value: requirementReady ? "Saved" : "Missing",
-      tone: requirementReady ? "positive" : "warning",
+      value: requirementReady ? "Saved" : "Not started yet",
+      tone: requirementReady ? "positive" : "neutral",
     },
     {
       label: "Workflow",
       value: requirementReady ? "Can drive design" : "Needs refinement",
-      tone: requirementReady ? "info" : "warning",
+      tone: requirementReady ? "info" : "neutral",
     },
     {
       label: "Artifact",
@@ -515,7 +574,7 @@ export default function FeatureWorkspaceSummary({
     },
     {
       label: "Workspace",
-      value: requirementReady ? "Available" : "Needed",
+      value: requirementReady ? "Available" : "Not started yet",
       tone: requirementReady ? "positive" : "neutral",
     },
   ] as const;
@@ -533,12 +592,12 @@ export default function FeatureWorkspaceSummary({
     },
     {
       label: "State",
-      value: suiteReady ? "Saved" : "Missing",
-      tone: suiteReady ? "positive" : "warning",
+      value: suiteReady ? "Saved" : "Not started yet",
+      tone: suiteReady ? "positive" : "neutral",
     },
     {
       label: "Workspace",
-      value: suiteReady ? "Available" : "Needed",
+      value: suiteReady ? "Available" : "Not started yet",
       tone: suiteReady ? "positive" : "neutral",
     },
   ] as const;
@@ -576,12 +635,12 @@ export default function FeatureWorkspaceSummary({
     },
     {
       label: "State",
-      value: reviewReady ? "Saved" : "Missing",
-      tone: reviewReady ? "positive" : "warning",
+      value: reviewReady ? "Saved" : "Not started yet",
+      tone: reviewReady ? "positive" : "neutral",
     },
     {
       label: "Workspace",
-      value: reviewReady ? "Available" : "Needed",
+      value: reviewReady ? "Available" : "Not started yet",
       tone: reviewReady ? "positive" : "neutral",
     },
   ] as const;
@@ -603,7 +662,7 @@ export default function FeatureWorkspaceSummary({
     >
       <div style={{ display: "grid", gap: 8 }}>
         <StageBadge
-          text={`Current stage: ${currentStage}`}
+          text={`Stage ${stageIndex} of 5 - ${currentStage}`}
           resolvedTheme={resolvedTheme}
         />
 
@@ -636,6 +695,8 @@ export default function FeatureWorkspaceSummary({
           title="Requirement"
           tourAnchor="requirement-card"
           ready={requirementReady}
+          active={stageIndex === 1 && !requirementReady}
+          stepLabel={stageIndex === 1 && !requirementReady ? "Step 1 · Now" : "Step 1"}
           emphasis={requirementEmphasis}
           description={
             requirementReady
@@ -660,6 +721,8 @@ export default function FeatureWorkspaceSummary({
           title="Test Suite"
           tourAnchor="test-suite-card"
           ready={suiteReady}
+          active={stageIndex === 2 && !suiteReady}
+          stepLabel={stageIndex === 2 && !suiteReady ? "Step 2 · Now" : "Step 2"}
           emphasis={suiteEmphasis}
           description={
             suiteReady
@@ -692,6 +755,8 @@ export default function FeatureWorkspaceSummary({
           title="Review"
           tourAnchor="review-card"
           ready={reviewReady}
+          active={stageIndex === 3 && !reviewReady}
+          stepLabel={stageIndex === 3 && !reviewReady ? "Step 3 · Now" : "Step 3"}
           emphasis={reviewEmphasis}
           description={
             reviewReady

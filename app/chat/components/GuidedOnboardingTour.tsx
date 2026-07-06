@@ -15,7 +15,7 @@ const STORAGE_KEY = "release-signal-v1-2-guided-tour";
 
 const TOUR_STEPS: TourStep[] = [
   {
-    title: "Sprint Planning",
+    title: "Start with a requirement",
     body:
       "Start by refining a requirement or pasting a Jira/API change description.",
     missingBody:
@@ -34,7 +34,7 @@ const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
-    title: "Test Design",
+    title: "Generate your test suite",
     body: "Generate structured QA coverage from the refined requirement.",
     missingBody:
       "The test suite area appears after the requirement is available and tests are generated.",
@@ -45,7 +45,7 @@ const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
-    title: "Coverage Review",
+    title: "Review coverage",
     body: "Review identifies coverage gaps, risks, and improvement opportunities.",
     missingBody:
       "The review area appears after a suite is available and the review step is run.",
@@ -68,7 +68,7 @@ const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
-    title: "Execution Evidence",
+    title: "Add results",
     body: "Export a template, upload results, and capture execution evidence.",
     missingBody:
       "Execution evidence controls become useful after a persisted test suite exists.",
@@ -79,7 +79,7 @@ const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
-    title: "Release Readiness",
+    title: "Get your readiness signal",
     body:
       "Release Readiness is a decision-support signal from structured artifacts and deterministic checks.",
     missingBody:
@@ -318,11 +318,13 @@ export default function GuidedOnboardingTour({
               {anchorFound ? step.body : step.missingBody}
             </p>
 
-            <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>
-              This tour is guidance only. It does not change workflow state,
-              artifacts, review scoring, execution evidence, or Release Readiness.
-              Review generated requirements and tests before using them.
-            </div>
+            {stepIndex === 0 ? (
+              <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>
+                This tour is guidance only. It does not change workflow state,
+                artifacts, review scoring, execution evidence, or Release
+                Readiness. Reopen it from Help / Tour.
+              </div>
+            ) : null}
 
             <div
               style={{
