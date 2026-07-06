@@ -35,7 +35,7 @@ const TOUR_STEPS: TourStep[] = [
   },
   {
     title: "Test Design",
-    body: "Generate structured QA coverage from the reviewed requirement.",
+    body: "Generate structured QA coverage from the refined requirement.",
     missingBody:
       "The test suite area appears after the requirement is available and tests are generated.",
     anchorSelectors: [
