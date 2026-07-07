@@ -93,6 +93,47 @@ function ChecklistItem({
   );
 }
 
+function CompactChecklistItem({
+  label,
+  complete,
+  warning,
+  resolvedTheme,
+}: {
+  label: string;
+  complete: boolean;
+  warning?: boolean;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = resolvedTheme === "dark";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        border: warning
+          ? "1px solid rgba(245,158,11,0.28)"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 10,
+        padding: "8px 10px",
+        background: warning
+          ? "rgba(245,158,11,0.08)"
+          : isDark
+            ? "rgba(255,255,255,0.04)"
+            : "rgba(15,23,42,0.025)",
+        fontSize: 12,
+        fontWeight: 800,
+      }}
+    >
+      <span aria-hidden="true">{complete ? "✓" : warning ? "!" : "○"}</span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
 export function ReleaseReadinessPanel({
   sessionArtifact,
   resolvedTheme = "dark",
@@ -282,10 +323,13 @@ export function ReleaseReadinessPanel({
               }}
             >
               <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
-                Status
+                Status / Band
               </div>
               <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>
                 {STATUS_LABELS[readiness.status]}
+              </div>
+              <div style={{ marginTop: 2, fontSize: 11, opacity: 0.72 }}>
+                {readinessBand}
               </div>
             </div>
 
@@ -390,6 +434,41 @@ export function ReleaseReadinessPanel({
           </div>
         )}
 
+        {commandCenter ? (
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+            }}
+          >
+            <CompactChecklistItem
+              label="Requirement"
+              complete={readiness.factors.requirementPresent}
+              resolvedTheme={resolvedTheme}
+            />
+            <CompactChecklistItem
+              label="Test suite"
+              complete={readiness.factors.suitePresent}
+              resolvedTheme={resolvedTheme}
+            />
+            <CompactChecklistItem
+              label="Review"
+              complete={readiness.factors.reviewPresent}
+              resolvedTheme={resolvedTheme}
+            />
+            <CompactChecklistItem
+              label="Execution state"
+              complete={readiness.factors.executionEvidencePresent}
+              warning={
+                readiness.factors.executionEvidencePresent &&
+                readiness.status !== "ready"
+              }
+              resolvedTheme={resolvedTheme}
+            />
+          </div>
+        ) : null}
+
         <div
           style={{
             fontSize: 11,
@@ -401,6 +480,31 @@ export function ReleaseReadinessPanel({
             ? "AI-assisted - review before you rely on it. Final release approval stays with your QA/release owner."
             : "A decision-support signal calculated from your saved artifacts using fixed rules - final release approval stays with your QA/release owner."}
         </div>
+
+        {commandCenter ? (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+              borderTop: isDark
+                ? "1px solid rgba(255,255,255,0.08)"
+                : "1px solid rgba(15,23,42,0.08)",
+              paddingTop: 10,
+              fontSize: 12,
+              fontWeight: 900,
+              color: isDark ? "rgba(147,197,253,0.95)" : "rgba(37,99,235,0.90)",
+            }}
+          >
+            <span>
+              {isOpen ? "Hide readiness detail" : "View readiness detail"}
+            </span>
+            <span style={{ opacity: 0.62, fontWeight: 700 }}>
+              inputs - reasons - warnings - recommended actions
+            </span>
+          </div>
+        ) : null}
       </button>
 
       {isOpen ? (
@@ -412,10 +516,12 @@ export function ReleaseReadinessPanel({
             padding: 12,
           }}
         >
-          <ExecutionResultsBreakdown
-            factors={readiness.factors}
-            commandCenter={commandCenter}
-          />
+          {commandCenter ? null : (
+            <ExecutionResultsBreakdown
+              factors={readiness.factors}
+              commandCenter={commandCenter}
+            />
+          )}
           <ReleaseReadinessSummary
             readiness={readiness}
             commandCenter={commandCenter}

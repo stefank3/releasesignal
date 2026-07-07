@@ -2,7 +2,12 @@
 
 import React from "react";
 import type { TestCase } from "@/lib/chat/artifact";
-import type { ChatItem, ReviewResult, SessionArtifact } from "../../chat.types";
+import type {
+  ChatItem,
+  ExecutionIntelligenceArtifact,
+  ReviewResult,
+  SessionArtifact,
+} from "../../chat.types";
 import RequirementCard from "../../cards/RequirementCard";
 import CasesTextCard from "../../cards/CasesTextCard";
 import ReviewCard from "../../cards/ReviewCard";
@@ -85,15 +90,48 @@ function getDocumentPreview(text: string): string {
   return lines.join(" ");
 }
 
+function toDisplayLabel(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "Unknown";
+
+  return normalized
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function getExecutionStatusLabel(
+  execution: ExecutionIntelligenceArtifact | null | undefined
+): string {
+  if (!execution) return "Not started";
+  return `${toDisplayLabel(execution.suiteStatus)} - ${execution.summary.total}`;
+}
+
+function getExecutionPreview(
+  execution: ExecutionIntelligenceArtifact | null | undefined
+): string {
+  if (!execution) return "No execution results uploaded yet.";
+  const summary = execution.summary;
+  const suite =
+    typeof execution.suiteVersion === "number"
+      ? `Suite v${execution.suiteVersion}`
+      : "Unknown suite";
+
+  return `${summary.passed} passed - ${summary.failed} failed - ${summary.skipped} skipped - linked to ${suite}`;
+}
+
 function ArtifactSummaryShell({
+  kind,
   title,
+  statusLabel,
   actionLabel,
   preview,
   children,
   resolvedTheme,
   commandCenter = false,
 }: {
+  kind: "requirement" | "suite" | "review" | "execution";
   title: string;
+  statusLabel?: string;
   actionLabel: string;
   preview: string;
   children: React.ReactNode;
@@ -104,6 +142,7 @@ function ArtifactSummaryShell({
 
   return (
     <details
+      data-artifact-row={kind}
       style={{
         border: isDark
           ? "1px solid rgba(255,255,255,0.10)"
@@ -138,7 +177,35 @@ function ArtifactSummaryShell({
             flexWrap: "wrap",
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 950 }}>{title}</span>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 950 }}>{title}</span>
+            {statusLabel ? (
+              <span
+                style={{
+                  border: isDark
+                    ? "1px solid rgba(96,165,250,0.22)"
+                    : "1px solid rgba(37,99,235,0.18)",
+                  background: isDark
+                    ? "rgba(96,165,250,0.08)"
+                    : "rgba(37,99,235,0.06)",
+                  borderRadius: 999,
+                  padding: "4px 8px",
+                  fontSize: 10,
+                  fontWeight: 900,
+                }}
+              >
+                {statusLabel}
+              </span>
+            ) : null}
+          </span>
           <span
             style={{
               border: isDark
@@ -186,6 +253,113 @@ function ArtifactSummaryShell({
   );
 }
 
+function ExecutionResultsDetail({
+  execution,
+  resolvedTheme,
+}: {
+  execution: ExecutionIntelligenceArtifact | null | undefined;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = resolvedTheme === "dark";
+
+  if (!execution) {
+    return (
+      <div style={{ fontSize: 12, opacity: 0.72 }}>
+        Execution results have not been uploaded for this workspace yet.
+      </div>
+    );
+  }
+
+  const total = Math.max(0, Number(execution.summary.total ?? 0));
+  const buckets = [
+    { label: "Passed", value: execution.summary.passed, color: "#22c55e" },
+    { label: "Failed", value: execution.summary.failed, color: "#ef4444" },
+    { label: "Skipped", value: execution.summary.skipped, color: "#f59e0b" },
+    { label: "Blocked", value: execution.summary.blocked, color: "#dc2626" },
+    { label: "Timed out", value: execution.summary.timedOut, color: "#b91c1c" },
+    { label: "Unknown", value: execution.summary.unknown, color: "#94a3b8" },
+  ];
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+          fontSize: 12,
+        }}
+      >
+        <span style={{ opacity: 0.72 }}>Total uploaded</span>
+        <strong>{total}</strong>
+      </div>
+
+      <div
+        role="img"
+        aria-label={`Execution results: ${buckets
+          .map((bucket) => `${bucket.label} ${bucket.value}`)
+          .join(", ")}`}
+        style={{
+          display: "flex",
+          height: 10,
+          overflow: "hidden",
+          borderRadius: 999,
+          background: isDark ? "rgba(15,23,42,0.92)" : "rgba(226,232,240,0.95)",
+        }}
+      >
+        {buckets
+          .filter((bucket) => bucket.value > 0 && total > 0)
+          .map((bucket) => (
+            <div
+              key={bucket.label}
+              aria-hidden="true"
+              style={{
+                width: `${(bucket.value / total) * 100}%`,
+                background: bucket.color,
+              }}
+            />
+          ))}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+        }}
+      >
+        {buckets.map((bucket) => (
+          <div
+            key={bucket.label}
+            style={{
+              border: isDark
+                ? "1px solid rgba(255,255,255,0.10)"
+                : "1px solid rgba(15,23,42,0.10)",
+              borderRadius: 10,
+              padding: "8px 9px",
+              background: isDark
+                ? "rgba(255,255,255,0.04)"
+                : "rgba(15,23,42,0.025)",
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+              {bucket.label}
+            </div>
+            <div style={{ marginTop: 3, fontSize: 13, fontWeight: 950 }}>
+              {bucket.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
+        Persisted execution artifact - does not change the Review Score.
+      </div>
+    </div>
+  );
+}
+
 export function ArtifactDocumentSurface({
   items,
   sessionArtifact = null,
@@ -209,8 +383,9 @@ export function ArtifactDocumentSurface({
   isRegeneratingSuite = false,
 }: Props) {
   const documents = getLatestArtifactDocumentItems(items);
+  const execution = sessionArtifact?.executionIntelligence ?? null;
 
-  if (!documents.length) return null;
+  if (!documents.length && !execution) return null;
 
   return (
     <section
@@ -230,7 +405,19 @@ export function ArtifactDocumentSurface({
             return (
               <ArtifactSummaryShell
                 key={`artifact-document-${document.kind}-${document.index}`}
+                kind="requirement"
                 title={getDocumentTitle(document.kind)}
+                statusLabel={
+                  commandCenter
+                    ? `v${
+                        (
+                          sessionArtifact?.refinedRequirement as
+                            | { version?: number }
+                            | undefined
+                        )?.version ?? 1
+                      }`
+                    : undefined
+                }
                 actionLabel={getDocumentAction(document.kind)}
                 preview={getDocumentPreview(document.item.text)}
                 resolvedTheme={resolvedTheme}
@@ -257,7 +444,17 @@ export function ArtifactDocumentSurface({
             return (
               <ArtifactSummaryShell
                 key={`artifact-document-${document.kind}-${document.index}`}
-                title={getDocumentTitle(document.kind, suiteCount)}
+                kind="suite"
+                title={
+                  commandCenter
+                    ? "Generated Test Cases"
+                    : getDocumentTitle(document.kind, suiteCount)
+                }
+                statusLabel={
+                  commandCenter
+                    ? `Suite v${sessionArtifact?.testSuite?.version ?? "n"}`
+                    : undefined
+                }
                 actionLabel={getDocumentAction(document.kind, suiteCount)}
                 preview={getDocumentPreview(document.item.text)}
                 resolvedTheme={resolvedTheme}
@@ -286,7 +483,13 @@ export function ArtifactDocumentSurface({
           return (
             <ArtifactSummaryShell
               key={`artifact-document-${document.kind}-${document.index}`}
+              kind="review"
               title={getDocumentTitle(document.kind)}
+              statusLabel={
+                commandCenter && document.item.review
+                  ? `${document.item.review.score}/100`
+                  : undefined
+              }
               actionLabel={getDocumentAction(document.kind)}
               preview={getDocumentPreview(
                 document.item.review
@@ -313,6 +516,24 @@ export function ArtifactDocumentSurface({
             </ArtifactSummaryShell>
           );
         })}
+
+        {commandCenter ? (
+          <ArtifactSummaryShell
+            key="artifact-document-execution-results"
+            kind="execution"
+            title="Execution Results"
+            statusLabel={getExecutionStatusLabel(execution)}
+            actionLabel="Open execution results"
+            preview={getExecutionPreview(execution)}
+            resolvedTheme={resolvedTheme}
+            commandCenter={commandCenter}
+          >
+            <ExecutionResultsDetail
+              execution={execution}
+              resolvedTheme={resolvedTheme}
+            />
+          </ArtifactSummaryShell>
+        ) : null}
       </div>
     </section>
   );

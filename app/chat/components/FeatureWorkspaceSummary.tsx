@@ -62,9 +62,12 @@ type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
 function StatusChip(args: {
   ready: boolean;
   active?: boolean;
+  label?: string;
+  tone?: "neutral" | "positive" | "warning" | "negative" | "info";
   resolvedTheme: "light" | "dark";
 }) {
   const isDark = args.resolvedTheme === "dark";
+  const tone = args.tone ?? (args.ready ? "positive" : args.active ? "info" : "neutral");
 
   return (
     <span
@@ -77,32 +80,49 @@ function StatusChip(args: {
         borderRadius: 999,
         fontSize: 11,
         fontWeight: 900,
-        border: args.ready
+        border: tone === "positive"
           ? isDark
             ? "1px solid rgba(34,197,94,0.28)"
             : "1px solid rgba(22,163,74,0.25)"
-          : args.active
+          : tone === "info"
             ? isDark
               ? "1px solid rgba(96,165,250,0.28)"
               : "1px solid rgba(37,99,235,0.22)"
+          : tone === "warning"
+            ? isDark
+              ? "1px solid rgba(245,158,11,0.30)"
+              : "1px solid rgba(217,119,6,0.24)"
+          : tone === "negative"
+            ? isDark
+              ? "1px solid rgba(239,68,68,0.30)"
+              : "1px solid rgba(220,38,38,0.24)"
           : isDark
             ? "1px solid rgba(255,255,255,0.10)"
             : "1px solid rgba(15,23,42,0.10)",
-        background: args.ready
+        background: tone === "positive"
           ? isDark
             ? "rgba(34,197,94,0.14)"
             : "rgba(22,163,74,0.10)"
-          : args.active
+          : tone === "info"
             ? isDark
               ? "rgba(96,165,250,0.14)"
               : "rgba(37,99,235,0.08)"
+          : tone === "warning"
+            ? isDark
+              ? "rgba(245,158,11,0.13)"
+              : "rgba(245,158,11,0.10)"
+          : tone === "negative"
+            ? isDark
+              ? "rgba(239,68,68,0.12)"
+              : "rgba(220,38,38,0.08)"
           : isDark
             ? "rgba(255,255,255,0.05)"
             : "rgba(15,23,42,0.04)",
         color: isDark ? "#ffffff" : "#0f172a",
       }}
     >
-      {args.ready ? "Complete" : args.active ? "In progress" : "Not started yet"}
+      {args.label ??
+        (args.ready ? "Complete" : args.active ? "In progress" : "Not started yet")}
     </span>
   );
 }
@@ -299,6 +319,8 @@ function DashboardSummaryCard(args: {
   meta?: string;
   actionSlot?: React.ReactNode;
   tourAnchor?: string;
+  statusLabel?: string;
+  statusTone?: "neutral" | "positive" | "warning" | "negative" | "info";
   resolvedTheme: "light" | "dark";
   commandCenter?: boolean;
 }) {
@@ -323,6 +345,9 @@ function DashboardSummaryCard(args: {
         gap: 10,
         minHeight: args.commandCenter ? 276 : 250,
         alignContent: "start",
+        gridTemplateRows: args.commandCenter
+          ? "auto auto auto 1fr auto"
+          : undefined,
       }}
     >
       <div
@@ -365,6 +390,8 @@ function DashboardSummaryCard(args: {
         <StatusChip
           ready={args.ready}
           active={args.active}
+          label={args.statusLabel}
+          tone={args.statusTone}
           resolvedTheme={args.resolvedTheme}
         />
       </div>
@@ -428,6 +455,46 @@ function DashboardSummaryCard(args: {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function openArtifactRow(kind: "requirement" | "suite" | "review" | "execution") {
+  const row = document.querySelector<HTMLDetailsElement>(
+    `[data-artifact-row="${kind}"]`
+  );
+  if (!row) return;
+
+  row.open = true;
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function ArtifactOpenButton(args: {
+  label: string;
+  kind: "requirement" | "suite" | "review" | "execution";
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <button
+      type="button"
+      onClick={() => openArtifactRow(args.kind)}
+      style={{
+        width: "100%",
+        borderRadius: 10,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.14)"
+          : "1px solid rgba(15,23,42,0.12)",
+        background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+        color: isDark ? "#ffffff" : "#0f172a",
+        padding: "8px 10px",
+        fontSize: 12,
+        fontWeight: 900,
+        cursor: "pointer",
+      }}
+    >
+      {args.label}
+    </button>
   );
 }
 
@@ -597,7 +664,17 @@ export default function FeatureWorkspaceSummary({
 
   const suiteVersion = chat.sessionArtifact?.testSuite?.version;
   const suiteCount = chat.sessionArtifact?.testSuite?.cases?.length ?? 0;
+  const suiteP1Count =
+    chat.sessionArtifact?.testSuite?.cases?.filter((item) => item.priority === "P1")
+      .length ?? 0;
   const reviewScore = chat.sessionArtifact?.reviewResult?.score;
+  const reviewGapCount = chat.sessionArtifact?.reviewResult?.riskGaps?.length ?? 0;
+  const requirementVersion = (
+    chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
+  )?.version;
+  const requirementRiskCount =
+    (chat.sessionArtifact?.refinedRequirement?.riskAreas?.length ?? 0) ||
+    (chat.sessionArtifact?.refinedRequirement?.riskFocus?.length ?? 0);
 
   // M15:
   // Export uses the active persisted session id only.
@@ -644,6 +721,8 @@ export default function FeatureWorkspaceSummary({
         }`
       : "Latest review result is available"
     : "No persisted review yet";
+  const executionStatus = toReleaseHealthLabel(executionEvidence?.suiteStatus);
+  const executionSummary = executionEvidence?.summary;
 
   const requirementTiles = [
     {
@@ -652,18 +731,34 @@ export default function FeatureWorkspaceSummary({
       tone: requirementReady ? "positive" : "neutral",
     },
     {
-      label: "Workflow",
-      value: requirementReady ? "Can drive design" : "Needs refinement",
+      label: commandCenter ? "Version" : "Workflow",
+      value: commandCenter
+        ? requirementReady
+          ? `v${requirementVersion ?? 1}`
+          : "-"
+        : requirementReady
+          ? "Can drive design"
+          : "Needs refinement",
       tone: requirementReady ? "info" : "neutral",
     },
     {
       label: "Artifact",
-      value: requirementReady ? "Requirement artifact" : "Not available",
+      value: requirementReady
+        ? commandCenter
+          ? "Ready"
+          : "Requirement artifact"
+        : "-",
       tone: requirementReady ? "info" : "neutral",
     },
     {
-      label: "Workspace",
-      value: requirementReady ? "Available" : "Not started yet",
+      label: commandCenter ? "Risks" : "Workspace",
+      value: commandCenter
+        ? requirementReady
+          ? String(requirementRiskCount)
+          : "-"
+        : requirementReady
+          ? "Available"
+          : "Not started yet",
       tone: requirementReady ? "positive" : "neutral",
     },
   ] as const;
@@ -680,20 +775,32 @@ export default function FeatureWorkspaceSummary({
       tone: suiteReady ? "info" : "neutral",
     },
     {
-      label: "State",
-      value: suiteReady ? "Saved" : "Not started yet",
+      label: commandCenter ? "Cases" : "State",
+      value: commandCenter
+        ? suiteReady
+          ? String(suiteCount)
+          : "-"
+        : suiteReady
+          ? "Saved"
+          : "Not started yet",
       tone: suiteReady ? "positive" : "neutral",
     },
     {
-      label: "Workspace",
-      value: suiteReady ? "Available" : "Not started yet",
+      label: commandCenter ? "P1" : "Workspace",
+      value: commandCenter
+        ? suiteReady
+          ? String(suiteP1Count)
+          : "-"
+        : suiteReady
+          ? "Available"
+          : "Not started yet",
       tone: suiteReady ? "positive" : "neutral",
     },
   ] as const;
 
   const reviewTiles = [
     {
-      label: "Review Score",
+      label: commandCenter ? "Score" : "Review Score",
       value:
         reviewReady && typeof reviewScore === "number"
           ? `${reviewScore}/100`
@@ -710,7 +817,7 @@ export default function FeatureWorkspaceSummary({
           : "neutral",
     },
     {
-      label: "Strength",
+      label: commandCenter ? "Grade" : "Strength",
       value: reviewReady ? reviewStrength ?? "Available" : "—",
       tone: reviewReady
         ? reviewStrength === "Strong"
@@ -723,14 +830,57 @@ export default function FeatureWorkspaceSummary({
         : "neutral",
     },
     {
-      label: "State",
-      value: reviewReady ? "Saved" : "Not started yet",
+      label: commandCenter ? "Gaps" : "State",
+      value: commandCenter
+        ? reviewReady
+          ? String(reviewGapCount)
+          : "-"
+        : reviewReady
+          ? "Saved"
+          : "Not started yet",
       tone: reviewReady ? "positive" : "neutral",
     },
     {
-      label: "Workspace",
-      value: reviewReady ? "Available" : "Not started yet",
+      label: commandCenter ? "Suite" : "Workspace",
+      value: commandCenter
+        ? reviewReady
+          ? `v${suiteVersion ?? "—"}`
+          : "-"
+        : reviewReady
+          ? "Available"
+          : "Not started yet",
       tone: reviewReady ? "positive" : "neutral",
+    },
+  ] as const;
+
+  const executionTiles = [
+    {
+      label: "Status",
+      value: executionEvidenceReady ? executionStatus : "-",
+      tone: executionEvidenceReady ? toExecutionTone(executionStatus) : "neutral",
+    },
+    {
+      label: "Linked suite",
+      value:
+        executionEvidenceReady && typeof executionEvidence?.suiteVersion === "number"
+          ? `v${executionEvidence.suiteVersion}`
+          : "-",
+      tone: executionEvidenceReady ? "info" : "neutral",
+    },
+    {
+      label: "Source",
+      value: executionEvidenceReady
+        ? toReleaseHealthLabel(executionEvidence?.source)
+        : "-",
+      tone: executionEvidenceReady ? "info" : "neutral",
+    },
+    {
+      label: "Total",
+      value:
+        executionEvidenceReady && executionSummary
+          ? String(executionSummary.total)
+          : "-",
+      tone: executionEvidenceReady ? "info" : "neutral",
     },
   ] as const;
 
@@ -755,29 +905,33 @@ export default function FeatureWorkspaceSummary({
           resolvedTheme={resolvedTheme}
         />
 
-        <div style={{ display: "grid", gap: 4 }}>
-          <div style={{ fontSize: 13, fontWeight: 950 }}>
-            Feature Workspace
-          </div>
+        {commandCenter ? null : (
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 950 }}>
+              Feature Workspace
+            </div>
 
-          <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
-            This session is tracked as a QA workspace backed by persisted
-            artifacts, not free-form AI text.
-          </div>
+            <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
+              This session is tracked as a QA workspace backed by persisted
+              artifacts, not free-form AI text.
+            </div>
 
-          <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
-            {hasAnyArtifacts
-              ? "The cards below show the latest saved requirement, suite, review, and execution evidence."
-              : "No saved workspace artifacts exist yet. Start by refining a requirement or pasting a Jira/API change description."}
+            <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
+              {hasAnyArtifacts
+                ? "The cards below show the latest saved requirement, suite, review, and execution evidence."
+                : "No saved workspace artifacts exist yet. Start by refining a requirement or pasting a Jira/API change description."}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div
         style={{
           display: "grid",
           gap: 10,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gridTemplateColumns: commandCenter
+            ? "repeat(auto-fit, minmax(210px, 1fr))"
+            : "repeat(auto-fit, minmax(220px, 1fr))",
         }}
       >
         <DashboardSummaryCard
@@ -785,23 +939,46 @@ export default function FeatureWorkspaceSummary({
           tourAnchor="requirement-card"
           ready={requirementReady}
           active={stageIndex === 1 && !requirementReady}
-          stepLabel={stageIndex === 1 && !requirementReady ? "Step 1 · Now" : "Step 1"}
-          emphasis={requirementEmphasis}
+          stepLabel={
+            commandCenter
+              ? "STEP 1"
+              : stageIndex === 1 && !requirementReady
+                ? "Step 1 - Now"
+                : "Step 1"
+          }
+          emphasis={
+            commandCenter && requirementReady
+              ? "Saved and driving design"
+              : requirementEmphasis
+          }
           description={
-            requirementReady
-              ? "A refined requirement is present and can drive downstream workflow actions."
-              : "The feature scope still needs refinement before downstream workflow steps."
+            commandCenter
+              ? requirementReady
+                ? "Saved requirement artifact"
+                : "Requirement not saved yet"
+              : requirementReady
+                ? "A refined requirement is present and can drive downstream workflow actions."
+                : "The feature scope still needs refinement before downstream workflow steps."
           }
           tiles={[...requirementTiles]}
-          helpText={
+          helpText={commandCenter ? undefined : (
             requirementReady
               ? "This is the saved requirement artifact used as the basis for test design."
               : "Start here when the feature scope, rules, or risks still need to be clarified."
-          }
-          meta={
+          )}
+          meta={commandCenter ? undefined : (
             requirementReady
               ? "Requirement artifact present"
               : "No refined requirement saved yet"
+          )}
+          actionSlot={
+            commandCenter ? (
+              <ArtifactOpenButton
+                label="Open full view"
+                kind="requirement"
+                resolvedTheme={resolvedTheme}
+              />
+            ) : null
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
@@ -812,26 +989,46 @@ export default function FeatureWorkspaceSummary({
           tourAnchor="test-suite-card"
           ready={suiteReady}
           active={stageIndex === 2 && !suiteReady}
-          stepLabel={stageIndex === 2 && !suiteReady ? "Step 2 · Now" : "Step 2"}
-          emphasis={suiteEmphasis}
+          stepLabel={
+            commandCenter
+              ? "STEP 2"
+              : stageIndex === 2 && !suiteReady
+                ? "Step 2 - Now"
+                : "Step 2"
+          }
+          emphasis={
+            commandCenter && suiteReady
+              ? `Generated from v${requirementVersion ?? 1}`
+              : suiteEmphasis
+          }
           description={
-            suiteReady
-              ? "A generated test suite is available for this workspace."
-              : "No persisted suite exists yet for this feature."
+            commandCenter
+              ? suiteReady
+                ? "Persisted test suite artifact"
+                : "No suite artifact yet"
+              : suiteReady
+                ? "A generated test suite is available for this workspace."
+                : "No persisted suite exists yet for this feature."
           }
           tiles={[...suiteTiles]}
-          helpText={
+          helpText={commandCenter ? undefined : (
             suiteReady
               ? "This is the latest saved suite artifact for the current requirement."
               : "Generate the suite after the requirement is clear and saved."
-          }
-          meta={
+          )}
+          meta={commandCenter ? undefined : (
             suiteReady
               ? `${suiteCount} case${suiteCount === 1 ? "" : "s"} in the current persisted suite`
               : "Generate the suite from the refined requirement"
-          }
+          )}
           actionSlot={
-            suiteReady ? (
+            commandCenter ? (
+              <ArtifactOpenButton
+                label={`Open test suite${suiteCount ? ` (${suiteCount})` : ""}`}
+                kind="suite"
+                resolvedTheme={resolvedTheme}
+              />
+            ) : suiteReady ? (
               <TestSuiteExportMenu
                 sessionId={exportSessionId}
                 disabled={!suiteReady}
@@ -847,20 +1044,32 @@ export default function FeatureWorkspaceSummary({
           tourAnchor="review-card"
           ready={reviewReady}
           active={stageIndex === 3 && !reviewReady}
-          stepLabel={stageIndex === 3 && !reviewReady ? "Step 3 · Now" : "Step 3"}
-          emphasis={reviewEmphasis}
+          stepLabel={
+            commandCenter
+              ? "STEP 3"
+              : stageIndex === 3 && !reviewReady
+                ? "Step 3 - Now"
+                : "Step 3"
+          }
+          emphasis={
+            commandCenter && reviewReady ? "Suite quality result" : reviewEmphasis
+          }
           description={
-            reviewReady
-              ? "A persisted review result is available for the current suite."
-              : "Coverage review has not yet been completed for this suite."
+            commandCenter
+              ? reviewReady
+                ? "Review Score is suite quality, not readiness"
+                : "No review artifact yet"
+              : reviewReady
+                ? "A persisted review result is available for the current suite."
+                : "Coverage review has not yet been completed for this suite."
           }
           tiles={[...reviewTiles]}
-          helpText={
+          helpText={commandCenter ? undefined : (
             reviewReady
               ? "This reflects the latest saved review outcome for the current suite."
               : "Run review after a suite exists to evaluate coverage, gaps, and improvement areas."
-          }
-          meta={
+          )}
+          meta={commandCenter ? undefined : (
             reviewReady
               ? `Review score: ${
                   typeof reviewScore === "number"
@@ -868,24 +1077,67 @@ export default function FeatureWorkspaceSummary({
                     : "available"
                 }`
               : "Run Test Review against the current suite"
+          )}
+          actionSlot={
+            commandCenter ? (
+              <ArtifactOpenButton
+                label="Open full review"
+                kind="review"
+                resolvedTheme={resolvedTheme}
+              />
+            ) : null
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
         />
 
         <div data-tour-anchor="execution-evidence-card">
-          <ExecutionEvidenceSummary
-            execution={executionEvidence}
-            sessionId={exportSessionId}
-            uploadDisabled={!suiteReady}
-            resolvedTheme={resolvedTheme}
-            commandCenter={commandCenter}
-            onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
-          />
+          {commandCenter ? (
+            <DashboardSummaryCard
+              title="Execution"
+              ready={executionEvidenceReady}
+              active={stageIndex === 4 && !executionEvidenceReady}
+              stepLabel="STEP 4"
+              statusLabel={
+                executionEvidenceReady ? executionStatus : undefined
+              }
+              statusTone={
+                executionEvidenceReady ? toExecutionTone(executionStatus) : undefined
+              }
+              emphasis={
+                executionEvidenceReady ? "Results uploaded" : "No execution results yet"
+              }
+              description={
+                executionEvidenceReady
+                  ? "Execution evidence is persisted separately from review."
+                  : "Upload execution results after the suite is ready."
+              }
+              tiles={[...executionTiles]}
+              actionSlot={
+                <ArtifactOpenButton
+                  label="Open execution results"
+                  kind="execution"
+                  resolvedTheme={resolvedTheme}
+                />
+              }
+              resolvedTheme={resolvedTheme}
+              commandCenter={commandCenter}
+            />
+          ) : (
+            <ExecutionEvidenceSummary
+              execution={executionEvidence}
+              sessionId={exportSessionId}
+              uploadDisabled={!suiteReady}
+              resolvedTheme={resolvedTheme}
+              commandCenter={commandCenter}
+              onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
+            />
+          )}
         </div>
       </div>
 
-      <div
+      {commandCenter ? null : (
+        <div
         style={{
           display: "grid",
           gap: 4,
@@ -905,6 +1157,7 @@ export default function FeatureWorkspaceSummary({
           Next step: <strong style={{ fontWeight: 900 }}>{nextAction}</strong>
         </div>
       </div>
+      )}
     </div>
   );
 }
