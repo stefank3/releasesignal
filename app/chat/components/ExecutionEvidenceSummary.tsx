@@ -31,6 +31,7 @@ type Props = {
   sessionId?: string | null;
   resolvedTheme?: "light" | "dark";
   uploadDisabled?: boolean;
+  commandCenter?: boolean;
   onExecutionUploadSuccess?: (args: {
     executionIntelligence: ExecutionIntelligenceArtifact;
     artifact?: SessionArtifact | null;
@@ -152,6 +153,35 @@ function getAccentBackground(tone: Tone, isDark: boolean): string {
   }
 }
 
+function getCommandCenterEvidenceBorder(tone: Tone, isDark: boolean): string {
+  switch (tone) {
+    case "positive":
+      return isDark
+        ? "1px solid rgba(34,197,94,0.22)"
+        : "1px solid rgba(22,163,74,0.18)";
+    case "warning":
+      return isDark
+        ? "1px solid rgba(245,158,11,0.30)"
+        : "1px solid rgba(217,119,6,0.24)";
+    case "negative":
+      return isDark
+        ? "1px solid rgba(239,68,68,0.30)"
+        : "1px solid rgba(220,38,38,0.24)";
+    case "info":
+      return isDark
+        ? "1px solid rgba(96,165,250,0.26)"
+        : "1px solid rgba(37,99,235,0.20)";
+    default:
+      return isDark
+        ? "1px solid rgba(255,255,255,0.10)"
+        : "1px solid rgba(15,23,42,0.10)";
+  }
+}
+
+function getCommandCenterEvidenceBackground(isDark: boolean): string {
+  return isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.76)";
+}
+
 function EvidenceTile(args: {
   label: string;
   value: string;
@@ -184,6 +214,135 @@ function EvidenceTile(args: {
         }}
       >
         {args.value}
+      </div>
+    </div>
+  );
+}
+
+function ExecutionDistribution(args: {
+  summary: NonNullable<ExecutionIntelligenceArtifact["summary"]>;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const total = Math.max(0, Number(args.summary.total ?? 0));
+  const buckets = [
+    {
+      key: "passed",
+      label: "Passed",
+      value: Math.max(0, Number(args.summary.passed ?? 0)),
+      color: "#22c55e",
+      tone: "positive" as Tone,
+    },
+    {
+      key: "failed",
+      label: "Failed",
+      value: Math.max(0, Number(args.summary.failed ?? 0)),
+      color: "#ef4444",
+      tone: "negative" as Tone,
+    },
+    {
+      key: "blocked",
+      label: "Blocked",
+      value: Math.max(0, Number(args.summary.blocked ?? 0)),
+      color: "#dc2626",
+      tone: "negative" as Tone,
+    },
+    {
+      key: "skipped",
+      label: "Skipped",
+      value: Math.max(0, Number(args.summary.skipped ?? 0)),
+      color: "#f59e0b",
+      tone: "warning" as Tone,
+    },
+    {
+      key: "timedOut",
+      label: "Timed out",
+      value: Math.max(0, Number(args.summary.timedOut ?? 0)),
+      color: "#b91c1c",
+      tone: "negative" as Tone,
+    },
+    {
+      key: "unknown",
+      label: "Unknown",
+      value: Math.max(0, Number(args.summary.unknown ?? 0)),
+      color: isDark ? "#94a3b8" : "#64748b",
+      tone: "neutral" as Tone,
+    },
+  ];
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 10,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 12,
+        padding: 10,
+        background: isDark ? "rgba(0,0,0,0.16)" : "rgba(15,23,42,0.025)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ fontSize: 10, fontWeight: 950, opacity: 0.72 }}>
+          Execution Results
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.78 }}>
+          Total uploaded: {total}
+        </div>
+      </div>
+
+      <div
+        role="img"
+        aria-label={`Execution results: ${buckets
+          .map((bucket) => `${bucket.label} ${bucket.value}`)
+          .join(", ")}`}
+        style={{
+          display: "flex",
+          height: 10,
+          overflow: "hidden",
+          borderRadius: 999,
+          background: isDark ? "rgba(15,23,42,0.92)" : "rgba(226,232,240,0.95)",
+        }}
+      >
+        {buckets
+          .filter((bucket) => bucket.value > 0 && total > 0)
+          .map((bucket) => (
+            <div
+              key={bucket.key}
+              aria-hidden="true"
+              style={{
+                width: `${(bucket.value / total) * 100}%`,
+                background: bucket.color,
+              }}
+            />
+          ))}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        }}
+      >
+        {buckets.map((bucket) => (
+          <EvidenceTile
+            key={bucket.key}
+            label={bucket.label}
+            value={String(bucket.value)}
+            tone={bucket.value > 0 ? bucket.tone : "neutral"}
+            resolvedTheme={args.resolvedTheme}
+          />
+        ))}
       </div>
     </div>
   );
@@ -233,6 +392,7 @@ export function ExecutionEvidenceSummary({
   sessionId = null,
   resolvedTheme = "dark",
   uploadDisabled = false,
+  commandCenter = false,
   onExecutionUploadSuccess,
 }: Props) {
   const isDark = resolvedTheme === "dark";
@@ -263,13 +423,18 @@ export function ExecutionEvidenceSummary({
   return (
     <div
       style={{
-        border: getAccentBorder(ready ? statusTone : "neutral", isDark),
-        borderRadius: 14,
+        border: commandCenter
+          ? getCommandCenterEvidenceBorder(ready ? statusTone : "neutral", isDark)
+          : getAccentBorder(ready ? statusTone : "neutral", isDark),
+        borderRadius: commandCenter ? 12 : 14,
         padding: 12,
-        background: getAccentBackground(ready ? statusTone : "neutral", isDark),
+        background: commandCenter
+          ? getCommandCenterEvidenceBackground(isDark)
+          : getAccentBackground(ready ? statusTone : "neutral", isDark),
         display: "grid",
         gap: 10,
-        minHeight: 250,
+        minHeight: commandCenter ? 276 : 250,
+        alignContent: "start",
       }}
     >
       <div
@@ -332,15 +497,6 @@ export function ExecutionEvidenceSummary({
         />
       ) : null}
 
-      {onExecutionUploadSuccess ? (
-        <UploadTestResultsButton
-          sessionId={sessionId}
-          disabled={uploadDisabled}
-          resolvedTheme={resolvedTheme}
-          onUploadSuccess={onExecutionUploadSuccess}
-        />
-      ) : null}
-
       <div
         style={{
           display: "grid",
@@ -375,50 +531,54 @@ export function ExecutionEvidenceSummary({
       </div>
 
       {ready && summary ? (
-        <div
-          style={{
-            display: "grid",
-            gap: 8,
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          }}
-        >
-          <EvidenceTile
-            label="Passed"
-            value={String(summary.passed)}
-            tone="positive"
-            resolvedTheme={resolvedTheme}
-          />
-          <EvidenceTile
-            label="Failed"
-            value={String(summary.failed)}
-            tone={summary.failed > 0 ? "negative" : "neutral"}
-            resolvedTheme={resolvedTheme}
-          />
-          <EvidenceTile
-            label="Timed out"
-            value={String(summary.timedOut)}
-            tone={summary.timedOut > 0 ? "negative" : "neutral"}
-            resolvedTheme={resolvedTheme}
-          />
-          <EvidenceTile
-            label="Skipped"
-            value={String(summary.skipped)}
-            tone={summary.skipped > 0 ? "warning" : "neutral"}
-            resolvedTheme={resolvedTheme}
-          />
-          <EvidenceTile
-            label="Blocked"
-            value={String(summary.blocked)}
-            tone={summary.blocked > 0 ? "negative" : "neutral"}
-            resolvedTheme={resolvedTheme}
-          />
-          <EvidenceTile
-            label="Unknown"
-            value={String(summary.unknown)}
-            tone={summary.unknown > 0 ? "warning" : "neutral"}
-            resolvedTheme={resolvedTheme}
-          />
-        </div>
+        commandCenter ? (
+          <ExecutionDistribution summary={summary} resolvedTheme={resolvedTheme} />
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            }}
+          >
+            <EvidenceTile
+              label="Passed"
+              value={String(summary.passed)}
+              tone="positive"
+              resolvedTheme={resolvedTheme}
+            />
+            <EvidenceTile
+              label="Failed"
+              value={String(summary.failed)}
+              tone={summary.failed > 0 ? "negative" : "neutral"}
+              resolvedTheme={resolvedTheme}
+            />
+            <EvidenceTile
+              label="Timed out"
+              value={String(summary.timedOut)}
+              tone={summary.timedOut > 0 ? "negative" : "neutral"}
+              resolvedTheme={resolvedTheme}
+            />
+            <EvidenceTile
+              label="Skipped"
+              value={String(summary.skipped)}
+              tone={summary.skipped > 0 ? "warning" : "neutral"}
+              resolvedTheme={resolvedTheme}
+            />
+            <EvidenceTile
+              label="Blocked"
+              value={String(summary.blocked)}
+              tone={summary.blocked > 0 ? "negative" : "neutral"}
+              resolvedTheme={resolvedTheme}
+            />
+            <EvidenceTile
+              label="Unknown"
+              value={String(summary.unknown)}
+              tone={summary.unknown > 0 ? "warning" : "neutral"}
+              resolvedTheme={resolvedTheme}
+            />
+          </div>
+        )
       ) : null}
 
       <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.74 }}>
@@ -435,6 +595,24 @@ export function ExecutionEvidenceSummary({
           ]
             .filter(Boolean)
             .join(" · ")}
+        </div>
+      ) : null}
+
+      {onExecutionUploadSuccess ? (
+        <div
+          style={{
+            borderTop: isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
+            paddingTop: 8,
+          }}
+        >
+          <UploadTestResultsButton
+            sessionId={sessionId}
+            disabled={uploadDisabled}
+            resolvedTheme={resolvedTheme}
+            onUploadSuccess={onExecutionUploadSuccess}
+          />
         </div>
       ) : null}
     </div>

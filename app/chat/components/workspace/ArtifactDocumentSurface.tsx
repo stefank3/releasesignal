@@ -17,6 +17,7 @@ type Props = {
   items: ChatItem[];
   sessionArtifact?: SessionArtifact | null;
   resolvedTheme?: "light" | "dark";
+  commandCenter?: boolean;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
   onGenerateTestsAction?: () => void;
   canGenerateTests?: boolean;
@@ -90,12 +91,14 @@ function ArtifactSummaryShell({
   preview,
   children,
   resolvedTheme,
+  commandCenter = false,
 }: {
   title: string;
   actionLabel: string;
   preview: string;
   children: React.ReactNode;
   resolvedTheme: "light" | "dark";
+  commandCenter?: boolean;
 }) {
   const isDark = resolvedTheme === "dark";
 
@@ -105,8 +108,14 @@ function ArtifactSummaryShell({
         border: isDark
           ? "1px solid rgba(255,255,255,0.10)"
           : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: 16,
-        background: isDark ? "rgba(255,255,255,0.032)" : "rgba(15,23,42,0.025)",
+        borderRadius: commandCenter ? 12 : 16,
+        background: commandCenter
+          ? isDark
+            ? "rgba(255,255,255,0.035)"
+            : "rgba(255,255,255,0.76)"
+          : isDark
+            ? "rgba(255,255,255,0.032)"
+            : "rgba(15,23,42,0.025)",
         color: isDark ? "#ffffff" : "#0f172a",
         overflow: "hidden",
       }}
@@ -114,9 +123,10 @@ function ArtifactSummaryShell({
       <summary
         style={{
           cursor: "pointer",
-          padding: 14,
+          padding: commandCenter ? 12 : 14,
           display: "grid",
           gap: 8,
+          minHeight: commandCenter ? 96 : undefined,
         }}
       >
         <div
@@ -136,6 +146,11 @@ function ArtifactSummaryShell({
                 : "1px solid rgba(15,23,42,0.12)",
               borderRadius: 999,
               padding: "5px 9px",
+              background: commandCenter
+                ? isDark
+                  ? "rgba(96,165,250,0.08)"
+                  : "rgba(37,99,235,0.06)"
+                : undefined,
               fontSize: 11,
               fontWeight: 900,
             }}
@@ -143,7 +158,17 @@ function ArtifactSummaryShell({
             {actionLabel}
           </span>
         </div>
-        <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.72 }}>
+        <div
+          style={{
+            fontSize: 12,
+            lineHeight: 1.45,
+            opacity: 0.72,
+            display: commandCenter ? "-webkit-box" : undefined,
+            WebkitLineClamp: commandCenter ? 2 : undefined,
+            WebkitBoxOrient: commandCenter ? "vertical" : undefined,
+            overflow: commandCenter ? "hidden" : undefined,
+          }}
+        >
           {preview || "Saved artifact content is available in the full view."}
         </div>
       </summary>
@@ -165,6 +190,7 @@ export function ArtifactDocumentSurface({
   items,
   sessionArtifact = null,
   resolvedTheme = "dark",
+  commandCenter = false,
   onUpdateTestSuiteAction,
   onGenerateTestsAction,
   canGenerateTests = false,
@@ -208,6 +234,7 @@ export function ArtifactDocumentSurface({
                 actionLabel={getDocumentAction(document.kind)}
                 preview={getDocumentPreview(document.item.text)}
                 resolvedTheme={resolvedTheme}
+                commandCenter={commandCenter}
               >
                 <RequirementCard
                   text={document.item.text}
@@ -234,6 +261,7 @@ export function ArtifactDocumentSurface({
                 actionLabel={getDocumentAction(document.kind, suiteCount)}
                 preview={getDocumentPreview(document.item.text)}
                 resolvedTheme={resolvedTheme}
+                commandCenter={commandCenter}
               >
                 <CasesTextCard
                   text={document.item.text}
@@ -266,6 +294,7 @@ export function ArtifactDocumentSurface({
                   : ""
               )}
               resolvedTheme={resolvedTheme}
+              commandCenter={commandCenter}
             >
               <div data-tour-anchor="review-actions">
                 <ReviewCard
