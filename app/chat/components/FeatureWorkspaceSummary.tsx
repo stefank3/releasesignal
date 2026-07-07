@@ -54,6 +54,7 @@ import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
 type Props = {
   chat: UseChatSessionReturn;
   resolvedTheme?: "light" | "dark";
+  commandCenter?: boolean;
 };
 
 type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
@@ -189,14 +190,70 @@ function getToneStyles(
   }
 }
 
+function getCommandCenterTileStyles(
+  tone: Tone,
+  isDark: boolean
+): { border: string; background: string } {
+  switch (tone) {
+    case "positive":
+      return {
+        border: isDark
+          ? "1px solid rgba(34,197,94,0.22)"
+          : "1px solid rgba(22,163,74,0.18)",
+        background: isDark
+          ? "rgba(34,197,94,0.08)"
+          : "rgba(22,163,74,0.06)",
+      };
+    case "warning":
+      return {
+        border: isDark
+          ? "1px solid rgba(245,158,11,0.28)"
+          : "1px solid rgba(217,119,6,0.22)",
+        background: isDark
+          ? "rgba(245,158,11,0.10)"
+          : "rgba(245,158,11,0.07)",
+      };
+    case "negative":
+      return {
+        border: isDark
+          ? "1px solid rgba(239,68,68,0.26)"
+          : "1px solid rgba(220,38,38,0.20)",
+        background: isDark
+          ? "rgba(239,68,68,0.10)"
+          : "rgba(220,38,38,0.07)",
+      };
+    case "info":
+      return {
+        border: isDark
+          ? "1px solid rgba(96,165,250,0.26)"
+          : "1px solid rgba(37,99,235,0.20)",
+        background: isDark
+          ? "rgba(96,165,250,0.10)"
+          : "rgba(37,99,235,0.06)",
+      };
+    default:
+      return {
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
+        background: isDark
+          ? "rgba(255,255,255,0.035)"
+          : "rgba(15,23,42,0.025)",
+      };
+  }
+}
+
 function DashboardTile(args: {
   label: string;
   value: string;
   tone: Tone;
   resolvedTheme: "light" | "dark";
+  commandCenter?: boolean;
 }) {
   const isDark = args.resolvedTheme === "dark";
-  const toneStyles = getToneStyles(args.tone, isDark);
+  const toneStyles = args.commandCenter
+    ? getCommandCenterTileStyles(args.tone, isDark)
+    : getToneStyles(args.tone, isDark);
 
   return (
     <div
@@ -243,21 +300,29 @@ function DashboardSummaryCard(args: {
   actionSlot?: React.ReactNode;
   tourAnchor?: string;
   resolvedTheme: "light" | "dark";
+  commandCenter?: boolean;
 }) {
   const isDark = args.resolvedTheme === "dark";
   const accentTone: Tone = args.active ? "info" : args.ready ? "positive" : "neutral";
+  const cardBorder = args.commandCenter
+    ? getCommandCenterCardBorder(accentTone, isDark)
+    : getAccentBorder(accentTone, isDark);
+  const cardBackground = args.commandCenter
+    ? getCommandCenterCardBackground(args.active ? "info" : "neutral", isDark)
+    : getAccentBackground(accentTone, isDark);
 
   return (
     <div
       data-tour-anchor={args.tourAnchor}
       style={{
-        border: getAccentBorder(accentTone, isDark),
-        borderRadius: 14,
+        border: cardBorder,
+        borderRadius: args.commandCenter ? 12 : 14,
         padding: 12,
-        background: getAccentBackground(accentTone, isDark),
+        background: cardBackground,
         display: "grid",
         gap: 10,
-        minHeight: 250,
+        minHeight: args.commandCenter ? 276 : 250,
+        alignContent: "start",
       }}
     >
       <div
@@ -333,6 +398,7 @@ function DashboardSummaryCard(args: {
             value={tile.value}
             tone={tile.tone}
             resolvedTheme={args.resolvedTheme}
+            commandCenter={args.commandCenter}
           />
         ))}
       </div>
@@ -496,9 +562,32 @@ function getAccentBackground(tone: Tone, isDark: boolean): string {
   }
 }
 
+function getCommandCenterCardBorder(tone: Tone, isDark: boolean): string {
+  if (tone === "info") {
+    return isDark
+      ? "1px solid rgba(96,165,250,0.42)"
+      : "1px solid rgba(37,99,235,0.30)";
+  }
+
+  return isDark
+    ? "1px solid rgba(255,255,255,0.11)"
+    : "1px solid rgba(15,23,42,0.10)";
+}
+
+function getCommandCenterCardBackground(tone: Tone, isDark: boolean): string {
+  if (tone === "info") {
+    return isDark
+      ? "linear-gradient(180deg, rgba(96,165,250,0.10), rgba(255,255,255,0.035))"
+      : "linear-gradient(180deg, rgba(37,99,235,0.07), rgba(255,255,255,0.78))";
+  }
+
+  return isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.76)";
+}
+
 export default function FeatureWorkspaceSummary({
   chat,
   resolvedTheme = "dark",
+  commandCenter = false,
 }: Props) {
   const isDark = resolvedTheme === "dark";
 
@@ -604,7 +693,7 @@ export default function FeatureWorkspaceSummary({
 
   const reviewTiles = [
     {
-      label: "Score",
+      label: "Review Score",
       value:
         reviewReady && typeof reviewScore === "number"
           ? `${reviewScore}/100`
@@ -715,6 +804,7 @@ export default function FeatureWorkspaceSummary({
               : "No refined requirement saved yet"
           }
           resolvedTheme={resolvedTheme}
+          commandCenter={commandCenter}
         />
 
         <DashboardSummaryCard
@@ -749,6 +839,7 @@ export default function FeatureWorkspaceSummary({
             ) : null
           }
           resolvedTheme={resolvedTheme}
+          commandCenter={commandCenter}
         />
 
         <DashboardSummaryCard
@@ -779,6 +870,7 @@ export default function FeatureWorkspaceSummary({
               : "Run Test Review against the current suite"
           }
           resolvedTheme={resolvedTheme}
+          commandCenter={commandCenter}
         />
 
         <div data-tour-anchor="execution-evidence-card">
@@ -787,6 +879,7 @@ export default function FeatureWorkspaceSummary({
             sessionId={exportSessionId}
             uploadDisabled={!suiteReady}
             resolvedTheme={resolvedTheme}
+            commandCenter={commandCenter}
             onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
           />
         </div>

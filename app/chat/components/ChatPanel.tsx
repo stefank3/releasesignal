@@ -1265,12 +1265,14 @@ export default function ChatPanel({
             <FeatureWorkspaceSummary
               chat={chat}
               resolvedTheme={resolvedTheme}
+              commandCenter={isPopulatedStrategy}
             />
 
             {showReleaseReadiness ? (
               <ReleaseReadinessPanel
                 sessionArtifact={chat.sessionArtifact}
                 resolvedTheme={resolvedTheme}
+                commandCenter={isPopulatedStrategy}
               />
             ) : null}
 
@@ -1278,6 +1280,7 @@ export default function ChatPanel({
               items={chat.items}
               sessionArtifact={chat.sessionArtifact}
               resolvedTheme={resolvedTheme}
+              commandCenter={isPopulatedStrategy}
               onUpdateTestSuiteAction={(cases) => {
                 void chat.updateTestSuite(cases);
               }}

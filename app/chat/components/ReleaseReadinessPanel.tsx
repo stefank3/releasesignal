@@ -17,6 +17,7 @@ import { ArtifactProvenanceLabel } from "./workspace/ArtifactProvenanceLabel";
 type Props = {
   sessionArtifact: SessionArtifact | null | undefined;
   resolvedTheme?: "light" | "dark";
+  commandCenter?: boolean;
 };
 
 export const STATUS_LABELS: Record<ReleaseReadinessStatus, string> = {
@@ -95,6 +96,7 @@ function ChecklistItem({
 export function ReleaseReadinessPanel({
   sessionArtifact,
   resolvedTheme = "dark",
+  commandCenter = false,
 }: Props) {
   const [isOpen, setIsOpen] = React.useState(false);
   const isDark = resolvedTheme === "dark";
@@ -119,7 +121,13 @@ export function ReleaseReadinessPanel({
           ? "1px solid rgba(255,255,255,0.10)"
           : "1px solid rgba(15,23,42,0.10)",
         borderRadius: 18,
-        background: isDark ? "rgba(255,255,255,0.035)" : "rgba(15,23,42,0.025)",
+        background: commandCenter
+          ? isDark
+            ? "rgba(255,255,255,0.04)"
+            : "rgba(255,255,255,0.78)"
+          : isDark
+            ? "rgba(255,255,255,0.035)"
+            : "rgba(15,23,42,0.025)",
         color: isDark ? "#ffffff" : "#0f172a",
         overflow: "hidden",
       }}
@@ -149,7 +157,7 @@ export function ReleaseReadinessPanel({
         >
           <div style={{ display: "grid", gap: 4 }}>
             <div style={{ fontSize: 13, fontWeight: 950 }}>
-              Release Readiness Report
+              {commandCenter ? "Release Readiness" : "Release Readiness Report"}
             </div>
             <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
               Decision-support signal derived from requirement, suite, review,
@@ -257,6 +265,71 @@ export function ReleaseReadinessPanel({
               complete={false}
             />
           </div>
+        ) : commandCenter ? (
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            }}
+          >
+            <div
+              style={{
+                border: tone.border,
+                borderRadius: 12,
+                padding: "10px 12px",
+                background: tone.background,
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+                Status
+              </div>
+              <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>
+                {STATUS_LABELS[readiness.status]}
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.10)"
+                  : "1px solid rgba(15,23,42,0.10)",
+                borderRadius: 12,
+                padding: "10px 12px",
+                background: isDark
+                  ? "rgba(255,255,255,0.04)"
+                  : "rgba(15,23,42,0.025)",
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+                Confidence
+              </div>
+              <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>
+                {readiness.confidence}
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: isDark
+                  ? "1px solid rgba(96,165,250,0.22)"
+                  : "1px solid rgba(37,99,235,0.18)",
+                borderRadius: 12,
+                padding: "10px 12px",
+                background: isDark
+                  ? "rgba(96,165,250,0.08)"
+                  : "rgba(37,99,235,0.05)",
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+                Guardrail
+              </div>
+              <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.45 }}>
+                Release Signal supports your release decision; it does not
+                approve releases. The QA/release owner has the final call.
+              </div>
+            </div>
+          </div>
         ) : (
           <div
             style={{
@@ -317,9 +390,16 @@ export function ReleaseReadinessPanel({
           </div>
         )}
 
-        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
-          A decision-support signal calculated from your saved artifacts using
-          fixed rules - final release approval stays with your QA/release owner.
+        <div
+          style={{
+            fontSize: 11,
+            opacity: commandCenter ? 0.78 : 0.68,
+            lineHeight: 1.45,
+          }}
+        >
+          {commandCenter
+            ? "AI-assisted - review before you rely on it. Final release approval stays with your QA/release owner."
+            : "A decision-support signal calculated from your saved artifacts using fixed rules - final release approval stays with your QA/release owner."}
         </div>
       </button>
 
@@ -332,8 +412,14 @@ export function ReleaseReadinessPanel({
             padding: 12,
           }}
         >
-          <ExecutionResultsBreakdown factors={readiness.factors} />
-          <ReleaseReadinessSummary readiness={readiness} />
+          <ExecutionResultsBreakdown
+            factors={readiness.factors}
+            commandCenter={commandCenter}
+          />
+          <ReleaseReadinessSummary
+            readiness={readiness}
+            commandCenter={commandCenter}
+          />
         </div>
       ) : null}
     </section>

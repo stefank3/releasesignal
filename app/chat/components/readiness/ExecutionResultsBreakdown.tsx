@@ -10,13 +10,17 @@ type ExecutionBucket = {
 
 type Props = {
   factors: ReleaseReadinessFactors;
+  commandCenter?: boolean;
 };
 
 function count(value: number | undefined): number {
   return Math.max(0, Number(value ?? 0));
 }
 
-export function ExecutionResultsBreakdown({ factors }: Props) {
+export function ExecutionResultsBreakdown({
+  factors,
+  commandCenter = false,
+}: Props) {
   const total = count(factors.executionTotal);
 
   if (!factors.executionEvidencePresent || total === 0) {
@@ -42,8 +46,8 @@ export function ExecutionResultsBreakdown({ factors }: Props) {
       key: "blocked",
       label: "Blocked",
       value: count(factors.blocked),
-      barClassName: "bg-orange-500",
-      dotClassName: "bg-orange-400",
+      barClassName: "bg-red-700",
+      dotClassName: "bg-red-600",
     },
     {
       key: "skipped",
@@ -56,8 +60,8 @@ export function ExecutionResultsBreakdown({ factors }: Props) {
       key: "timedOut",
       label: "Timed out",
       value: count(factors.timedOut),
-      barClassName: "bg-fuchsia-500",
-      dotClassName: "bg-fuchsia-400",
+      barClassName: "bg-red-800",
+      dotClassName: "bg-red-700",
     },
     {
       key: "unknown",
@@ -70,7 +74,11 @@ export function ExecutionResultsBreakdown({ factors }: Props) {
 
   return (
     <section
-      className="mb-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4"
+      className={
+        commandCenter
+          ? "mb-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"
+          : "mb-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4"
+      }
       aria-labelledby="execution-results-breakdown-title"
     >
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">

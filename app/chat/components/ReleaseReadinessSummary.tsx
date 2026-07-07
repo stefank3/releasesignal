@@ -11,6 +11,7 @@ import type { ReleaseReadinessSummary as ReleaseReadinessSummaryModel } from "@/
 
 type ReleaseReadinessSummaryProps = {
   readiness: ReleaseReadinessSummaryModel;
+  commandCenter?: boolean;
 };
 
 const STATUS_LABELS: Record<ReleaseReadinessSummaryModel["status"], string> = {
@@ -75,18 +76,23 @@ function renderList(title: string, items: string[]) {
 
 export function ReleaseReadinessSummary({
   readiness,
+  commandCenter = false,
 }: ReleaseReadinessSummaryProps) {
   const factors = readiness.factors;
 
   return (
     <section
-      className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm"
+      className={
+        commandCenter
+          ? "rounded-xl border border-slate-800 bg-slate-950/60 p-3 shadow-sm"
+          : "rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm"
+      }
       style={{ gridColumn: "1 / -1" }}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Release Readiness
+            {commandCenter ? "Readiness Detail" : "Release Readiness"}
           </div>
           <h3 className="text-lg font-semibold text-slate-100">
             {STATUS_LABELS[readiness.status]}
@@ -111,7 +117,9 @@ export function ReleaseReadinessSummary({
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-          <div className="text-xs text-slate-400">Review Score</div>
+          <div className="text-xs text-slate-400">
+            Review Score (not readiness)
+          </div>
           <div className="mt-1 text-lg font-semibold text-slate-100">
             {formatOptionalNumber(factors.reviewScore)}
           </div>
