@@ -269,6 +269,7 @@ export function ExecutionEvidenceSummary({
         background: getAccentBackground(ready ? statusTone : "neutral", isDark),
         display: "grid",
         gap: 10,
+        minHeight: 250,
       }}
     >
       <div
@@ -279,14 +280,27 @@ export function ExecutionEvidenceSummary({
           justifyContent: "space-between",
         }}
       >
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 950,
-            color: isDark ? "#ffffff" : "#0f172a",
-          }}
-        >
-          Execution Evidence
+        <div style={{ display: "grid", gap: 4 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 950,
+              letterSpacing: 0.6,
+              textTransform: "uppercase",
+              color: isDark ? "rgba(255,255,255,0.58)" : "rgba(15,23,42,0.55)",
+            }}
+          >
+            Step 4
+          </div>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 950,
+              color: isDark ? "#ffffff" : "#0f172a",
+            }}
+          >
+            Execution Evidence
+          </div>
         </div>
 
         <StatusChip ready={ready} resolvedTheme={resolvedTheme} />
@@ -302,13 +316,13 @@ export function ExecutionEvidenceSummary({
       >
         {ready
           ? `Latest run: ${runLabel}`
-          : "No execution evidence imported yet"}
+          : "No execution results yet - upload a completed execution CSV to generate readiness."}
       </div>
 
       <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.82 }}>
         {ready
           ? "This card shows what happened when the persisted suite was executed. It is separate from design review and release readiness."
-          : "Upload Release Signal execution CSV results to show pass/fail evidence for the current suite."}
+          : "Upload a completed execution CSV to generate readiness."}
       </div>
 
       {provenanceLabel ? (
