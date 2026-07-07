@@ -79,8 +79,6 @@ export default function ChatHeader({
   onModeChangeAction,
   resolvedTheme = "dark",
 }: Props) {
-  const activeModeMeta = MODE_META[mode];
-
   const isDark = resolvedTheme === "dark";
 
   const textColor = isDark ? "#ffffff" : "#0f172a";
@@ -213,14 +211,6 @@ export default function ChatHeader({
               </button>
             );
           })}
-        </div>
-
-        {/* Active mode hint for immediate workflow clarity */}
-        <div style={{ fontSize: 12, color: subtleText }}>
-          <strong style={{ fontWeight: 800, color: textColor }}>
-            {activeModeMeta.label}:
-          </strong>{" "}
-          {activeModeMeta.hint}
         </div>
       </div>
     </div>

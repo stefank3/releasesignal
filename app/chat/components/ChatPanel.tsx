@@ -605,14 +605,18 @@ function CompactRequirementBar(args: {
           <button
             type="button"
             onClick={() => {
-              setIsEditorOpen(true);
               if (editorInput) {
                 args.chat.setInput(editorInput);
               }
               window.setTimeout(() => args.inputRef.current?.focus(), 0);
             }}
             style={buttonStyle}
-            disabled={args.isBusy}
+            disabled={args.isBusy || !isEditorOpen}
+            title={
+              isEditorOpen
+                ? "Load the saved requirement into the editor"
+                : "Expand the editor before updating the requirement"
+            }
           >
             Update requirement
           </button>
@@ -883,10 +887,38 @@ function getActivityLabel(item: UseChatSessionReturn["items"][number]): string {
   return "Workspace activity";
 }
 
+function getActivityDetail(item: UseChatSessionReturn["items"][number]): string {
+  if (item.kind === "review") {
+    return `Review completed - score ${item.review.score}/100`;
+  }
+
+  if (item.kind === "casesText") {
+    return "Generated test suite artifact";
+  }
+
+  if (item.kind === "casesLegacy") {
+    return "Loaded legacy test suite";
+  }
+
+  if (item.kind === "error") {
+    return item.details || item.title || "Workspace action needs attention";
+  }
+
+  if (item.kind === "text") {
+    return String(item.text ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  return "Workspace activity";
+}
+
+function getActivityTimeLabel(index: number): string {
+  if (index === 0) return "latest";
+  if (index === 1) return "recent";
+  return "earlier";
+}
+
 function PopulatedStrategyRecentActivity(args: {
   chat: UseChatSessionReturn;
-  chatBoxRef: React.RefObject<HTMLDivElement | null>;
-  hiddenTimelineDocumentIndexes: number[];
   processingBanner?: React.ReactNode;
   resolvedTheme: "light" | "dark";
 }) {
@@ -906,176 +938,102 @@ function PopulatedStrategyRecentActivity(args: {
         overflow: "hidden",
       }}
     >
-      <details>
-        <summary
+        <div
           style={{
-            cursor: "pointer",
-            padding: "12px 14px",
+            padding: 14,
             display: "grid",
-            gap: 5,
-            borderBottom: isDark
-              ? "1px solid rgba(255,255,255,0.08)"
-              : "1px solid rgba(15,23,42,0.08)",
+            gap: 10,
           }}
         >
-          <span style={{ fontSize: 12, fontWeight: 950 }}>
-            Recent activity
-          </span>
-          <span style={{ fontSize: 11, opacity: 0.66, lineHeight: 1.4 }}>
-            Last 5 events - View details
-          </span>
-        </summary>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 950 }}>
+              Recent activity
+            </span>
+            <span style={{ fontSize: 11, opacity: 0.62 }}>
+              Last 5 events
+            </span>
+          </div>
 
-        <div style={{ padding: 14, display: "grid", gap: 12 }}>
-          <div style={{ display: "grid", gap: 8 }}>
+          {args.processingBanner}
+
+          <div style={{ display: "grid", gap: 6 }}>
             {recentItems.length ? (
-              recentItems.map((item, index) => (
-                <div
-                  key={`recent-${index}-${item.kind}`}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    padding: "8px 10px",
-                    borderRadius: 12,
-                    border: isDark
-                      ? "1px solid rgba(255,255,255,0.08)"
-                      : "1px solid rgba(15,23,42,0.08)",
-                    background: isDark
-                      ? "rgba(255,255,255,0.025)"
-                      : "rgba(255,255,255,0.64)",
-                    fontSize: 12,
-                    lineHeight: 1.35,
-                  }}
-                >
-                  <span>{getActivityLabel(item)}</span>
-                  <span style={{ opacity: 0.58 }}>{item.kind}</span>
-                </div>
-              ))
+              recentItems.map((item, index) => {
+                const detail = getActivityDetail(item);
+                const truncated =
+                  detail.length > 180 ? `${detail.slice(0, 180)}...` : detail;
+
+                return (
+                  <details key={`recent-${index}-${item.kind}`}>
+                    <summary
+                      style={{
+                        cursor: "pointer",
+                        display: "grid",
+                        gridTemplateColumns: "auto minmax(0, 1fr) auto auto",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "7px 0",
+                        borderTop: isDark
+                          ? "1px solid rgba(255,255,255,0.08)"
+                          : "1px solid rgba(15,23,42,0.08)",
+                        fontSize: 12,
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      <span aria-hidden="true" style={{ opacity: 0.72 }}>
+                        •
+                      </span>
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {getActivityLabel(item)}
+                      </span>
+                      <span style={{ opacity: 0.56 }}>
+                        {getActivityTimeLabel(index)}
+                      </span>
+                      <span
+                        style={{
+                          color: isDark
+                            ? "rgba(147,197,253,0.95)"
+                            : "rgba(37,99,235,0.90)",
+                          fontWeight: 900,
+                        }}
+                      >
+                        View details
+                      </span>
+                    </summary>
+                    <div
+                      style={{
+                        padding: "4px 0 8px 22px",
+                        fontSize: 11,
+                        lineHeight: 1.45,
+                        opacity: 0.7,
+                      }}
+                    >
+                      {truncated || "No additional detail."}
+                    </div>
+                  </details>
+                );
+              })
             ) : (
               <div style={{ fontSize: 12, opacity: 0.7 }}>
                 No recent activity yet.
               </div>
             )}
           </div>
-
-          <ActivityTimelinePanel
-            ref={args.chatBoxRef}
-            resolvedTheme={args.resolvedTheme}
-            isNarrow
-            title="Recent activity"
-            description="Supporting conversation and previous workspace activity. Latest long artifacts stay collapsed above."
-          >
-            {args.processingBanner}
-            <ChatMessageList
-              items={args.chat.items}
-              mode={args.chat.mode}
-              sessionArtifact={args.chat.sessionArtifact}
-              resolvedTheme={args.resolvedTheme}
-              hiddenItemIndexes={args.hiddenTimelineDocumentIndexes}
-              onUpdateTestSuiteAction={(cases) => {
-                void args.chat.updateTestSuite(cases);
-              }}
-              onGenerateTestsAction={() => {
-                void args.chat.generateTestsFromRequirement();
-              }}
-              canGenerateTests={args.chat.canGenerateTests}
-              isGeneratingTests={args.chat.isRunningWorkflowAction}
-              onRefineRequirementAction={() => {
-                void args.chat.refineRequirement();
-              }}
-              canRefineRequirement={args.chat.canRefineRequirement}
-              isRefiningRequirement={args.chat.isRunningWorkflowAction}
-              onGenerateNextBatchAction={() => {
-                void args.chat.generateNextBatchOfTests();
-              }}
-              canGenerateNextBatch={
-                args.chat.hasPinnedRequirement && args.chat.hasPersistentTestSuite
-              }
-              isGeneratingNextBatch={args.chat.isRunningWorkflowAction}
-              onRegenerateSuiteAction={() => {
-                void args.chat.regenerateSuite();
-              }}
-              canRegenerateSuite={args.chat.canRegenerateSuite}
-              isRegeneratingSuite={args.chat.isRunningWorkflowAction}
-              onReviewTestSuiteAction={() => {
-                void args.chat.reviewTestSuite();
-              }}
-              canReviewTestSuite={args.chat.canReviewTestSuite}
-              isReviewingTestSuite={args.chat.isRunningWorkflowAction}
-            />
-          </ActivityTimelinePanel>
         </div>
-      </details>
-    </section>
-  );
-}
-
-function PopulatedStrategyAssistantPanel(args: {
-  chat: UseChatSessionReturn;
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  isBusy: boolean;
-  resolvedTheme: "light" | "dark";
-  onAfterSendAction?: () => void;
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <section
-      aria-label="Ask about this workspace"
-      style={{
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.10)"
-          : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: 18,
-        background: isDark ? "rgba(255,255,255,0.032)" : "rgba(15,23,42,0.025)",
-        color: isDark ? "#ffffff" : "#0f172a",
-      }}
-    >
-      <details>
-        <summary
-          style={{
-            cursor: "pointer",
-            padding: "12px 14px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <span style={{ fontSize: 12, fontWeight: 950 }}>
-            Ask about this workspace
-          </span>
-          <span style={{ fontSize: 11, opacity: 0.66 }}>
-            Review external suite remains available from Test Review.
-          </span>
-        </summary>
-
-        <div
-          style={{
-            padding: 14,
-            borderTop: isDark
-              ? "1px solid rgba(255,255,255,0.08)"
-              : "1px solid rgba(15,23,42,0.08)",
-          }}
-        >
-          <ChatInput
-            ref={args.inputRef}
-            mode={args.chat.mode}
-            value={args.chat.input}
-            disabled={args.isBusy}
-            resolvedTheme={args.resolvedTheme}
-            onChangeAction={(next: string) => args.chat.setInput(next)}
-            onSendAction={() => {
-              void (async () => {
-                await args.chat.send();
-                args.onAfterSendAction?.();
-              })();
-            }}
-          />
-        </div>
-      </details>
     </section>
   );
 }
@@ -1316,6 +1274,7 @@ export default function ChatPanel({
             ) : null}
           </div>
 
+          {!isPopulatedStrategy ? (
           <div>
             <WorkspaceSectionLabel
               title="Workflow guidance"
@@ -1329,6 +1288,7 @@ export default function ChatPanel({
               />
             </div>
           </div>
+          ) : null}
         </div>
         ) : null}
 
@@ -1336,17 +1296,8 @@ export default function ChatPanel({
           <div style={{ display: "grid", gap: 12 }}>
             <PopulatedStrategyRecentActivity
               chat={chat}
-              chatBoxRef={chatBoxRef}
-              hiddenTimelineDocumentIndexes={hiddenTimelineDocumentIndexes}
               processingBanner={processingBanner}
               resolvedTheme={resolvedTheme}
-            />
-            <PopulatedStrategyAssistantPanel
-              chat={chat}
-              inputRef={inputRef}
-              isBusy={isBusy}
-              resolvedTheme={resolvedTheme}
-              onAfterSendAction={onAfterSendAction}
             />
           </div>
         ) : null}

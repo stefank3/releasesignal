@@ -8,7 +8,7 @@ import React from "react";
 import type { Mode } from "../chat.types";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 
-import { Chip, HeaderButton, Toolbar } from "./ChatUI";
+import { HeaderButton, Toolbar } from "./ChatUI";
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 
@@ -77,60 +77,139 @@ export default function ChatToolbar({
 
   return (
     <>
-      <Toolbar resolvedTheme={resolvedTheme}>
-        <Chip resolvedTheme={resolvedTheme}>Workspace</Chip>
+      <Toolbar
+        resolvedTheme={resolvedTheme}
+        right={
+          <details style={{ position: "relative" }}>
+            <summary
+              aria-label="Workspace actions"
+              title="Workspace actions"
+              style={{
+                listStyle: "none",
+                cursor: "pointer",
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.18)"
+                  : "1px solid rgba(15,23,42,0.14)",
+                background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+                color: textColor,
+                display: "grid",
+                placeItems: "center",
+                fontSize: 18,
+                fontWeight: 900,
+                boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
+              }}
+            >
+              ...
+            </summary>
 
-        {chat.lastPending && !chat.isSending && !chat.isRunningWorkflowAction ? (
-          <HeaderButton
-            resolvedTheme={resolvedTheme}
-            onClickAction={() => {
-              void (async () => {
-                await chat.send({ replay: true });
-                onAfterUiAction?.();
-              })();
-            }}
-          >
-            Retry
-          </HeaderButton>
-        ) : null}
+            <div
+              style={{
+                position: "absolute",
+                right: 0,
+                top: 40,
+                zIndex: 20,
+                minWidth: 220,
+                display: "grid",
+                gap: 8,
+                padding: 10,
+                borderRadius: 12,
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.16)"
+                  : "1px solid rgba(15,23,42,0.12)",
+                background: isDark ? "#111827" : "#ffffff",
+                boxShadow: isDark
+                  ? "0 18px 48px rgba(0,0,0,0.36)"
+                  : "0 18px 42px rgba(15,23,42,0.16)",
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 900, color: subtleText }}>
+                Workspace actions
+              </div>
 
-        <HeaderButton
-          resolvedTheme={resolvedTheme}
-          onClickAction={() => {
-            chat.startNewSessionInMode(chat.mode);
-            localStorage.removeItem(STORAGE_KEY);
-            onAfterUiAction?.();
-          }}
-          disabled={isBusy}
-        >
-          Clear
-        </HeaderButton>
+              {chat.lastPending && !chat.isSending && !chat.isRunningWorkflowAction ? (
+                <HeaderButton
+                  resolvedTheme={resolvedTheme}
+                  onClickAction={() => {
+                    void (async () => {
+                      await chat.send({ replay: true });
+                      onAfterUiAction?.();
+                    })();
+                  }}
+                >
+                  Retry
+                </HeaderButton>
+              ) : null}
 
-        <HeaderButton
-          resolvedTheme={resolvedTheme}
-          onClickAction={() => {
-            chat.startNewSessionInMode("coach");
-            onAfterUiAction?.();
-          }}
-          disabled={isBusy}
-        >
-          New workspace
-        </HeaderButton>
+              <HeaderButton
+                resolvedTheme={resolvedTheme}
+                onClickAction={() => {
+                  chat.startNewSessionInMode(chat.mode);
+                  localStorage.removeItem(STORAGE_KEY);
+                  onAfterUiAction?.();
+                }}
+                disabled={isBusy}
+              >
+                Clear
+              </HeaderButton>
 
-        {showGenerateTestsAction ? (
-          <HeaderButton
-            resolvedTheme={resolvedTheme}
-            onClickAction={() => {
-              void (async () => {
-                await chat.generateTestsFromRequirement();
-                onAfterUiAction?.();
-              })();
-            }}
-            disabled={!chat.canGenerateTests}
-          >
-            {chat.isRunningWorkflowAction ? "Generating..." : "Generate Tests"}
-          </HeaderButton>
-        ) : null}
+              <HeaderButton
+                resolvedTheme={resolvedTheme}
+                onClickAction={() => {
+                  chat.startNewSessionInMode("coach");
+                  onAfterUiAction?.();
+                }}
+                disabled={isBusy}
+              >
+                New workspace
+              </HeaderButton>
+
+              {showGenerateTestsAction ? (
+                <HeaderButton
+                  resolvedTheme={resolvedTheme}
+                  onClickAction={() => {
+                    void (async () => {
+                      await chat.generateTestsFromRequirement();
+                      onAfterUiAction?.();
+                    })();
+                  }}
+                  disabled={!chat.canGenerateTests}
+                >
+                  {chat.isRunningWorkflowAction ? "Generating..." : "Generate Tests"}
+                </HeaderButton>
+              ) : null}
+
+              {chat.activeSessionId && chat.messagesCursor ? (
+                <HeaderButton
+                  resolvedTheme={resolvedTheme}
+                  onClickAction={() => {
+                    void (async () => {
+                      await chat.loadSessionMessages(
+                        chat.activeSessionId!,
+                        false,
+                        chat.activeSessionMode
+                      );
+                    })();
+                  }}
+                  disabled={chat.messagesLoading || chat.isRunningWorkflowAction}
+                >
+                  {chat.messagesLoading ? "Loading..." : "Load older"}
+                </HeaderButton>
+              ) : null}
+
+              {chat.activeSessionId ? (
+                <div style={{ fontSize: 11, color: subtleText, lineHeight: 1.35 }}>
+                  Workspace {chat.activeSessionId.slice(0, 8)}... uses persisted
+                  artifacts.
+                </div>
+              ) : null}
+            </div>
+          </details>
+        }
+      >
+        {null}
       </Toolbar>
 
       {chat.modeLockMsg
@@ -169,44 +248,6 @@ export default function ChatToolbar({
 
       {chat.workflowActionError ? (
         <div style={workflowErrorBannerStyle}>{chat.workflowActionError}</div>
-      ) : null}
-
-      {chat.activeSessionId || chat.messagesCursor ? (
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            margin: "10px 0",
-            flexWrap: "wrap",
-            alignItems: "center",
-            color: subtleText,
-            fontSize: 12,
-          }}
-        >
-          {chat.activeSessionId ? (
-            <span>
-              Workspace {chat.activeSessionId.slice(0, 8)}... uses persisted artifacts.
-            </span>
-          ) : null}
-
-          {chat.activeSessionId && chat.messagesCursor ? (
-            <HeaderButton
-              resolvedTheme={resolvedTheme}
-              onClickAction={() => {
-                void (async () => {
-                  await chat.loadSessionMessages(
-                    chat.activeSessionId!,
-                    false,
-                    chat.activeSessionMode
-                  );
-                })();
-              }}
-              disabled={chat.messagesLoading || chat.isRunningWorkflowAction}
-            >
-              {chat.messagesLoading ? "Loading..." : "Load older"}
-            </HeaderButton>
-          ) : null}
-        </div>
       ) : null}
 
       {chat.rateLimitMsg ? <div style={bannerStyle}>{chat.rateLimitMsg}</div> : null}
