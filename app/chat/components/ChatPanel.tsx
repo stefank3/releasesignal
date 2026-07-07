@@ -82,6 +82,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { buildReleaseReadinessSummary } from "@/lib/release-readiness/releaseReadinessService";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { isNearBottom } from "../hooks/useChatSession.helpers";
 
@@ -89,7 +90,7 @@ import ChatInput from "./ChatInput";
 import ChatMessageList from "./ChatMessageList";
 import ChatWorkflowBanner from "./ChatWorkflowBanner";
 import FeatureWorkspaceSummary from "./FeatureWorkspaceSummary";
-import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
+import { ReleaseReadinessPanel, STATUS_LABELS } from "./ReleaseReadinessPanel";
 import StrategyPanel from "./StrategyPanel";
 import { ActivityTimelinePanel } from "./workspace/ActivityTimelinePanel";
 import { ArtifactDocumentSurface } from "./workspace/ArtifactDocumentSurface";
@@ -357,10 +358,324 @@ function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
   );
 }
 
+function normalizeStageTitle(title: string | undefined): string {
+  return (
+    String(title ?? "").replace(/^Workspace stage:\s*/i, "").trim() || "Unknown"
+  );
+}
+
+function getStageIndex(args: {
+  currentStage: string;
+  requirementReady: boolean;
+  suiteReady: boolean;
+  reviewReady: boolean;
+  executionEvidenceReady: boolean;
+}): number {
+  const stage = args.currentStage.toLowerCase();
+
+  if (stage.includes("execution") || args.executionEvidenceReady) return 4;
+  if (stage.includes("review") || args.reviewReady) return 3;
+  if (stage.includes("test design") || stage.includes("suite") || args.suiteReady) {
+    return 2;
+  }
+  return 1;
+}
+
+function toReviewStrength(score: number | null | undefined): string | null {
+  if (typeof score !== "number") return null;
+  if (score >= 90) return "Strong";
+  if (score >= 75) return "Usable";
+  if (score >= 50) return "Mixed";
+  return "Weak";
+}
+
+function Pill(args: {
+  label: string;
+  tone?: "neutral" | "positive" | "info" | "warning";
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const tone = args.tone ?? "neutral";
+  const border =
+    tone === "positive"
+      ? isDark
+        ? "1px solid rgba(34,197,94,0.30)"
+        : "1px solid rgba(22,163,74,0.24)"
+      : tone === "info"
+        ? isDark
+          ? "1px solid rgba(96,165,250,0.30)"
+          : "1px solid rgba(37,99,235,0.22)"
+        : tone === "warning"
+          ? isDark
+            ? "1px solid rgba(245,158,11,0.34)"
+            : "1px solid rgba(217,119,6,0.26)"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.12)"
+            : "1px solid rgba(15,23,42,0.12)";
+  const background =
+    tone === "positive"
+      ? isDark
+        ? "rgba(34,197,94,0.13)"
+        : "rgba(22,163,74,0.09)"
+      : tone === "info"
+        ? isDark
+          ? "rgba(96,165,250,0.13)"
+          : "rgba(37,99,235,0.08)"
+        : tone === "warning"
+          ? isDark
+            ? "rgba(245,158,11,0.13)"
+            : "rgba(245,158,11,0.10)"
+          : isDark
+            ? "rgba(255,255,255,0.05)"
+            : "rgba(15,23,42,0.04)";
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        width: "fit-content",
+        border,
+        background,
+        borderRadius: 999,
+        padding: "5px 9px",
+        fontSize: 11,
+        fontWeight: 900,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {args.label}
+    </span>
+  );
+}
+
+function PopulatedCommandBand(args: {
+  chat: UseChatSessionReturn;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const artifact = args.chat.sessionArtifact;
+  const reviewScore = artifact?.reviewResult?.score;
+  const reviewStrength = toReviewStrength(reviewScore);
+  const readiness = buildReleaseReadinessSummary(artifact ?? null);
+  const currentStage = normalizeStageTitle(args.chat.workflowStatus.title);
+  const stageIndex = getStageIndex({
+    currentStage,
+    requirementReady: args.chat.hasPinnedRequirement,
+    suiteReady: args.chat.hasPersistentTestSuite,
+    reviewReady: args.chat.hasReviewArtifact,
+    executionEvidenceReady: !!artifact?.executionIntelligence,
+  });
+  const workspaceName =
+    args.chat.sessions.find((session) => session.id === args.chat.activeSessionId)
+      ?.title?.trim() || "Feature workspace";
+  const reviewLabel =
+    typeof reviewScore === "number"
+      ? `Review Score: ${reviewScore}/100${reviewStrength ? ` - ${reviewStrength}` : ""}`
+      : "Review Score: Not reviewed yet";
+  const readinessNeedsExecution = !readiness.factors.executionEvidencePresent;
+  const readinessLabel =
+    readiness.status === "insufficient_data" && readinessNeedsExecution
+      ? "Readiness: Not enough data yet - Needs execution"
+      : `Readiness: ${STATUS_LABELS[readiness.status]}`;
+  const nextAction = readinessNeedsExecution
+    ? "Next: add execution results to generate your readiness signal."
+    : `Next: ${args.chat.workflowStatus.nextAction}`;
+
+  return (
+    <section
+      aria-label="Strategy command center"
+      style={{
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.12)"
+          : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 18,
+        padding: 14,
+        background: isDark ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.76)",
+        color: isDark ? "#ffffff" : "#0f172a",
+        display: "grid",
+        gap: 10,
+        boxShadow: isDark
+          ? "0 8px 30px rgba(0,0,0,0.12)"
+          : "0 8px 24px rgba(15,23,42,0.05)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 950 }}>
+          Stage {stageIndex} of 5 - {workspaceName}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Pill
+            label={reviewLabel}
+            tone={typeof reviewScore === "number" ? "positive" : "neutral"}
+            resolvedTheme={args.resolvedTheme}
+          />
+          <Pill
+            label={readinessLabel}
+            tone={readiness.status === "insufficient_data" ? "warning" : "info"}
+            resolvedTheme={args.resolvedTheme}
+          />
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45 }}>
+        {nextAction}
+      </div>
+    </section>
+  );
+}
+
+function CompactRequirementBar(args: {
+  chat: UseChatSessionReturn;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  isBusy: boolean;
+  resolvedTheme: "light" | "dark";
+  onAfterSendAction?: () => void;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const [isEditorOpen, setIsEditorOpen] = React.useState(false);
+  const version = (
+    args.chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
+  )?.version;
+  const textColor = isDark ? "#ffffff" : "#0f172a";
+  const mutedText = isDark ? "rgba(255,255,255,0.70)" : "rgba(15,23,42,0.64)";
+  const editorInput = buildRefinedRequirementInput(args.chat.sessionArtifact);
+
+  const buttonStyle: React.CSSProperties = {
+    borderRadius: 12,
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.16)"
+      : "1px solid rgba(15,23,42,0.14)",
+    background: isDark ? "rgba(255,255,255,0.08)" : "#ffffff",
+    color: textColor,
+    padding: "8px 11px",
+    fontSize: 12,
+    fontWeight: 900,
+    cursor: args.isBusy ? "not-allowed" : "pointer",
+    opacity: args.isBusy ? 0.58 : 1,
+    boxShadow: isDark ? "none" : "0 3px 8px rgba(15,23,42,0.04)",
+  };
+
+  return (
+    <section
+      aria-label="Saved requirement"
+      data-tour-anchor="workflow-start"
+      style={{
+        marginBottom: 12,
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.12)"
+          : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 18,
+        padding: 14,
+        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.72)",
+        color: textColor,
+        display: "grid",
+        gap: 12,
+      }}
+    >
+      <div
+        data-tour-anchor="start-here-input"
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "grid", gap: 3 }}>
+          <div style={{ fontSize: 13, fontWeight: 950 }}>
+            Requirement saved - v{version ?? "n"}
+          </div>
+          <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
+            The saved requirement is driving this Strategy workspace. AI-assisted
+            - review before you rely on it.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => {
+              setIsEditorOpen(true);
+              if (editorInput) {
+                args.chat.setInput(editorInput);
+              }
+              window.setTimeout(() => args.inputRef.current?.focus(), 0);
+            }}
+            style={buttonStyle}
+            disabled={args.isBusy}
+          >
+            Update requirement
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void args.chat.refineRequirement();
+            }}
+            style={buttonStyle}
+            disabled={args.isBusy || !args.chat.canRefineRequirement}
+          >
+            Refine again
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <button
+          type="button"
+          onClick={() => setIsEditorOpen((current) => !current)}
+          style={{
+            cursor: "pointer",
+            width: "fit-content",
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            color: mutedText,
+            fontSize: 12,
+            fontWeight: 900,
+          }}
+        >
+          {isEditorOpen ? "Collapse editor" : "Expand editor"}
+        </button>
+
+        {isEditorOpen ? (
+          <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+            <ChatInput
+              ref={args.inputRef}
+              mode={args.chat.mode}
+              value={args.chat.input}
+              disabled={args.isBusy}
+              resolvedTheme={args.resolvedTheme}
+              onChangeAction={(next: string) => args.chat.setInput(next)}
+              onSendAction={() => {
+                void (async () => {
+                  await args.chat.send();
+                  args.onAfterSendAction?.();
+                })();
+              }}
+            />
+            <StrategyPanel chat={args.chat} resolvedTheme={args.resolvedTheme} />
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function StrategyWorkspaceStart(args: {
   chat: UseChatSessionReturn;
   inputRef: React.RefObject<HTMLInputElement | null>;
   isBusy: boolean;
+  hasWorkspaceArtifacts: boolean;
   resolvedTheme: "light" | "dark";
   onAfterSendAction?: () => void;
 }) {
@@ -381,6 +696,18 @@ function StrategyWorkspaceStart(args: {
       ? "0 8px 30px rgba(0,0,0,0.14)"
       : "0 8px 24px rgba(15,23,42,0.05)",
   };
+
+  if (args.hasWorkspaceArtifacts) {
+    return (
+      <CompactRequirementBar
+        chat={args.chat}
+        inputRef={args.inputRef}
+        isBusy={args.isBusy}
+        resolvedTheme={args.resolvedTheme}
+        onAfterSendAction={args.onAfterSendAction}
+      />
+    );
+  }
 
   return (
     <section
@@ -539,6 +866,220 @@ function getProcessingLabel(mode: UseChatSessionReturn["mode"]): string {
   return "Analyzing requirement…";
 }
 
+function getActivityLabel(item: UseChatSessionReturn["items"][number]): string {
+  if (item.kind === "review") return "Review completed";
+  if (item.kind === "casesText") return "Test suite generated";
+  if (item.kind === "casesLegacy") return "Legacy test suite loaded";
+  if (item.kind === "error") return item.title || "Workspace action needs attention";
+
+  if (item.kind === "text") {
+    if (item.role === "user") return "Workspace input added";
+    const text = String(item.text ?? "");
+    if (text.includes("Refined Technical Requirement")) return "Requirement refined";
+    if (text.includes("Readiness")) return "Readiness recalculated";
+    return "Assistant response added";
+  }
+
+  return "Workspace activity";
+}
+
+function PopulatedStrategyRecentActivity(args: {
+  chat: UseChatSessionReturn;
+  chatBoxRef: React.RefObject<HTMLDivElement | null>;
+  hiddenTimelineDocumentIndexes: number[];
+  processingBanner?: React.ReactNode;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const recentItems = args.chat.items.slice(-5).reverse();
+
+  return (
+    <section
+      aria-label="Recent activity"
+      style={{
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 18,
+        background: isDark ? "rgba(255,255,255,0.032)" : "rgba(15,23,42,0.025)",
+        color: isDark ? "#ffffff" : "#0f172a",
+        overflow: "hidden",
+      }}
+    >
+      <details>
+        <summary
+          style={{
+            cursor: "pointer",
+            padding: "12px 14px",
+            display: "grid",
+            gap: 5,
+            borderBottom: isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 950 }}>
+            Recent activity
+          </span>
+          <span style={{ fontSize: 11, opacity: 0.66, lineHeight: 1.4 }}>
+            Last 5 events - View details
+          </span>
+        </summary>
+
+        <div style={{ padding: 14, display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gap: 8 }}>
+            {recentItems.length ? (
+              recentItems.map((item, index) => (
+                <div
+                  key={`recent-${index}-${item.kind}`}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "8px 10px",
+                    borderRadius: 12,
+                    border: isDark
+                      ? "1px solid rgba(255,255,255,0.08)"
+                      : "1px solid rgba(15,23,42,0.08)",
+                    background: isDark
+                      ? "rgba(255,255,255,0.025)"
+                      : "rgba(255,255,255,0.64)",
+                    fontSize: 12,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  <span>{getActivityLabel(item)}</span>
+                  <span style={{ opacity: 0.58 }}>{item.kind}</span>
+                </div>
+              ))
+            ) : (
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                No recent activity yet.
+              </div>
+            )}
+          </div>
+
+          <ActivityTimelinePanel
+            ref={args.chatBoxRef}
+            resolvedTheme={args.resolvedTheme}
+            isNarrow
+            title="Recent activity"
+            description="Supporting conversation and previous workspace activity. Latest long artifacts stay collapsed above."
+          >
+            {args.processingBanner}
+            <ChatMessageList
+              items={args.chat.items}
+              mode={args.chat.mode}
+              sessionArtifact={args.chat.sessionArtifact}
+              resolvedTheme={args.resolvedTheme}
+              hiddenItemIndexes={args.hiddenTimelineDocumentIndexes}
+              onUpdateTestSuiteAction={(cases) => {
+                void args.chat.updateTestSuite(cases);
+              }}
+              onGenerateTestsAction={() => {
+                void args.chat.generateTestsFromRequirement();
+              }}
+              canGenerateTests={args.chat.canGenerateTests}
+              isGeneratingTests={args.chat.isRunningWorkflowAction}
+              onRefineRequirementAction={() => {
+                void args.chat.refineRequirement();
+              }}
+              canRefineRequirement={args.chat.canRefineRequirement}
+              isRefiningRequirement={args.chat.isRunningWorkflowAction}
+              onGenerateNextBatchAction={() => {
+                void args.chat.generateNextBatchOfTests();
+              }}
+              canGenerateNextBatch={
+                args.chat.hasPinnedRequirement && args.chat.hasPersistentTestSuite
+              }
+              isGeneratingNextBatch={args.chat.isRunningWorkflowAction}
+              onRegenerateSuiteAction={() => {
+                void args.chat.regenerateSuite();
+              }}
+              canRegenerateSuite={args.chat.canRegenerateSuite}
+              isRegeneratingSuite={args.chat.isRunningWorkflowAction}
+              onReviewTestSuiteAction={() => {
+                void args.chat.reviewTestSuite();
+              }}
+              canReviewTestSuite={args.chat.canReviewTestSuite}
+              isReviewingTestSuite={args.chat.isRunningWorkflowAction}
+            />
+          </ActivityTimelinePanel>
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function PopulatedStrategyAssistantPanel(args: {
+  chat: UseChatSessionReturn;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  isBusy: boolean;
+  resolvedTheme: "light" | "dark";
+  onAfterSendAction?: () => void;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <section
+      aria-label="Ask about this workspace"
+      style={{
+        border: isDark
+          ? "1px solid rgba(255,255,255,0.10)"
+          : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: 18,
+        background: isDark ? "rgba(255,255,255,0.032)" : "rgba(15,23,42,0.025)",
+        color: isDark ? "#ffffff" : "#0f172a",
+      }}
+    >
+      <details>
+        <summary
+          style={{
+            cursor: "pointer",
+            padding: "12px 14px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 950 }}>
+            Ask about this workspace
+          </span>
+          <span style={{ fontSize: 11, opacity: 0.66 }}>
+            Review external suite remains available from Test Review.
+          </span>
+        </summary>
+
+        <div
+          style={{
+            padding: 14,
+            borderTop: isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
+          }}
+        >
+          <ChatInput
+            ref={args.inputRef}
+            mode={args.chat.mode}
+            value={args.chat.input}
+            disabled={args.isBusy}
+            resolvedTheme={args.resolvedTheme}
+            onChangeAction={(next: string) => args.chat.setInput(next)}
+            onSendAction={() => {
+              void (async () => {
+                await args.chat.send();
+                args.onAfterSendAction?.();
+              })();
+            }}
+          />
+        </div>
+      </details>
+    </section>
+  );
+}
+
 export default function ChatPanel({
   chat,
   onAfterSendAction,
@@ -660,10 +1201,19 @@ export default function ChatPanel({
     chat.hasReviewArtifact;
 
   const hasExecutionEvidence = !!chat.sessionArtifact?.executionIntelligence;
+  const isPopulatedStrategy = isCoachSession && hasWorkspaceArtifacts;
   const showReleaseReadiness =
     chat.hasPersistentTestSuite || chat.hasReviewArtifact || hasExecutionEvidence;
   const showWorkspaceOverview = hasWorkspaceArtifacts || !isCoachSession;
-  const showActivityTimeline = !isCoachSession || chat.items.length > 0 || isBusy;
+  const showActivityTimeline =
+    !isPopulatedStrategy && (!isCoachSession || chat.items.length > 0 || isBusy);
+  const processingBanner = isBusy ? (
+    <div style={processingBannerStyle}>
+      {chat.isRunningWorkflowAction
+        ? "Running workspace action..."
+        : getProcessingLabel(chat.mode)}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -689,9 +1239,14 @@ export default function ChatPanel({
             chat={chat}
             inputRef={inputRef}
             isBusy={isBusy}
+            hasWorkspaceArtifacts={hasWorkspaceArtifacts}
             resolvedTheme={resolvedTheme}
             onAfterSendAction={onAfterSendAction}
           />
+        ) : null}
+
+        {isPopulatedStrategy ? (
+          <PopulatedCommandBand chat={chat} resolvedTheme={resolvedTheme} />
         ) : null}
 
         {showWorkspaceOverview ? (
@@ -774,6 +1329,25 @@ export default function ChatPanel({
         </div>
         ) : null}
 
+        {isPopulatedStrategy ? (
+          <div style={{ display: "grid", gap: 12 }}>
+            <PopulatedStrategyRecentActivity
+              chat={chat}
+              chatBoxRef={chatBoxRef}
+              hiddenTimelineDocumentIndexes={hiddenTimelineDocumentIndexes}
+              processingBanner={processingBanner}
+              resolvedTheme={resolvedTheme}
+            />
+            <PopulatedStrategyAssistantPanel
+              chat={chat}
+              inputRef={inputRef}
+              isBusy={isBusy}
+              resolvedTheme={resolvedTheme}
+              onAfterSendAction={onAfterSendAction}
+            />
+          </div>
+        ) : null}
+
         {showActivityTimeline ? (
         <div>
           <ActivityTimelinePanel
@@ -836,13 +1410,7 @@ export default function ChatPanel({
               </>
             }
           >
-            {isBusy ? (
-              <div style={processingBannerStyle}>
-                {chat.isRunningWorkflowAction
-                  ? "Running workspace action…"
-                  : getProcessingLabel(chat.mode)}
-              </div>
-            ) : null}
+            {processingBanner}
 
             <ChatMessageList
               items={chat.items}

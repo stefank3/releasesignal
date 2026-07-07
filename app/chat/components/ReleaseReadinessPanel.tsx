@@ -19,7 +19,7 @@ type Props = {
   resolvedTheme?: "light" | "dark";
 };
 
-const STATUS_LABELS: Record<ReleaseReadinessStatus, string> = {
+export const STATUS_LABELS: Record<ReleaseReadinessStatus, string> = {
   insufficient_data: "Not enough data yet",
   not_ready: "Not Ready",
   weak: "Weak Readiness",
@@ -77,6 +77,21 @@ function getStatusTone(status: ReleaseReadinessStatus): {
   }
 }
 
+function ChecklistItem({
+  label,
+  complete,
+}: {
+  label: string;
+  complete: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span aria-hidden="true">{complete ? "✓" : "○"}</span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
 export function ReleaseReadinessPanel({
   sessionArtifact,
   resolvedTheme = "dark",
@@ -90,8 +105,10 @@ export function ReleaseReadinessPanel({
   );
 
   const tone = getStatusTone(readiness.status);
-  const reviewScore = readiness.factors.reviewScore;
   const readinessBand = getReadinessBand(readiness.status);
+  const isMissingExecution =
+    readiness.status === "insufficient_data" &&
+    !readiness.factors.executionEvidencePresent;
 
   return (
     <section
@@ -201,70 +218,104 @@ export function ReleaseReadinessPanel({
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45 }}>
-          {readiness.status === "insufficient_data"
-            ? "Add a test suite, a coverage review, and execution results to generate your readiness signal."
+          {isMissingExecution
+            ? "Add execution results to generate your readiness signal."
+            : readiness.status === "insufficient_data"
+              ? "Add a test suite, a coverage review, and execution results to generate your readiness signal."
             : readiness.summary}
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gap: 10,
-            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-          }}
-        >
+        {isMissingExecution ? (
           <div
             style={{
+              display: "grid",
+              gap: 6,
               border: isDark
                 ? "1px solid rgba(255,255,255,0.10)"
                 : "1px solid rgba(15,23,42,0.10)",
               borderRadius: 12,
               padding: "10px 12px",
               background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.70)",
+              fontSize: 12,
+              lineHeight: 1.45,
             }}
           >
-            <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
-              Score
-            </div>
-            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
-              {typeof reviewScore === "number" ? `${reviewScore}/100` : "-"}
-            </div>
+            <ChecklistItem
+              label="Requirement"
+              complete={readiness.factors.requirementPresent}
+            />
+            <ChecklistItem
+              label="Test Suite"
+              complete={readiness.factors.suitePresent}
+            />
+            <ChecklistItem
+              label="Review"
+              complete={readiness.factors.reviewPresent}
+            />
+            <ChecklistItem
+              label="Execution Evidence missing"
+              complete={false}
+            />
           </div>
-
+        ) : (
           <div
             style={{
-              border: tone.border,
-              borderRadius: 12,
-              padding: "10px 12px",
-              background: tone.background,
+              display: "grid",
+              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
             }}
           >
-            <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
-              Band
+            <div
+              style={{
+                border: tone.border,
+                borderRadius: 12,
+                padding: "10px 12px",
+                background: tone.background,
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+                Readiness
+              </div>
+              <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
+                {STATUS_LABELS[readiness.status]}
+              </div>
             </div>
-            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
-              {readinessBand}
-            </div>
-          </div>
 
-          <div
-            style={{
-              border: isDark
-                ? "1px solid rgba(255,255,255,0.10)"
-                : "1px solid rgba(15,23,42,0.10)",
-              borderRadius: 12,
-              padding: "10px 12px",
-              background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.70)",
-            }}
-          >
-            <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
-              Confidence
+            <div
+              style={{
+                border: tone.border,
+                borderRadius: 12,
+                padding: "10px 12px",
+                background: tone.background,
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+                Band
+              </div>
+              <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
+                {readinessBand}
+              </div>
             </div>
-            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
-              {readiness.confidence}
+
+            <div
+              style={{
+                border: isDark
+                  ? "1px solid rgba(255,255,255,0.10)"
+                  : "1px solid rgba(15,23,42,0.10)",
+                borderRadius: 12,
+                padding: "10px 12px",
+                background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.70)",
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.68 }}>
+                Confidence
+              </div>
+              <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>
+                {readiness.confidence}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
           A decision-support signal calculated from your saved artifacts using

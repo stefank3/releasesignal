@@ -7,6 +7,8 @@ type Props = {
   isNarrow?: boolean;
   children: React.ReactNode;
   inputSlot?: React.ReactNode;
+  title?: string;
+  description?: string;
 };
 
 export const ActivityTimelinePanel = React.forwardRef<HTMLDivElement, Props>(
@@ -16,6 +18,8 @@ export const ActivityTimelinePanel = React.forwardRef<HTMLDivElement, Props>(
       isNarrow = false,
       children,
       inputSlot,
+      title = "Activity Timeline",
+      description = "Supporting conversation and previous workspace activity. Latest artifact documents stay in the workspace surface above.",
     },
     ref
   ) {
@@ -55,11 +59,10 @@ export const ActivityTimelinePanel = React.forwardRef<HTMLDivElement, Props>(
           }}
         >
           <div style={{ fontSize: 12, fontWeight: 950 }}>
-            Activity Timeline
+            {title}
           </div>
           <div style={{ fontSize: 11, opacity: 0.66, lineHeight: 1.4 }}>
-            Supporting conversation and previous workspace activity. Latest
-            artifact documents stay in the workspace surface above.
+            {description}
           </div>
         </div>
 

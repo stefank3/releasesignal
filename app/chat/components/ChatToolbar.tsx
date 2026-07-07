@@ -4,7 +4,7 @@
 
 "use client";
 
-import React, { useMemo } from "react";
+import React from "react";
 import type { Mode } from "../chat.types";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 
@@ -31,11 +31,6 @@ export default function ChatToolbar({
   onAfterUiAction,
   resolvedTheme = "dark",
 }: Props) {
-  const rateChipText = useMemo(() => {
-    if (!chat.rate) return null;
-    return `Rate: ${chat.rate.remaining}/${chat.rate.limit} - resets in ${chat.rate.resetSeconds}s`;
-  }, [chat.rate]);
-
   const isDark = resolvedTheme === "dark";
   const textColor = isDark ? "#ffffff" : "#0f172a";
   const subtleText = isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.68)";
@@ -83,15 +78,7 @@ export default function ChatToolbar({
   return (
     <>
       <Toolbar resolvedTheme={resolvedTheme}>
-        <Chip resolvedTheme={resolvedTheme}>Workspace utilities</Chip>
-
-        {rateChipText ? <Chip resolvedTheme={resolvedTheme}>{rateChipText}</Chip> : null}
-
-        {chat.lastRequestId ? (
-          <Chip resolvedTheme={resolvedTheme}>
-            rid: {chat.lastRequestId.slice(0, 8)}...
-          </Chip>
-        ) : null}
+        <Chip resolvedTheme={resolvedTheme}>Workspace</Chip>
 
         {chat.lastPending && !chat.isSending && !chat.isRunningWorkflowAction ? (
           <HeaderButton
@@ -129,11 +116,8 @@ export default function ChatToolbar({
         >
           New workspace
         </HeaderButton>
-      </Toolbar>
 
-      {showGenerateTestsAction ? (
-        <Toolbar resolvedTheme={resolvedTheme}>
-          <Chip resolvedTheme={resolvedTheme}>Workspace action</Chip>
+        {showGenerateTestsAction ? (
           <HeaderButton
             resolvedTheme={resolvedTheme}
             onClickAction={() => {
@@ -146,8 +130,8 @@ export default function ChatToolbar({
           >
             {chat.isRunningWorkflowAction ? "Generating..." : "Generate Tests"}
           </HeaderButton>
-        </Toolbar>
-      ) : null}
+        ) : null}
+      </Toolbar>
 
       {chat.modeLockMsg
         ? (() => {
