@@ -1,18 +1,17 @@
 // app/chat/components/ReleaseReadinessSummary.tsx
 // M17 Release Readiness:
 // Read-only UI summary for deterministic release readiness.
-// All readiness logic must stay in lib/server/release-readiness.
-//
-// M17 UI FIX:
-// - make readiness summary span the full workspace grid row
-// - prevent the readiness explanation from being squeezed into one narrow card column
+// All readiness logic must stay in lib/release-readiness.
 
 import type { ReleaseReadinessSummary as ReleaseReadinessSummaryModel } from "@/lib/release-readiness/releaseReadinessTypes";
 
 type ReleaseReadinessSummaryProps = {
   readiness: ReleaseReadinessSummaryModel;
   commandCenter?: boolean;
+  resolvedTheme?: "light" | "dark";
 };
+
+type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
 
 const STATUS_LABELS: Record<ReleaseReadinessSummaryModel["status"], string> = {
   insufficient_data: "Not enough data yet",
@@ -33,43 +32,158 @@ const CONFIDENCE_LABELS: Record<
   high: "High",
 };
 
-function getStatusTone(status: ReleaseReadinessSummaryModel["status"]): string {
+function formatOptionalNumber(value: number | undefined): string {
+  return typeof value === "number" ? String(value) : "-";
+}
+
+function getStatusTone(status: ReleaseReadinessSummaryModel["status"]): Tone {
   switch (status) {
     case "ready":
-      return "border-emerald-700/40 bg-emerald-950/30 text-emerald-100";
+      return "positive";
     case "ready_with_risk":
-      return "border-amber-700/40 bg-amber-950/30 text-amber-100";
     case "partial":
     case "weak":
-      return "border-yellow-700/40 bg-yellow-950/30 text-yellow-100";
+      return "warning";
     case "not_ready":
     case "blocked":
-      return "border-red-700/40 bg-red-950/30 text-red-100";
+      return "negative";
     case "insufficient_data":
     default:
-      return "border-slate-700/50 bg-slate-900/60 text-slate-100";
+      return "neutral";
   }
 }
 
-function formatOptionalNumber(value: number | undefined): string {
-  return typeof value === "number" ? String(value) : "—";
+function getToneStyle(tone: Tone, isDark: boolean): {
+  border: string;
+  background: string;
+  color: string;
+} {
+  switch (tone) {
+    case "positive":
+      return {
+        border: isDark ? "1px solid #7CC08A" : "1px solid #2F7A44",
+        background: isDark ? "rgba(124,192,138,0.12)" : "rgba(47,122,68,0.08)",
+        color: isDark ? "#EDEAE3" : "#262521",
+      };
+    case "warning":
+      return {
+        border: isDark ? "1px solid #E0AE5A" : "1px solid #96690F",
+        background: isDark ? "rgba(224,174,90,0.13)" : "rgba(150,105,15,0.08)",
+        color: isDark ? "#EDEAE3" : "#262521",
+      };
+    case "negative":
+      return {
+        border: isDark ? "1px solid #E8776A" : "1px solid #B0392E",
+        background: isDark ? "rgba(232,119,106,0.13)" : "rgba(176,57,46,0.08)",
+        color: isDark ? "#EDEAE3" : "#262521",
+      };
+    case "info":
+      return {
+        border: isDark ? "1px solid #8FB3D9" : "1px solid #39638E",
+        background: isDark ? "rgba(143,179,217,0.12)" : "rgba(57,99,142,0.08)",
+        color: isDark ? "#EDEAE3" : "#262521",
+      };
+    default:
+      return {
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        background: isDark ? "#2B2A26" : "#FCFBF6",
+        color: isDark ? "#EDEAE3" : "#262521",
+      };
+  }
 }
 
-function renderList(title: string, items: string[]) {
-  if (!items.length) return null;
+function Tile(args: {
+  label: string;
+  value: string;
+  tone?: Tone;
+  isDark: boolean;
+}) {
+  const toneStyle = getToneStyle(args.tone ?? "neutral", args.isDark);
 
   return (
-    <div className="space-y-2">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-        {title}
+    <div
+      style={{
+        border: toneStyle.border,
+        background: toneStyle.background,
+        color: toneStyle.color,
+        borderRadius: 10,
+        padding: "9px 10px",
+        display: "grid",
+        gap: 4,
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 950, opacity: 0.72 }}>
+        {args.label}
       </div>
-      <ul className="space-y-1 text-sm text-slate-200">
-        {items.map((item, index) => (
-          <li key={`${title}-${index}`} className="leading-relaxed">
-            • {item}
-          </li>
-        ))}
-      </ul>
+      <div style={{ fontSize: 14, fontWeight: 950, lineHeight: 1.25 }}>
+        {args.value}
+      </div>
+    </div>
+  );
+}
+
+function InputTile(args: {
+  label: string;
+  present: boolean;
+  isDark: boolean;
+}) {
+  return (
+    <Tile
+      label={args.label}
+      value={args.present ? "Present" : "Missing"}
+      tone={args.present ? "positive" : "warning"}
+      isDark={args.isDark}
+    />
+  );
+}
+
+function ListCard(args: {
+  title: string;
+  items: string[];
+  tone: Tone;
+  emphasized?: boolean;
+  isDark: boolean;
+}) {
+  const toneStyle = getToneStyle(args.tone, args.isDark);
+
+  return (
+    <div
+      style={{
+        border: toneStyle.border,
+        background: args.emphasized
+          ? args.isDark
+            ? "rgba(217,119,87,0.14)"
+            : "rgba(193,95,60,0.10)"
+          : toneStyle.background,
+        color: toneStyle.color,
+        borderRadius: 12,
+        padding: 12,
+        display: "grid",
+        gap: 8,
+        minHeight: 132,
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 950 }}>{args.title}</div>
+      {args.items.length ? (
+        <ul
+          style={{
+            margin: 0,
+            paddingLeft: 16,
+            display: "grid",
+            gap: 6,
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        >
+          {args.items.map((item, index) => (
+            <li key={`${args.title}-${index}`}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <div style={{ fontSize: 12, opacity: 0.72 }}>
+          No items reported by the readiness rules.
+        </div>
+      )}
     </div>
   );
 }
@@ -77,113 +191,238 @@ function renderList(title: string, items: string[]) {
 export function ReleaseReadinessSummary({
   readiness,
   commandCenter = false,
+  resolvedTheme = "dark",
 }: ReleaseReadinessSummaryProps) {
+  const isDark = resolvedTheme === "dark";
   const factors = readiness.factors;
+  const statusTone = getStatusTone(readiness.status);
+  const shellBackground = isDark ? "#302F2A" : "#FFFFFF";
+  const shellBorder = isDark ? "1px solid #3A382F" : "1px solid #D9D3C2";
+  const textColor = isDark ? "#EDEAE3" : "#262521";
+  const mutedColor = isDark ? "#A39F92" : "#6F6A5C";
+  const total = Math.max(0, Number(factors.executionTotal ?? 0));
+  const buckets = [
+    {
+      label: "Passed",
+      value: Math.max(0, Number(factors.passed ?? 0)),
+      color: isDark ? "#7CC08A" : "#2F7A44",
+      tone: "positive" as Tone,
+    },
+    {
+      label: "Failed",
+      value: Math.max(0, Number(factors.failed ?? 0)),
+      color: isDark ? "#E8776A" : "#B0392E",
+      tone: "negative" as Tone,
+    },
+    {
+      label: "Skipped",
+      value: Math.max(0, Number(factors.skipped ?? 0)),
+      color: isDark ? "#E0AE5A" : "#96690F",
+      tone: "warning" as Tone,
+    },
+    {
+      label: "Blocked",
+      value: Math.max(0, Number(factors.blocked ?? 0)),
+      color: isDark ? "#E8776A" : "#B0392E",
+      tone: "negative" as Tone,
+    },
+    {
+      label: "Timed out",
+      value: Math.max(0, Number(factors.timedOut ?? 0)),
+      color: isDark ? "#E8776A" : "#B0392E",
+      tone: "negative" as Tone,
+    },
+    {
+      label: "Unknown",
+      value: Math.max(0, Number(factors.unknown ?? 0)),
+      color: isDark ? "#A39F92" : "#6F6A5C",
+      tone: "neutral" as Tone,
+    },
+  ];
 
   return (
     <section
-      className={
-        commandCenter
-          ? "rounded-xl border border-slate-800 bg-slate-950/60 p-3 shadow-sm"
-          : "rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-sm"
-      }
-      style={{ gridColumn: "1 / -1" }}
+      style={{
+        gridColumn: "1 / -1",
+        border: shellBorder,
+        borderRadius: commandCenter ? 12 : 16,
+        background: shellBackground,
+        color: textColor,
+        padding: commandCenter ? 14 : 16,
+        display: "grid",
+        gap: 14,
+      }}
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            {commandCenter ? "Readiness Detail" : "Release Readiness"}
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+        }}
+      >
+        <div style={{ display: "grid", gap: 5 }}>
+          <div style={{ fontSize: 11, fontWeight: 950, color: mutedColor }}>
+            Verdict
           </div>
-          <h3 className="text-lg font-semibold text-slate-100">
+          <h3 style={{ margin: 0, fontSize: 22, lineHeight: 1.15, fontWeight: 950 }}>
             {STATUS_LABELS[readiness.status]}
           </h3>
-          <p className="text-sm leading-relaxed text-slate-300">
+          <p style={{ margin: 0, color: mutedColor, fontSize: 13, lineHeight: 1.5 }}>
             {readiness.summary}
           </p>
-          <p className="text-xs leading-relaxed text-slate-400">
-            Release readiness is a decision-support signal. Your QA/release
-            owner remains responsible for final approval.
-          </p>
         </div>
 
+        <Tile
+          label="Status / Band"
+          value={STATUS_LABELS[readiness.status]}
+          tone={statusTone}
+          isDark={isDark}
+        />
+        <Tile
+          label="Confidence"
+          value={CONFIDENCE_LABELS[readiness.confidence]}
+          tone="info"
+          isDark={isDark}
+        />
+      </div>
+
+      <div
+        style={{
+          border: getToneStyle("info", isDark).border,
+          background: getToneStyle("info", isDark).background,
+          borderRadius: 12,
+          padding: 12,
+          color: textColor,
+          fontSize: 12,
+          lineHeight: 1.45,
+        }}
+      >
+        Guardrail: Release Signal supports your release decision; it does not
+        approve releases. The QA/release owner has the final call.
+      </div>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 950, color: mutedColor }}>
+          Artifact inputs + review score
+        </div>
         <div
-          className={`w-fit rounded-full border px-3 py-1 text-xs font-semibold ${getStatusTone(
-            readiness.status
-          )}`}
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          }}
         >
-          Confidence: {CONFIDENCE_LABELS[readiness.confidence]}
+          <InputTile
+            label="Requirement"
+            present={factors.requirementPresent}
+            isDark={isDark}
+          />
+          <InputTile
+            label="Test Suite"
+            present={factors.suitePresent}
+            isDark={isDark}
+          />
+          <InputTile
+            label="Review"
+            present={factors.reviewPresent}
+            isDark={isDark}
+          />
+          <InputTile
+            label="Execution Evidence"
+            present={factors.executionEvidencePresent}
+            isDark={isDark}
+          />
+          <Tile
+            label="Suite quality - not readiness"
+            value={formatOptionalNumber(factors.reviewScore)}
+            tone="info"
+            isDark={isDark}
+          />
+          <Tile
+            label="Suite cases"
+            value={formatOptionalNumber(factors.suiteCaseCount)}
+            tone="neutral"
+            isDark={isDark}
+          />
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-          <div className="text-xs text-slate-400">
-            Review Score (not readiness)
-          </div>
-          <div className="mt-1 text-lg font-semibold text-slate-100">
-            {formatOptionalNumber(factors.reviewScore)}
-          </div>
+      <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 950, color: mutedColor }}>
+          Execution evidence
         </div>
-
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-          <div className="text-xs text-slate-400">Suite Cases</div>
-          <div className="mt-1 text-lg font-semibold text-slate-100">
-            {formatOptionalNumber(factors.suiteCaseCount)}
-          </div>
+        <div
+          role="img"
+          aria-label={`Execution evidence: ${buckets
+            .map((bucket) => `${bucket.label} ${bucket.value}`)
+            .join(", ")}`}
+          style={{
+            display: "flex",
+            height: 12,
+            overflow: "hidden",
+            borderRadius: 999,
+            background: isDark ? "#1B1A17" : "#EAE6DA",
+            border: shellBorder,
+          }}
+        >
+          {buckets
+            .filter((bucket) => bucket.value > 0 && total > 0)
+            .map((bucket) => (
+              <div
+                key={bucket.label}
+                aria-hidden="true"
+                style={{
+                  width: `${(bucket.value / total) * 100}%`,
+                  background: bucket.color,
+                }}
+              />
+            ))}
         </div>
-
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-          <div className="text-xs text-slate-400">Execution Results</div>
-          <div className="mt-1 text-lg font-semibold text-slate-100">
-            {formatOptionalNumber(factors.executionTotal)}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-          <div className="text-xs text-slate-400">Suite Version</div>
-          <div className="mt-1 text-lg font-semibold text-slate-100">
-            {formatOptionalNumber(factors.suiteVersion)}
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Artifact Inputs
-          </div>
-          <div className="space-y-1 text-sm text-slate-300">
-            <div>
-              Requirement: {factors.requirementPresent ? "Present" : "Missing"}
-            </div>
-            <div>Test Suite: {factors.suitePresent ? "Present" : "Missing"}</div>
-            <div>Review: {factors.reviewPresent ? "Present" : "Missing"}</div>
-            <div>
-              Execution Evidence:{" "}
-              {factors.executionEvidencePresent ? "Present" : "Missing"}
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Execution Summary
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-300">
-            <div>Passed: {formatOptionalNumber(factors.passed)}</div>
-            <div>Failed: {formatOptionalNumber(factors.failed)}</div>
-            <div>Skipped: {formatOptionalNumber(factors.skipped)}</div>
-            <div>Blocked: {formatOptionalNumber(factors.blocked)}</div>
-            <div>Timed out: {formatOptionalNumber(factors.timedOut)}</div>
-            <div>Unknown: {formatOptionalNumber(factors.unknown)}</div>
-          </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+          }}
+        >
+          {buckets.map((bucket) => (
+            <Tile
+              key={bucket.label}
+              label={bucket.label}
+              value={String(bucket.value)}
+              tone={bucket.value > 0 ? bucket.tone : "neutral"}
+              isDark={isDark}
+            />
+          ))}
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        {renderList("Reasons", readiness.reasons)}
-        {renderList("Warnings", readiness.warnings)}
-        {renderList("Recommended Actions", readiness.recommendedActions)}
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+        }}
+      >
+        <ListCard
+          title="Reasons"
+          items={readiness.reasons}
+          tone="info"
+          isDark={isDark}
+        />
+        <ListCard
+          title="Warnings"
+          items={readiness.warnings}
+          tone={readiness.warnings.length ? "warning" : "neutral"}
+          isDark={isDark}
+        />
+        <ListCard
+          title="Recommended Actions"
+          items={readiness.recommendedActions}
+          tone="warning"
+          emphasized
+          isDark={isDark}
+        />
       </div>
     </section>
   );

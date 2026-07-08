@@ -525,6 +525,7 @@ export function ReleaseReadinessPanel({
           <ReleaseReadinessSummary
             readiness={readiness}
             commandCenter={commandCenter}
+            resolvedTheme={resolvedTheme}
           />
         </div>
       ) : null}

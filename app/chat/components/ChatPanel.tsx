@@ -96,6 +96,8 @@ import { ActivityTimelinePanel } from "./workspace/ActivityTimelinePanel";
 import { ArtifactDocumentSurface } from "./workspace/ArtifactDocumentSurface";
 import { getLatestArtifactDocumentIndexesToHide } from "./workspace/artifactDocumentItems";
 
+const STORAGE_KEY = "stefans-mvp-chat-v1";
+
 type Props = {
   chat: UseChatSessionReturn;
   onAfterSendAction?: () => void;
@@ -541,27 +543,55 @@ function CompactRequirementBar(args: {
   onAfterSendAction?: () => void;
 }) {
   const isDark = args.resolvedTheme === "dark";
-  const [isEditorOpen, setIsEditorOpen] = React.useState(false);
+  const [isExpandedEditorOpen, setIsExpandedEditorOpen] = React.useState(false);
   const version = (
     args.chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
   )?.version;
-  const textColor = isDark ? "#ffffff" : "#0f172a";
-  const mutedText = isDark ? "rgba(255,255,255,0.70)" : "rgba(15,23,42,0.64)";
+  const textColor = isDark ? "#EDEAE3" : "#262521";
+  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
   const editorInput = buildRefinedRequirementInput(args.chat.sessionArtifact);
+  const seededRequirementRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!editorInput) return;
+    if (seededRequirementRef.current === editorInput) return;
+    if (args.chat.input.trim()) return;
+
+    args.chat.setInput(editorInput);
+    seededRequirementRef.current = editorInput;
+  }, [args.chat, editorInput]);
 
   const buttonStyle: React.CSSProperties = {
     borderRadius: 12,
     border: isDark
-      ? "1px solid rgba(255,255,255,0.16)"
-      : "1px solid rgba(15,23,42,0.14)",
-    background: isDark ? "rgba(255,255,255,0.08)" : "#ffffff",
+      ? "1px solid #3A382F"
+      : "1px solid #D9D3C2",
+    background: isDark ? "#302F2A" : "#FFFFFF",
     color: textColor,
     padding: "8px 11px",
     fontSize: 12,
     fontWeight: 900,
     cursor: args.isBusy ? "not-allowed" : "pointer",
     opacity: args.isBusy ? 0.58 : 1,
-    boxShadow: isDark ? "none" : "0 3px 8px rgba(15,23,42,0.04)",
+    boxShadow: isDark ? "none" : "0 3px 8px rgba(38,37,33,0.06)",
+  };
+
+  const primaryButtonStyle: React.CSSProperties = {
+    ...buttonStyle,
+    border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
+    background: isDark ? "#D97757" : "#C15F3C",
+    color: "#FFFFFF",
+  };
+
+  const destructiveTextButtonStyle: React.CSSProperties = {
+    border: "none",
+    background: "transparent",
+    color: isDark ? "#E8776A" : "#B0392E",
+    padding: "8px 4px",
+    fontSize: 12,
+    fontWeight: 900,
+    cursor: args.isBusy ? "not-allowed" : "pointer",
+    opacity: args.isBusy ? 0.58 : 1,
   };
 
   return (
@@ -571,37 +601,47 @@ function CompactRequirementBar(args: {
       style={{
         marginBottom: 12,
         border: isDark
-          ? "1px solid rgba(255,255,255,0.12)"
-          : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: 18,
+          ? "1px solid #3A382F"
+          : "1px solid #D9D3C2",
+        borderRadius: 14,
         padding: 14,
-        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.72)",
+        background: isDark ? "#262521" : "#F6F4ED",
         color: textColor,
         display: "grid",
         gap: 12,
       }}
     >
       <div
-        data-tour-anchor="start-here-input"
+        aria-label="Workspace action bar"
         style={{
           display: "flex",
-          gap: 10,
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 10,
           flexWrap: "wrap",
+          paddingBottom: 12,
+          borderBottom: isDark
+            ? "1px solid #3A382F"
+            : "1px solid #D9D3C2",
         }}
       >
-        <div style={{ display: "grid", gap: 3 }}>
-          <div style={{ fontSize: 13, fontWeight: 950 }}>
-            Requirement saved - v{version ?? "n"}
-          </div>
-          <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
-            The saved requirement is driving this Strategy workspace. AI-assisted
-            - review before you rely on it.
-          </div>
-        </div>
-
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {args.chat.lastPending &&
+          !args.chat.isSending &&
+          !args.chat.isRunningWorkflowAction ? (
+            <button
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  await args.chat.send({ replay: true });
+                  args.onAfterSendAction?.();
+                })();
+              }}
+              style={buttonStyle}
+            >
+              Retry
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -610,13 +650,8 @@ function CompactRequirementBar(args: {
               }
               window.setTimeout(() => args.inputRef.current?.focus(), 0);
             }}
-            style={buttonStyle}
-            disabled={args.isBusy || !isEditorOpen}
-            title={
-              isEditorOpen
-                ? "Load the saved requirement into the editor"
-                : "Expand the editor before updating the requirement"
-            }
+            style={primaryButtonStyle}
+            disabled={args.isBusy || !editorInput}
           >
             Update requirement
           </button>
@@ -630,43 +665,125 @@ function CompactRequirementBar(args: {
           >
             Refine again
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              void args.chat.generateTestsFromRequirement();
+            }}
+            style={buttonStyle}
+            disabled={args.isBusy || !args.chat.canGenerateTests}
+          >
+            {args.chat.isRunningWorkflowAction ? "Generating..." : "Generate Tests"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              args.chat.startNewSessionInMode("coach");
+              args.onAfterSendAction?.();
+            }}
+            style={buttonStyle}
+            disabled={args.isBusy}
+          >
+            New workspace
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            args.chat.startNewSessionInMode(args.chat.mode);
+            localStorage.removeItem(STORAGE_KEY);
+            args.onAfterSendAction?.();
+          }}
+          style={destructiveTextButtonStyle}
+          disabled={args.isBusy}
+          title="Clear the current workspace view"
+        >
+          Clear...
+        </button>
+      </div>
+
+      <div
+        data-tour-anchor="start-here-input"
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "grid", gap: 3 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13, fontWeight: 950 }}>
+              Requirement
+            </div>
+            <span
+              style={{
+                border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+                background: isDark ? "#302F2A" : "#FFFFFF",
+                borderRadius: 999,
+                padding: "4px 8px",
+                fontSize: 11,
+                fontWeight: 900,
+                color: mutedText,
+              }}
+            >
+              Saved - v{version ?? "n"}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
+            The saved requirement is driving this Strategy workspace. AI-assisted
+            - review before you rely on it.
+          </div>
         </div>
       </div>
 
       <div>
+        <div
+          style={{
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            borderRadius: 12,
+            background: isDark ? "#1B1A17" : "#FFFFFF",
+            padding: 10,
+          }}
+        >
+          <ChatInput
+            ref={args.inputRef}
+            mode={args.chat.mode}
+            value={args.chat.input}
+            disabled={args.isBusy}
+            resolvedTheme={args.resolvedTheme}
+            onChangeAction={(next: string) => args.chat.setInput(next)}
+            onSendAction={() => {
+              void (async () => {
+                await args.chat.send();
+                args.onAfterSendAction?.();
+              })();
+            }}
+          />
+        </div>
+
         <button
           type="button"
-          onClick={() => setIsEditorOpen((current) => !current)}
+          onClick={() => setIsExpandedEditorOpen((current) => !current)}
           style={{
             cursor: "pointer",
             width: "fit-content",
             border: "none",
             background: "transparent",
             padding: 0,
+            marginTop: 10,
             color: mutedText,
             fontSize: 12,
             fontWeight: 900,
           }}
         >
-          {isEditorOpen ? "Collapse editor" : "Expand editor"}
+          {isExpandedEditorOpen ? "Hide expanded editor" : "Expand editor"}
         </button>
 
-        {isEditorOpen ? (
+        {isExpandedEditorOpen ? (
           <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-            <ChatInput
-              ref={args.inputRef}
-              mode={args.chat.mode}
-              value={args.chat.input}
-              disabled={args.isBusy}
-              resolvedTheme={args.resolvedTheme}
-              onChangeAction={(next: string) => args.chat.setInput(next)}
-              onSendAction={() => {
-                void (async () => {
-                  await args.chat.send();
-                  args.onAfterSendAction?.();
-                })();
-              }}
-            />
             <StrategyPanel chat={args.chat} resolvedTheme={args.resolvedTheme} />
           </div>
         ) : null}

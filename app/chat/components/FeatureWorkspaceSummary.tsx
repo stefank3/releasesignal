@@ -632,23 +632,23 @@ function getAccentBackground(tone: Tone, isDark: boolean): string {
 function getCommandCenterCardBorder(tone: Tone, isDark: boolean): string {
   if (tone === "info") {
     return isDark
-      ? "1px solid rgba(96,165,250,0.42)"
-      : "1px solid rgba(37,99,235,0.30)";
+      ? "1px solid #D97757"
+      : "1px solid #C15F3C";
   }
 
   return isDark
-    ? "1px solid rgba(255,255,255,0.11)"
-    : "1px solid rgba(15,23,42,0.10)";
+    ? "1px solid #3A382F"
+    : "1px solid #D9D3C2";
 }
 
 function getCommandCenterCardBackground(tone: Tone, isDark: boolean): string {
   if (tone === "info") {
     return isDark
-      ? "linear-gradient(180deg, rgba(96,165,250,0.10), rgba(255,255,255,0.035))"
-      : "linear-gradient(180deg, rgba(37,99,235,0.07), rgba(255,255,255,0.78))";
+      ? "linear-gradient(180deg, rgba(217,119,87,0.16), #2B2A26)"
+      : "linear-gradient(180deg, rgba(193,95,60,0.10), #FCFBF6)";
   }
 
-  return isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.76)";
+  return isDark ? "#2B2A26" : "#FCFBF6";
 }
 
 export default function FeatureWorkspaceSummary({
@@ -938,7 +938,7 @@ export default function FeatureWorkspaceSummary({
           title="Requirement"
           tourAnchor="requirement-card"
           ready={requirementReady}
-          active={stageIndex === 1 && !requirementReady}
+          active={stageIndex === 1}
           stepLabel={
             commandCenter
               ? "STEP 1"
@@ -988,7 +988,7 @@ export default function FeatureWorkspaceSummary({
           title="Test Suite"
           tourAnchor="test-suite-card"
           ready={suiteReady}
-          active={stageIndex === 2 && !suiteReady}
+          active={stageIndex === 2}
           stepLabel={
             commandCenter
               ? "STEP 2"
@@ -1043,7 +1043,7 @@ export default function FeatureWorkspaceSummary({
           title="Review"
           tourAnchor="review-card"
           ready={reviewReady}
-          active={stageIndex === 3 && !reviewReady}
+          active={stageIndex === 3}
           stepLabel={
             commandCenter
               ? "STEP 3"
@@ -1096,7 +1096,7 @@ export default function FeatureWorkspaceSummary({
             <DashboardSummaryCard
               title="Execution"
               ready={executionEvidenceReady}
-              active={stageIndex === 4 && !executionEvidenceReady}
+              active={stageIndex === 4}
               stepLabel="STEP 4"
               statusLabel={
                 executionEvidenceReady ? executionStatus : undefined

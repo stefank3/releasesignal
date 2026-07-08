@@ -128,10 +128,10 @@ export default function ChatPage() {
     padding: "20px 24px",
     maxWidth: 1480,
     margin: "0 auto",
-    color: isDark ? "#ffffff" : "#0f172a",
+    color: isDark ? "#EDEAE3" : "#262521",
     background: isDark
-      ? "radial-gradient(900px 360px at 50% -120px, rgba(255,255,255,0.10), rgba(0,0,0,0))"
-      : "radial-gradient(900px 360px at 50% -120px, rgba(0,0,0,0.05), rgba(255,255,255,0))",
+      ? "radial-gradient(900px 360px at 50% -120px, rgba(217,119,87,0.12), rgba(31,30,27,0))"
+      : "radial-gradient(900px 360px at 50% -120px, rgba(193,95,60,0.10), rgba(234,230,218,0))",
     width: "100%",
     boxSizing: "border-box",
   };
@@ -139,14 +139,21 @@ export default function ChatPage() {
   const footerStyle: React.CSSProperties = {
     marginTop: 18,
     padding: "12px 4px 4px",
-    color: isDark ? "rgba(255,255,255,0.48)" : "rgba(15,23,42,0.52)",
+    color: isDark ? "#A39F92" : "#6F6A5C",
     fontSize: 12,
     lineHeight: 1.5,
     textAlign: "center",
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100%" }}>
+    <div
+      style={{
+        display: "flex",
+        height: "100vh",
+        width: "100%",
+        background: isDark ? "#1F1E1B" : "#EAE6DA",
+      }}
+    >
       <SessionSidebar
         sidebarWidth={chat.sidebarWidth}
         sidebarCollapsed={chat.sidebarCollapsed}

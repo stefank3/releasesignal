@@ -139,23 +139,27 @@ function ArtifactSummaryShell({
   commandCenter?: boolean;
 }) {
   const isDark = resolvedTheme === "dark";
+  const [isOpen, setIsOpen] = React.useState(false);
+  const accentColor = isDark ? "#D97757" : "#C15F3C";
 
   return (
     <details
       data-artifact-row={kind}
+      open={isOpen}
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
       style={{
         border: isDark
-          ? "1px solid rgba(255,255,255,0.10)"
-          : "1px solid rgba(15,23,42,0.10)",
+          ? "1px solid #3A382F"
+          : "1px solid #D9D3C2",
         borderRadius: commandCenter ? 12 : 16,
         background: commandCenter
           ? isDark
-            ? "rgba(255,255,255,0.035)"
-            : "rgba(255,255,255,0.76)"
+            ? "#302F2A"
+            : "#FFFFFF"
           : isDark
             ? "rgba(255,255,255,0.032)"
             : "rgba(15,23,42,0.025)",
-        color: isDark ? "#ffffff" : "#0f172a",
+        color: isDark ? "#EDEAE3" : "#262521",
         overflow: "hidden",
       }}
     >
@@ -215,14 +219,14 @@ function ArtifactSummaryShell({
               padding: "5px 9px",
               background: commandCenter
                 ? isDark
-                  ? "rgba(96,165,250,0.08)"
-                  : "rgba(37,99,235,0.06)"
+                  ? "rgba(217,119,87,0.12)"
+                  : "rgba(193,95,60,0.08)"
                 : undefined,
               fontSize: 11,
               fontWeight: 900,
             }}
           >
-            {actionLabel}
+            {isOpen ? "Close" : actionLabel}
           </span>
         </div>
         <div
@@ -242,11 +246,44 @@ function ArtifactSummaryShell({
       <div
         style={{
           borderTop: isDark
-            ? "1px solid rgba(255,255,255,0.08)"
-            : "1px solid rgba(15,23,42,0.08)",
+            ? `3px solid ${accentColor}`
+            : `3px solid ${accentColor}`,
           padding: 12,
         }}
       >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginBottom: 10,
+          }}
+        >
+          <div style={{ display: "grid", gap: 2 }}>
+            <div style={{ fontSize: 13, fontWeight: 950 }}>{title}</div>
+            <div style={{ fontSize: 11, opacity: 0.68 }}>
+              {statusLabel ?? "Persisted artifact detail"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            style={{
+              border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+              background: isDark ? "#2B2A26" : "#FCFBF6",
+              color: isDark ? "#EDEAE3" : "#262521",
+              borderRadius: 10,
+              padding: "7px 10px",
+              fontSize: 12,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
         {children}
       </div>
     </details>
@@ -279,6 +316,11 @@ function ExecutionResultsDetail({
     { label: "Timed out", value: execution.summary.timedOut, color: "#b91c1c" },
     { label: "Unknown", value: execution.summary.unknown, color: "#94a3b8" },
   ];
+  const attentionItems = execution.caseResults
+    .filter((result) =>
+      ["failed", "skipped", "blocked", "timed_out"].includes(result.status)
+    )
+    .slice(0, 6);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -352,6 +394,46 @@ function ExecutionResultsDetail({
           </div>
         ))}
       </div>
+
+      {attentionItems.length ? (
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            borderRadius: 12,
+            padding: 10,
+            background: isDark ? "#2B2A26" : "#FCFBF6",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 950 }}>
+            Needs attention first
+          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {attentionItems.map((item) => (
+              <div
+                key={`${item.caseId}-${item.status}`}
+                style={{
+                  display: "grid",
+                  gap: 3,
+                  borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+                  paddingTop: 6,
+                  fontSize: 11,
+                  lineHeight: 1.4,
+                }}
+              >
+                <strong style={{ fontSize: 12 }}>
+                  {item.externalCaseName || item.caseId}
+                </strong>
+                <span style={{ opacity: 0.76 }}>
+                  {toDisplayLabel(item.status)}
+                  {item.errorMessage ? ` - ${item.errorMessage}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
         Persisted execution artifact - does not change the Review Score.

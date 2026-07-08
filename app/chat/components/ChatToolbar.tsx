@@ -74,12 +74,19 @@ export default function ChatToolbar({
   const isBusy = chat.isSending || chat.isRunningWorkflowAction;
   const hasWorkspace = !!chat.activeSessionId;
   const showGenerateTestsAction = chat.hasPinnedRequirement && hasWorkspace;
+  const isPopulatedStrategy =
+    chat.mode === "coach" &&
+    (chat.hasPinnedRequirement ||
+      chat.hasPersistentTestSuite ||
+      chat.hasReviewArtifact ||
+      !!chat.sessionArtifact?.executionIntelligence);
 
   return (
     <>
-      <Toolbar
-        resolvedTheme={resolvedTheme}
-        right={
+      {isPopulatedStrategy ? null : (
+        <Toolbar
+          resolvedTheme={resolvedTheme}
+          right={
           <details style={{ position: "relative" }}>
             <summary
               aria-label="Workspace actions"
@@ -207,10 +214,11 @@ export default function ChatToolbar({
               ) : null}
             </div>
           </details>
-        }
-      >
-        {null}
-      </Toolbar>
+          }
+        >
+          {null}
+        </Toolbar>
+      )}
 
       {chat.modeLockMsg
         ? (() => {
