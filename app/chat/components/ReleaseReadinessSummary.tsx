@@ -145,25 +145,28 @@ function ListCard(args: {
   isDark: boolean;
 }) {
   const toneStyle = getToneStyle(args.tone, args.isDark);
+  const accentBorder = args.isDark ? "1px solid #D97757" : "1px solid #C15F3C";
 
   return (
     <div
       style={{
-        border: toneStyle.border,
+        border: args.emphasized ? accentBorder : toneStyle.border,
         background: args.emphasized
           ? args.isDark
-            ? "rgba(217,119,87,0.14)"
-            : "rgba(193,95,60,0.10)"
+            ? "rgba(217,119,87,0.18)"
+            : "rgba(193,95,60,0.12)"
           : toneStyle.background,
         color: toneStyle.color,
         borderRadius: 12,
-        padding: 12,
+        padding: args.emphasized ? 14 : 12,
         display: "grid",
         gap: 8,
-        minHeight: 132,
+        minHeight: args.emphasized ? 150 : 118,
       }}
     >
-      <div style={{ fontSize: 12, fontWeight: 950 }}>{args.title}</div>
+      <div style={{ fontSize: args.emphasized ? 13 : 12, fontWeight: 950 }}>
+        {args.title}
+      </div>
       {args.items.length ? (
         <ul
           style={{
@@ -171,7 +174,7 @@ function ListCard(args: {
             paddingLeft: 16,
             display: "grid",
             gap: 6,
-            fontSize: 12,
+            fontSize: args.emphasized ? 13 : 12,
             lineHeight: 1.45,
           }}
         >
@@ -180,7 +183,7 @@ function ListCard(args: {
           ))}
         </ul>
       ) : (
-        <div style={{ fontSize: 12, opacity: 0.72 }}>
+        <div style={{ fontSize: args.emphasized ? 13 : 12, opacity: 0.72 }}>
           No items reported by the readiness rules.
         </div>
       )}
@@ -196,7 +199,7 @@ export function ReleaseReadinessSummary({
   const isDark = resolvedTheme === "dark";
   const factors = readiness.factors;
   const statusTone = getStatusTone(readiness.status);
-  const shellBackground = isDark ? "#302F2A" : "#FFFFFF";
+  const shellBackground = isDark ? "#302F2A" : "#FCFBF6";
   const shellBorder = isDark ? "1px solid #3A382F" : "1px solid #D9D3C2";
   const textColor = isDark ? "#EDEAE3" : "#262521";
   const mutedColor = isDark ? "#A39F92" : "#6F6A5C";
@@ -260,14 +263,23 @@ export function ReleaseReadinessSummary({
           gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
         }}
       >
-        <div style={{ display: "grid", gap: 5 }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 6,
+            border: getToneStyle(statusTone, isDark).border,
+            background: getToneStyle(statusTone, isDark).background,
+            borderRadius: 12,
+            padding: 14,
+          }}
+        >
           <div style={{ fontSize: 11, fontWeight: 950, color: mutedColor }}>
             Verdict
           </div>
-          <h3 style={{ margin: 0, fontSize: 22, lineHeight: 1.15, fontWeight: 950 }}>
+          <h3 style={{ margin: 0, fontSize: 24, lineHeight: 1.12, fontWeight: 950 }}>
             {STATUS_LABELS[readiness.status]}
           </h3>
-          <p style={{ margin: 0, color: mutedColor, fontSize: 13, lineHeight: 1.5 }}>
+          <p style={{ margin: 0, color: textColor, fontSize: 13, lineHeight: 1.5 }}>
             {readiness.summary}
           </p>
         </div>
@@ -289,12 +301,13 @@ export function ReleaseReadinessSummary({
       <div
         style={{
           border: getToneStyle("info", isDark).border,
-          background: getToneStyle("info", isDark).background,
+          background: isDark ? "rgba(143,179,217,0.07)" : "rgba(57,99,142,0.05)",
           borderRadius: 12,
-          padding: 12,
+          padding: "9px 11px",
           color: textColor,
-          fontSize: 12,
+          fontSize: 11,
           lineHeight: 1.45,
+          opacity: 0.86,
         }}
       >
         Guardrail: Release Signal supports your release decision; it does not
@@ -405,9 +418,10 @@ export function ReleaseReadinessSummary({
         }}
       >
         <ListCard
-          title="Reasons"
-          items={readiness.reasons}
-          tone="info"
+          title="Recommended Actions"
+          items={readiness.recommendedActions}
+          tone="warning"
+          emphasized
           isDark={isDark}
         />
         <ListCard
@@ -417,10 +431,9 @@ export function ReleaseReadinessSummary({
           isDark={isDark}
         />
         <ListCard
-          title="Recommended Actions"
-          items={readiness.recommendedActions}
-          tone="warning"
-          emphasized
+          title="Reasons"
+          items={readiness.reasons}
+          tone="info"
           isDark={isDark}
         />
       </div>

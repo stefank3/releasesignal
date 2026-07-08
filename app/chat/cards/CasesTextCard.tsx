@@ -92,6 +92,7 @@ type ViewMode = "expanded" | "overview";
 type Props = {
   text: string;
   resolvedTheme?: "light" | "dark";
+  defaultViewMode?: ViewMode;
   provenanceLabel?: string;
   provenanceDescription?: string;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
@@ -227,6 +228,7 @@ function CasesTextCardContent({
   text,
   hasStructuredCases,
   resolvedTheme = "dark",
+  defaultViewMode = "expanded",
   provenanceLabel,
   provenanceDescription,
   onUpdateTestSuiteAction,
@@ -244,6 +246,7 @@ function CasesTextCardContent({
   text: string;
   hasStructuredCases: boolean;
   resolvedTheme?: "light" | "dark";
+  defaultViewMode?: ViewMode;
   provenanceLabel?: string;
   provenanceDescription?: string;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
@@ -267,7 +270,7 @@ function CasesTextCardContent({
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("id_asc");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("expanded");
+  const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
 
   const persistedCases = useMemo(() => {
     return toPersistedCases(editedCases);
@@ -1122,6 +1125,7 @@ function CasesTextCardContent({
 export default function CasesTextCard({
   text,
   resolvedTheme = "dark",
+  defaultViewMode = "expanded",
   provenanceLabel,
   provenanceDescription,
   onUpdateTestSuiteAction,
@@ -1149,6 +1153,7 @@ export default function CasesTextCard({
       text={text}
       hasStructuredCases={hasStructuredCases}
       resolvedTheme={resolvedTheme}
+      defaultViewMode={defaultViewMode}
       provenanceLabel={provenanceLabel}
       provenanceDescription={provenanceDescription}
       onUpdateTestSuiteAction={onUpdateTestSuiteAction}

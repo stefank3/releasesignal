@@ -645,22 +645,9 @@ function CompactRequirementBar(args: {
           <button
             type="button"
             onClick={() => {
-              if (editorInput) {
-                args.chat.setInput(editorInput);
-              }
-              window.setTimeout(() => args.inputRef.current?.focus(), 0);
-            }}
-            style={primaryButtonStyle}
-            disabled={args.isBusy || !editorInput}
-          >
-            Update requirement
-          </button>
-          <button
-            type="button"
-            onClick={() => {
               void args.chat.refineRequirement();
             }}
-            style={buttonStyle}
+            style={primaryButtonStyle}
             disabled={args.isBusy || !args.chat.canRefineRequirement}
           >
             Refine again
@@ -745,23 +732,66 @@ function CompactRequirementBar(args: {
             border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
             borderRadius: 12,
             background: isDark ? "#1B1A17" : "#FFFFFF",
-            padding: 10,
+            padding: 12,
           }}
         >
-          <ChatInput
-            ref={args.inputRef}
-            mode={args.chat.mode}
+          <textarea
+            ref={(node) => {
+              (
+                args.inputRef as React.MutableRefObject<HTMLInputElement | null>
+              ).current = node as unknown as HTMLInputElement | null;
+            }}
             value={args.chat.input}
             disabled={args.isBusy}
-            resolvedTheme={args.resolvedTheme}
-            onChangeAction={(next: string) => args.chat.setInput(next)}
-            onSendAction={() => {
-              void (async () => {
-                await args.chat.send();
-                args.onAfterSendAction?.();
-              })();
+            onChange={(event) => {
+              args.chat.setInput(event.target.value);
+            }}
+            placeholder="Refine the saved requirement or paste updated acceptance criteria."
+            style={{
+              width: "100%",
+              minHeight: 132,
+              resize: "vertical",
+              boxSizing: "border-box",
+              border: "none",
+              background: "transparent",
+              color: textColor,
+              outline: "none",
+              fontSize: 13,
+              lineHeight: 1.55,
+              fontFamily: "inherit",
+              whiteSpace: "pre-wrap",
             }}
           />
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+              flexWrap: "wrap",
+              marginTop: 10,
+              paddingTop: 10,
+              borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            }}
+          >
+            <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.4 }}>
+              Edit the requirement here, then save it as the next Strategy input.
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  await args.chat.send();
+                  args.onAfterSendAction?.();
+                })();
+              }}
+              style={buttonStyle}
+              disabled={args.isBusy || !args.chat.input.trim()}
+            >
+              Update requirement
+            </button>
+          </div>
         </div>
 
         <button
@@ -1328,10 +1358,10 @@ export default function ChatPanel({
         <div style={workspaceOverviewWrapStyle}>
           <div data-tour-anchor="artifact-summary">
             <WorkspaceSectionLabel
-              title="Artifact summary"
+              title="Workflow status"
               description={
                 hasWorkspaceArtifacts
-                  ? "Current persisted requirement, suite, and review state for this workspace."
+                  ? "Saved requirement, generated suite, review result, and execution evidence for this workspace."
                   : "No persisted workspace artifacts yet. Start by shaping the requirement or continuing the next recommended step."
               }
               resolvedTheme={resolvedTheme}

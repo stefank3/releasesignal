@@ -57,12 +57,11 @@ function SurfaceLabel({
       }}
     >
       <div style={{ fontSize: 13, fontWeight: 950 }}>
-        Generated Artifact Documents
+        Workspace artifacts
       </div>
       <div style={{ fontSize: 12, opacity: 0.72, lineHeight: 1.45 }}>
-        Latest generated requirement, test suite, and review documents for this
-        workspace. These cards display persisted artifact context without
-        changing product truth.
+        Saved requirement, generated suite, review result, and execution evidence
+        for this workspace.
       </div>
     </div>
   );
@@ -97,6 +96,34 @@ function toDisplayLabel(value: string | null | undefined): string {
   return normalized
     .replace(/_/g, " ")
     .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function getExecutionAttentionRank(status: string): number {
+  if (status === "failed") return 1;
+  if (status === "blocked") return 2;
+  if (status === "timed_out") return 3;
+  if (status === "skipped") return 4;
+  return 5;
+}
+
+function getExecutionAttentionTone(status: string, isDark: boolean): {
+  border: string;
+  background: string;
+  color: string;
+} {
+  if (status === "skipped") {
+    return {
+      border: isDark ? "1px solid #E0AE5A" : "1px solid #96690F",
+      background: isDark ? "rgba(224,174,90,0.14)" : "rgba(150,105,15,0.09)",
+      color: isDark ? "#EDEAE3" : "#262521",
+    };
+  }
+
+  return {
+    border: isDark ? "1px solid #E8776A" : "1px solid #B0392E",
+    background: isDark ? "rgba(232,119,106,0.14)" : "rgba(176,57,46,0.09)",
+    color: isDark ? "#EDEAE3" : "#262521",
+  };
 }
 
 function getExecutionStatusLabel(
@@ -251,39 +278,6 @@ function ArtifactSummaryShell({
           padding: 12,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            alignItems: "center",
-            flexWrap: "wrap",
-            marginBottom: 10,
-          }}
-        >
-          <div style={{ display: "grid", gap: 2 }}>
-            <div style={{ fontSize: 13, fontWeight: 950 }}>{title}</div>
-            <div style={{ fontSize: 11, opacity: 0.68 }}>
-              {statusLabel ?? "Persisted artifact detail"}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsOpen(false)}
-            style={{
-              border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-              background: isDark ? "#2B2A26" : "#FCFBF6",
-              color: isDark ? "#EDEAE3" : "#262521",
-              borderRadius: 10,
-              padding: "7px 10px",
-              fontSize: 12,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            Close
-          </button>
-        </div>
         {children}
       </div>
     </details>
@@ -319,6 +313,10 @@ function ExecutionResultsDetail({
   const attentionItems = execution.caseResults
     .filter((result) =>
       ["failed", "skipped", "blocked", "timed_out"].includes(result.status)
+    )
+    .sort(
+      (a, b) =>
+        getExecutionAttentionRank(a.status) - getExecutionAttentionRank(b.status)
     )
     .slice(0, 6);
 
@@ -410,27 +408,52 @@ function ExecutionResultsDetail({
             Needs attention first
           </div>
           <div style={{ display: "grid", gap: 6 }}>
-            {attentionItems.map((item) => (
-              <div
-                key={`${item.caseId}-${item.status}`}
-                style={{
-                  display: "grid",
-                  gap: 3,
-                  borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-                  paddingTop: 6,
-                  fontSize: 11,
-                  lineHeight: 1.4,
-                }}
-              >
-                <strong style={{ fontSize: 12 }}>
-                  {item.externalCaseName || item.caseId}
-                </strong>
-                <span style={{ opacity: 0.76 }}>
-                  {toDisplayLabel(item.status)}
-                  {item.errorMessage ? ` - ${item.errorMessage}` : ""}
-                </span>
-              </div>
-            ))}
+            {attentionItems.map((item) => {
+              const tone = getExecutionAttentionTone(item.status, isDark);
+
+              return (
+                <div
+                  key={`${item.caseId}-${item.status}`}
+                  style={{
+                    display: "grid",
+                    gap: 5,
+                    borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+                    paddingTop: 7,
+                    fontSize: 11,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span
+                      style={{
+                        border: tone.border,
+                        background: tone.background,
+                        color: tone.color,
+                        borderRadius: 999,
+                        padding: "3px 7px",
+                        fontSize: 10,
+                        fontWeight: 950,
+                      }}
+                    >
+                      {toDisplayLabel(item.status)}
+                    </span>
+                    <strong style={{ fontSize: 12 }}>
+                      {item.externalCaseName || item.caseId}
+                    </strong>
+                  </div>
+                  {item.errorMessage ? (
+                    <span style={{ opacity: 0.76 }}>{item.errorMessage}</span>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -479,7 +502,7 @@ export function ArtifactDocumentSurface({
         marginBottom: 12,
       }}
     >
-      <SurfaceLabel resolvedTheme={resolvedTheme} />
+      {commandCenter ? null : <SurfaceLabel resolvedTheme={resolvedTheme} />}
 
       <div style={{ display: "grid", gap: 14 }}>
         {documents.map((document) => {
@@ -545,6 +568,7 @@ export function ArtifactDocumentSurface({
                 <CasesTextCard
                   text={document.item.text}
                   resolvedTheme={resolvedTheme}
+                  defaultViewMode={commandCenter ? "overview" : undefined}
                   provenanceLabel={buildSuiteProvenanceLabel(sessionArtifact)}
                   provenanceDescription="Generated test suite artifact used for review and execution evidence."
                   onUpdateTestSuiteAction={onUpdateTestSuiteAction}
