@@ -472,13 +472,24 @@ function ArtifactOpenButton(args: {
   label: string;
   kind: "requirement" | "suite" | "review" | "execution";
   resolvedTheme: "light" | "dark";
+  disabled?: boolean;
+  onClickAction?: () => void;
 }) {
   const isDark = args.resolvedTheme === "dark";
+  const disabled = args.disabled ?? false;
 
   return (
     <button
       type="button"
-      onClick={() => openArtifactRow(args.kind)}
+      disabled={disabled}
+      onClick={() => {
+        if (disabled) return;
+        if (args.onClickAction) {
+          args.onClickAction();
+          return;
+        }
+        openArtifactRow(args.kind);
+      }}
       style={{
         width: "100%",
         borderRadius: 10,
@@ -490,7 +501,8 @@ function ArtifactOpenButton(args: {
         padding: "8px 10px",
         fontSize: 12,
         fontWeight: 900,
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.58 : 1,
       }}
     >
       {args.label}
@@ -723,6 +735,14 @@ export default function FeatureWorkspaceSummary({
     : "No persisted review yet";
   const executionStatus = toReleaseHealthLabel(executionEvidence?.suiteStatus);
   const executionSummary = executionEvidence?.summary;
+  const reviewActionLabel = reviewReady
+    ? "View latest review"
+    : suiteReady
+      ? "Review test suite"
+      : "Review unavailable";
+  const executionActionLabel = executionEvidenceReady
+    ? "View execution results"
+    : "Upload execution results";
 
   const requirementTiles = [
     {
@@ -1081,9 +1101,22 @@ export default function FeatureWorkspaceSummary({
           actionSlot={
             commandCenter ? (
               <ArtifactOpenButton
-                label="Open full review"
+                label={reviewActionLabel}
                 kind="review"
                 resolvedTheme={resolvedTheme}
+                disabled={
+                  !reviewReady &&
+                  (!suiteReady || !chat.canReviewTestSuite || chat.isRunningWorkflowAction)
+                }
+                onClickAction={
+                  reviewReady
+                    ? undefined
+                    : suiteReady
+                      ? () => {
+                          void chat.reviewTestSuite();
+                        }
+                      : undefined
+                }
               />
             ) : null
           }
@@ -1115,9 +1148,10 @@ export default function FeatureWorkspaceSummary({
               tiles={[...executionTiles]}
               actionSlot={
                 <ArtifactOpenButton
-                  label="Open execution results"
+                  label={executionActionLabel}
                   kind="execution"
                   resolvedTheme={resolvedTheme}
+                  disabled={!executionEvidenceReady && !suiteReady}
                 />
               }
               resolvedTheme={resolvedTheme}

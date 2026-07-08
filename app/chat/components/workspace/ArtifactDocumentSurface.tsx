@@ -11,6 +11,8 @@ import type {
 import RequirementCard from "../../cards/RequirementCard";
 import CasesTextCard from "../../cards/CasesTextCard";
 import ReviewCard from "../../cards/ReviewCard";
+import { UploadTestResultsButton } from "../execution/UploadTestResultsButton";
+import { TestSuiteExportMenu } from "../TestSuiteExportMenu";
 import {
   buildRequirementProvenanceLabel,
   buildReviewProvenanceLabel,
@@ -21,6 +23,7 @@ import {
 type Props = {
   items: ChatItem[];
   sessionArtifact?: SessionArtifact | null;
+  sessionId?: string | null;
   resolvedTheme?: "light" | "dark";
   commandCenter?: boolean;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
@@ -39,6 +42,11 @@ type Props = {
   onRegenerateSuiteAction?: () => void;
   canRegenerateSuite?: boolean;
   isRegeneratingSuite?: boolean;
+  onExecutionUploadSuccess?: (args: {
+    executionIntelligence: ExecutionIntelligenceArtifact;
+    artifact?: SessionArtifact | null;
+    artifactUpdatedAt?: string | null;
+  }) => void;
 };
 
 function SurfaceLabel({
@@ -286,17 +294,39 @@ function ArtifactSummaryShell({
 
 function ExecutionResultsDetail({
   execution,
+  sessionId,
+  hasSuite,
   resolvedTheme,
+  onExecutionUploadSuccess,
 }: {
   execution: ExecutionIntelligenceArtifact | null | undefined;
+  sessionId?: string | null;
+  hasSuite: boolean;
   resolvedTheme: "light" | "dark";
+  onExecutionUploadSuccess?: (args: {
+    executionIntelligence: ExecutionIntelligenceArtifact;
+    artifact?: SessionArtifact | null;
+    artifactUpdatedAt?: string | null;
+  }) => void;
 }) {
   const isDark = resolvedTheme === "dark";
+  const uploadAction = onExecutionUploadSuccess ? (
+    <UploadTestResultsButton
+      sessionId={sessionId ?? null}
+      disabled={!hasSuite}
+      resolvedTheme={resolvedTheme}
+      buttonLabel={execution ? "Upload new results" : "Upload Execution Results"}
+      onUploadSuccess={onExecutionUploadSuccess}
+    />
+  ) : null;
 
   if (!execution) {
     return (
-      <div style={{ fontSize: 12, opacity: 0.72 }}>
-        Execution results have not been uploaded for this workspace yet.
+      <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ fontSize: 12, opacity: 0.72 }}>
+          Execution results have not been uploaded for this workspace yet.
+        </div>
+        {uploadAction}
       </div>
     );
   }
@@ -322,6 +352,8 @@ function ExecutionResultsDetail({
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      {uploadAction}
+
       <div
         style={{
           display: "flex",
@@ -468,6 +500,7 @@ function ExecutionResultsDetail({
 export function ArtifactDocumentSurface({
   items,
   sessionArtifact = null,
+  sessionId = null,
   resolvedTheme = "dark",
   commandCenter = false,
   onUpdateTestSuiteAction,
@@ -486,11 +519,15 @@ export function ArtifactDocumentSurface({
   onRegenerateSuiteAction,
   canRegenerateSuite = false,
   isRegeneratingSuite = false,
+  onExecutionUploadSuccess,
 }: Props) {
   const documents = getLatestArtifactDocumentItems(items);
   const execution = sessionArtifact?.executionIntelligence ?? null;
+  const persistedReview = sessionArtifact?.reviewResult ?? null;
+  const hasSuite = !!sessionArtifact?.testSuite;
+  const hasReviewDocument = documents.some((document) => document.kind === "review");
 
-  if (!documents.length && !execution) return null;
+  if (!documents.length && !execution && !persistedReview) return null;
 
   return (
     <section
@@ -571,6 +608,23 @@ export function ArtifactDocumentSurface({
                   defaultViewMode={commandCenter ? "overview" : undefined}
                   provenanceLabel={buildSuiteProvenanceLabel(sessionArtifact)}
                   provenanceDescription="Generated test suite artifact used for review and execution evidence."
+                  extraWorkflowActions={
+                    commandCenter ? (
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: 8,
+                          minWidth: 220,
+                        }}
+                      >
+                        <TestSuiteExportMenu
+                          sessionId={sessionId}
+                          disabled={!hasSuite}
+                          formats={["execution-csv"]}
+                        />
+                      </div>
+                    ) : null
+                  }
                   onUpdateTestSuiteAction={onUpdateTestSuiteAction}
                   onReviewTestSuiteAction={onReviewTestSuiteAction}
                   canReviewTestSuite={canReviewTestSuite}
@@ -623,6 +677,36 @@ export function ArtifactDocumentSurface({
           );
         })}
 
+        {persistedReview && !hasReviewDocument ? (
+          <ArtifactSummaryShell
+            key="artifact-document-persisted-review"
+            kind="review"
+            title="Review Result"
+            statusLabel={commandCenter ? `${persistedReview.score}/100` : undefined}
+            actionLabel="Open full review"
+            preview={getDocumentPreview(
+              `Review Score: ${persistedReview.score}/100 ${persistedReview.verdict ?? ""}`
+            )}
+            resolvedTheme={resolvedTheme}
+            commandCenter={commandCenter}
+          >
+            <div data-tour-anchor="review-actions">
+              <ReviewCard
+                review={persistedReview as ReviewResult}
+                resolvedTheme={resolvedTheme}
+                provenanceLabel={buildReviewProvenanceLabel(sessionArtifact)}
+                provenanceDescription="Persisted review result for the current test design."
+                onImproveTestPlanAction={onRegenerateSuiteAction}
+                canImproveTestPlan={canRegenerateSuite}
+                isImprovingTestPlan={isRegeneratingSuite}
+                onGenerateFromGapsAction={onGenerateNextBatchAction}
+                canGenerateFromGaps={canGenerateNextBatch}
+                isGeneratingFromGaps={isGeneratingNextBatch}
+              />
+            </div>
+          </ArtifactSummaryShell>
+        ) : null}
+
         {commandCenter ? (
           <ArtifactSummaryShell
             key="artifact-document-execution-results"
@@ -636,7 +720,10 @@ export function ArtifactDocumentSurface({
           >
             <ExecutionResultsDetail
               execution={execution}
+              sessionId={sessionId}
+              hasSuite={hasSuite}
               resolvedTheme={resolvedTheme}
+              onExecutionUploadSuccess={onExecutionUploadSuccess}
             />
           </ArtifactSummaryShell>
         ) : null}

@@ -29,6 +29,7 @@ type Props = {
   sessionId: string | null;
   disabled?: boolean;
   resolvedTheme?: "light" | "dark";
+  buttonLabel?: string;
   onUploadSuccess: (args: {
     executionIntelligence: ExecutionIntelligenceArtifact;
     artifact?: SessionArtifact | null;
@@ -59,6 +60,7 @@ export function UploadTestResultsButton({
   sessionId,
   disabled = false,
   resolvedTheme = "dark",
+  buttonLabel = "Upload Test Results",
   onUploadSuccess,
 }: Props) {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
@@ -160,7 +162,7 @@ export function UploadTestResultsButton({
           fontWeight: 950,
         }}
       >
-        {isUploading ? "Uploading..." : "Upload Test Results"}
+        {isUploading ? "Uploading..." : buttonLabel}
       </button>
 
       {success ? (

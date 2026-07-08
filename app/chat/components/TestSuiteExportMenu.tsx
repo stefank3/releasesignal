@@ -18,6 +18,7 @@ type ExportFormat = "json" | "csv" | "execution-csv";
 type TestSuiteExportMenuProps = {
   sessionId: string | null;
   disabled?: boolean;
+  formats?: ExportFormat[];
 };
 
 function buildExportUrl(args: {
@@ -35,6 +36,7 @@ function buildExportUrl(args: {
 export function TestSuiteExportMenu({
   sessionId,
   disabled = false,
+  formats = ["json", "csv", "execution-csv"],
 }: TestSuiteExportMenuProps) {
   const [isExporting, setIsExporting] = useState<ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -96,34 +98,40 @@ export function TestSuiteExportMenu({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={exportDisabled}
-          onClick={() => handleExport("json")}
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isExporting === "json" ? "Exporting JSON..." : "Export JSON"}
-        </button>
+        {formats.includes("json") ? (
+          <button
+            type="button"
+            disabled={exportDisabled}
+            onClick={() => handleExport("json")}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isExporting === "json" ? "Exporting JSON..." : "Export JSON"}
+          </button>
+        ) : null}
 
-        <button
-          type="button"
-          disabled={exportDisabled}
-          onClick={() => handleExport("csv")}
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isExporting === "csv" ? "Exporting CSV..." : "Export CSV"}
-        </button>
+        {formats.includes("csv") ? (
+          <button
+            type="button"
+            disabled={exportDisabled}
+            onClick={() => handleExport("csv")}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isExporting === "csv" ? "Exporting CSV..." : "Export CSV"}
+          </button>
+        ) : null}
 
-        <button
-          type="button"
-          disabled={exportDisabled}
-          onClick={() => handleExport("execution-csv")}
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isExporting === "execution-csv"
-            ? "Exporting Template..."
-            : "Export Execution Template"}
-        </button>
+        {formats.includes("execution-csv") ? (
+          <button
+            type="button"
+            disabled={exportDisabled}
+            onClick={() => handleExport("execution-csv")}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isExporting === "execution-csv"
+              ? "Exporting Template..."
+              : "Export Execution Template"}
+          </button>
+        ) : null}
       </div>
 
       {error ? (

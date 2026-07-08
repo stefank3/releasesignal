@@ -55,7 +55,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { TestCase } from "@/lib/chat/artifact";
 import {
   ensureTestCaseBodyConsistency,
@@ -95,6 +95,7 @@ type Props = {
   defaultViewMode?: ViewMode;
   provenanceLabel?: string;
   provenanceDescription?: string;
+  extraWorkflowActions?: ReactNode;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
 
   onReviewTestSuiteAction?: () => void;
@@ -231,6 +232,7 @@ function CasesTextCardContent({
   defaultViewMode = "expanded",
   provenanceLabel,
   provenanceDescription,
+  extraWorkflowActions,
   onUpdateTestSuiteAction,
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
@@ -249,6 +251,7 @@ function CasesTextCardContent({
   defaultViewMode?: ViewMode;
   provenanceLabel?: string;
   provenanceDescription?: string;
+  extraWorkflowActions?: ReactNode;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
   onReviewTestSuiteAction?: () => void;
   canReviewTestSuite?: boolean;
@@ -266,6 +269,7 @@ function CasesTextCardContent({
   const [isSaving, setIsSaving] = useState(false);
   const [editedCases, setEditedCases] = useState<ParsedCase[]>(parsedCases);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [hasLocalEdits, setHasLocalEdits] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("id_asc");
@@ -303,10 +307,7 @@ function CasesTextCardContent({
     return rebuildSuiteText(persistedCases, text);
   }, [persistedCases, text]);
 
-  const isDirty = useMemo(() => {
-    if (!hasStructuredCases) return false;
-    return renderedText.trim() !== text.trim();
-  }, [hasStructuredCases, renderedText, text]);
+  const isDirty = hasStructuredCases && hasLocalEdits;
 
   const showReviewAction =
     typeof onReviewTestSuiteAction === "function" && hasStructuredCases;
@@ -395,6 +396,7 @@ function CasesTextCardContent({
       setIsSaving(true);
       await onUpdateTestSuiteAction(persistedCases);
       setToast("Saved ✓");
+      setHasLocalEdits(false);
       return true;
     } catch {
       setToast("Save failed");
@@ -424,6 +426,7 @@ function CasesTextCardContent({
     field: "title" | "body",
     value: string
   ) => {
+    setHasLocalEdits(true);
     setEditedCases((prev) =>
       prev.map((c) => {
         if (c.id !== id) return c;
@@ -460,7 +463,7 @@ function CasesTextCardContent({
     ? `Editing ${editingId}${isDirty ? " • unsaved changes" : ""}`
     : isDirty
       ? "Unsaved suite changes"
-      : "Suite is in sync";
+      : null;
 
   return (
     <div
@@ -496,7 +499,7 @@ function CasesTextCardContent({
             </div>
           </div>
 
-          {hasStructuredCases ? (
+          {hasStructuredCases && editingSummary ? (
             <div
               style={{
                 fontSize: 11,
@@ -579,6 +582,8 @@ function CasesTextCardContent({
                 {isReviewingTestSuite ? "Reviewing..." : "Review Test Suite"}
               </SmallButton>
             ) : null}
+
+            {extraWorkflowActions}
           </div>
         </div>
 
@@ -1128,6 +1133,7 @@ export default function CasesTextCard({
   defaultViewMode = "expanded",
   provenanceLabel,
   provenanceDescription,
+  extraWorkflowActions,
   onUpdateTestSuiteAction,
   onReviewTestSuiteAction,
   canReviewTestSuite = false,
@@ -1156,6 +1162,7 @@ export default function CasesTextCard({
       defaultViewMode={defaultViewMode}
       provenanceLabel={provenanceLabel}
       provenanceDescription={provenanceDescription}
+      extraWorkflowActions={extraWorkflowActions}
       onUpdateTestSuiteAction={onUpdateTestSuiteAction}
       onReviewTestSuiteAction={onReviewTestSuiteAction}
       canReviewTestSuite={canReviewTestSuite}

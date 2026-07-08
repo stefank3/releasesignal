@@ -1384,6 +1384,7 @@ export default function ChatPanel({
             <ArtifactDocumentSurface
               items={chat.items}
               sessionArtifact={chat.sessionArtifact}
+              sessionId={chat.activeSessionId}
               resolvedTheme={resolvedTheme}
               commandCenter={isPopulatedStrategy}
               onUpdateTestSuiteAction={(cases) => {
@@ -1414,6 +1415,7 @@ export default function ChatPanel({
               }}
               canReviewTestSuite={chat.canReviewTestSuite}
               isReviewingTestSuite={chat.isRunningWorkflowAction}
+              onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
             />
 
             {!hasWorkspaceArtifacts && !isBusy ? (
