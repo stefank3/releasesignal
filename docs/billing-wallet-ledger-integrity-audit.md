@@ -218,6 +218,284 @@ Code search found no current generic runtime fallback that silently defaults
 wallet balance to `1000`. The visible `1000` was real stored wallet state, not a
 hardcoded UI default.
 
+## Mismatch Classification Plan
+
+PR #64C.9 keeps the audit read-only and does not decide cleanup. The next safe
+step is to classify each wallet/ledger mismatch with enough evidence to
+distinguish historical/admin/test data from active non-admin account risk.
+
+The recommended current outcome is:
+
+```text
+Option C: Current data is insufficient for safe cleanup; add safer read-only
+diagnostics first.
+```
+
+The PR #64C.7 read-only check suggests the known `1000` wallet is historical or
+admin/test-adjacent because it is tied to `office_50` data and no current code
+path grants `1000` trial credits. That is not enough to conclude that all
+mismatches are harmless. Stored `OrgMember.role = "admin"` is organization role
+data, not Auth0 app-admin evidence, and duplicate membership can make the
+runtime-selected organization ambiguous.
+
+### Classification Dimensions
+
+Each mismatched wallet should be classified using these dimensions:
+
+- Auth0 admin evidence: manually reviewed Auth0 role evidence, not
+  `OrgMember.role` alone.
+- Stored organization role evidence: useful for DB hygiene, but not runtime
+  app-admin truth.
+- Runtime organization selection: whether `findFirst({ auth0Sub })` paths can
+  select this organization for the user.
+- Subscription evidence: latest plan/status, including `trial_v1`,
+  `standard_v1`, historical `office_50`, missing subscription, expired trial,
+  or stale active subscription.
+- Wallet evidence: `CreditWallet.balance`, currency, creation time, update
+  time, and whether the wallet may have been created through missing-wallet
+  repair with `balance = 0`.
+- Ledger evidence: summed deltas, count by reason, positive grant totals,
+  negative charge totals, `NULL` request IDs, duplicate request IDs, and
+  ledger rows without matching wallet balance.
+- Activity evidence: chat sessions, chat messages, telemetry, recent
+  `chat_usage` ledger rows, and admin top-up history.
+- Historical/test indicators: legacy plan codes, placeholder organization
+  names, inactive rows, no recent activity, and values that match old
+  allocations but not current constants.
+- Real-user risk: active non-admin account state, visible finite credit
+  display, and a wallet used by `/api/chat` charging.
+
+### Read-Only SQL Shape
+
+The following SQL is a safe classification shape for a future audit script or
+manual console run. It is intentionally read-only and keeps Auth0 evidence as an
+empty local CTE so committed docs do not contain real identifiers.
+
+```sql
+WITH expected_auth0_roles(auth0_sub, is_auth0_admin, evidence) AS (
+  SELECT
+    NULL::text AS auth0_sub,
+    NULL::boolean AS is_auth0_admin,
+    NULL::text AS evidence
+  WHERE false
+),
+ledger_by_wallet AS (
+  SELECT
+    cw.id AS wallet_id,
+    cw."organizationId" AS organization_id,
+    cw.currency,
+    cw.balance,
+    cw."createdAt" AS wallet_created_at,
+    cw."updatedAt" AS wallet_updated_at,
+    COALESCE(SUM(cl.delta), 0) AS ledger_sum,
+    COUNT(cl.id) AS ledger_count,
+    COUNT(cl.id) FILTER (WHERE cl.reason = 'trial_grant') AS trial_grant_count,
+    COALESCE(SUM(cl.delta) FILTER (WHERE cl.reason = 'trial_grant'), 0) AS trial_grant_sum,
+    COUNT(cl.id) FILTER (WHERE cl.reason = 'chat_usage') AS chat_usage_count,
+    COALESCE(SUM(cl.delta) FILTER (WHERE cl.reason = 'chat_usage'), 0) AS chat_usage_sum,
+    COUNT(cl.id) FILTER (WHERE cl.reason LIKE 'admin_adjust%') AS admin_adjust_count,
+    COALESCE(SUM(cl.delta) FILTER (WHERE cl.reason LIKE 'admin_adjust%'), 0) AS admin_adjust_sum,
+    COUNT(cl.id) FILTER (WHERE cl."requestId" IS NULL) AS null_request_id_count,
+    MIN(cl."createdAt") AS first_ledger_at,
+    MAX(cl."createdAt") AS last_ledger_at
+  FROM "CreditWallet" cw
+  LEFT JOIN "CreditLedger" cl ON cl."walletId" = cw.id
+  GROUP BY cw.id, cw."organizationId", cw.currency, cw.balance, cw."createdAt", cw."updatedAt"
+),
+latest_subscription AS (
+  SELECT *
+  FROM (
+    SELECT
+      s.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY s."organizationId"
+        ORDER BY s."createdAt" DESC, s.id DESC
+      ) AS rn
+    FROM "Subscription" s
+  ) ranked
+  WHERE rn = 1
+),
+member_rollup AS (
+  SELECT
+    om."organizationId" AS organization_id,
+    COUNT(*) AS member_count,
+    COUNT(DISTINCT om."auth0Sub") AS distinct_auth0_sub_count,
+    BOOL_OR(om.role = 'admin') AS has_stored_org_admin,
+    BOOL_OR(er.is_auth0_admin = true) AS has_reviewed_auth0_admin,
+    BOOL_OR(er.is_auth0_admin = false) AS has_reviewed_auth0_non_admin,
+    COUNT(er.auth0_sub) AS reviewed_auth0_subject_count
+  FROM "OrgMember" om
+  LEFT JOIN expected_auth0_roles er ON er.auth0_sub = om."auth0Sub"
+  GROUP BY om."organizationId"
+),
+org_activity AS (
+  SELECT
+    o.id AS organization_id,
+    COUNT(DISTINCT cs.id) AS chat_session_count,
+    COUNT(DISTINCT cm.id) AS chat_message_count,
+    COUNT(DISTINCT tel.id) AS telemetry_count,
+    MAX(cs."updatedAt") AS last_chat_session_at,
+    MAX(cm."createdAt") AS last_chat_message_at,
+    MAX(tel."createdAt") AS last_telemetry_at
+  FROM "Organization" o
+  LEFT JOIN "OrgMember" om ON om."organizationId" = o.id
+  LEFT JOIN "ChatSession" cs ON cs."auth0Sub" = om."auth0Sub"
+  LEFT JOIN "ChatMessage" cm ON cm."auth0Sub" = om."auth0Sub"
+  LEFT JOIN "TelemetryEventLog" tel ON tel."organizationId" = o.id
+  GROUP BY o.id
+),
+classified_mismatches AS (
+  SELECT
+    md5(l.organization_id) AS anonymized_organization_id,
+    l.currency,
+    l.balance AS wallet_balance,
+    l.ledger_sum,
+    l.balance - l.ledger_sum AS unreconciled_delta,
+    l.ledger_count,
+    l.trial_grant_count,
+    l.trial_grant_sum,
+    l.chat_usage_count,
+    l.chat_usage_sum,
+    l.admin_adjust_count,
+    l.admin_adjust_sum,
+    l.null_request_id_count,
+    s.status AS latest_subscription_status,
+    s."planCode" AS latest_subscription_plan_code,
+    s."monthlyCredits" AS latest_monthly_credits,
+    s."currentPeriodEnd" AS latest_current_period_end,
+    COALESCE(m.member_count, 0) AS member_count,
+    COALESCE(m.distinct_auth0_sub_count, 0) AS distinct_auth0_sub_count,
+    COALESCE(m.has_stored_org_admin, false) AS has_stored_org_admin,
+    COALESCE(m.has_reviewed_auth0_admin, false) AS has_reviewed_auth0_admin,
+    COALESCE(m.has_reviewed_auth0_non_admin, false) AS has_reviewed_auth0_non_admin,
+    COALESCE(a.chat_session_count, 0) AS chat_session_count,
+    COALESCE(a.chat_message_count, 0) AS chat_message_count,
+    COALESCE(a.telemetry_count, 0) AS telemetry_count,
+    CASE
+      WHEN COALESCE(m.has_reviewed_auth0_admin, false) THEN 'adminOrBypassLikely'
+      WHEN COALESCE(m.has_reviewed_auth0_non_admin, false)
+        AND s.status IN ('trialing', 'active')
+        AND s."currentPeriodEnd" >= NOW()
+        THEN 'activeNonAdminRisk'
+      WHEN COALESCE(m.distinct_auth0_sub_count, 0) > 1 THEN 'multiMemberAmbiguous'
+      WHEN s.id IS NULL THEN 'missingSubscriptionState'
+      WHEN s."planCode" NOT IN ('trial_v1', 'standard_v1') THEN 'historicalOrLegacyPlan'
+      WHEN l.trial_grant_count = 0 AND l.balance > 0 THEN 'walletCreatedWithoutGrantLedger'
+      WHEN l.chat_usage_count > 0 AND l.balance <> l.ledger_sum THEN 'usageLedgerMismatch'
+      WHEN l.admin_adjust_count > 0 AND l.balance <> l.ledger_sum THEN 'adminTopupReview'
+      WHEN COALESCE(a.chat_session_count, 0) = 0
+        AND COALESCE(a.chat_message_count, 0) = 0
+        AND COALESCE(a.telemetry_count, 0) = 0
+        THEN 'historicalOrTestLikely'
+      ELSE 'insufficientEvidence'
+    END AS classification
+  FROM ledger_by_wallet l
+  LEFT JOIN latest_subscription s ON s."organizationId" = l.organization_id
+  LEFT JOIN member_rollup m ON m.organization_id = l.organization_id
+  LEFT JOIN org_activity a ON a.organization_id = l.organization_id
+  WHERE l.balance <> l.ledger_sum
+)
+SELECT
+  classification,
+  COUNT(*) AS wallet_count,
+  SUM(unreconciled_delta) AS total_unreconciled_delta,
+  SUM(wallet_balance) AS total_wallet_balance,
+  SUM(ledger_sum) AS total_ledger_sum
+FROM classified_mismatches
+GROUP BY classification
+ORDER BY classification;
+```
+
+For manual review, run a second detail query against the same
+`classified_mismatches` CTE and return only anonymized IDs plus counts:
+
+```sql
+SELECT
+  classification,
+  anonymized_organization_id,
+  wallet_balance,
+  ledger_sum,
+  unreconciled_delta,
+  latest_subscription_plan_code,
+  latest_subscription_status,
+  latest_monthly_credits,
+  has_reviewed_auth0_admin,
+  has_reviewed_auth0_non_admin,
+  chat_usage_count,
+  trial_grant_count,
+  admin_adjust_count,
+  chat_session_count,
+  chat_message_count,
+  telemetry_count
+FROM classified_mismatches
+ORDER BY classification, ABS(unreconciled_delta) DESC;
+```
+
+### Risk Categories
+
+- `adminOrBypassLikely`: reviewed Auth0 evidence says the user is an app-admin.
+  Header display should be `Credits: admin`; `/api/chat` does not charge these
+  requests.
+- `activeNonAdminRisk`: reviewed Auth0 evidence says non-admin, subscription is
+  active or trialing, and the wallet can affect visible credits and charging.
+  These rows need careful manual review before cleanup.
+- `historicalOrLegacyPlan`: mismatch is tied to legacy plan data such as
+  `office_50`. This can still be visible if the organization is active and
+  non-admin, so do not auto-clean it.
+- `walletCreatedWithoutGrantLedger`: wallet has a positive balance but lacks an
+  expected grant or top-up ledger trail. This points to old provisioning,
+  manual edits, or missing historical ledger rows.
+- `usageLedgerMismatch`: chat usage ledger rows exist but wallet balance does
+  not reconcile. This is higher risk because it may affect active charging
+  history, even though current write logic is transactional.
+- `adminTopupReview`: admin adjustment rows exist and need note/request-ID
+  review before deciding whether ledger or wallet is authoritative.
+- `missingSubscriptionState`: wallet exists without a clear subscription state.
+  Do not infer trial or standard status from the wallet alone.
+- `multiMemberAmbiguous`: the organization has multiple Auth0 subjects or is
+  part of duplicate membership evidence. Review runtime organization selection.
+- `historicalOrTestLikely`: no activity evidence and no current plan evidence.
+  Candidate for later cleanup planning only after exact IDs are reviewed.
+- `insufficientEvidence`: Auth0, activity, subscription, or ledger details do
+  not support a safe conclusion.
+
+### Manual Review Checklist
+
+Before any cleanup PR, review each mismatched wallet and confirm:
+
+1. Auth0 app-admin status for the related subject or subjects.
+2. Which organization `/api/me`, `/api/chat`, and admin billing routes select
+   for the subject today.
+3. Whether the latest subscription is active, trialing, expired, canceled,
+   legacy, missing, or test-only.
+4. Whether the wallet balance is currently visible to a non-admin user.
+5. Whether recent `chat_usage` ledger rows exist for the wallet.
+6. Whether positive balances are explained by `trial_grant` or `admin_adjust`
+   rows with request IDs.
+7. Whether `NULL` request IDs, duplicate grants, or historical migration timing
+   make the ledger incomplete.
+8. Whether organization/chat/telemetry activity indicates real user data.
+9. Whether ledger sum or wallet balance should be authoritative for that exact
+   organization.
+10. The planned cleanup action, if any, using a transaction and reviewed IDs.
+
+### Recommended Next Cleanup And Hardening PRs
+
+1. Add a read-only mismatch classification script using the SQL shape above,
+   or extend `scripts/audit-beta-db-integrity.sql` after the output shape is
+   approved.
+2. Run the script with manually reviewed Auth0 evidence and record anonymized
+   aggregate results in a follow-up audit note.
+3. Prepare a manual cleanup PR only for rows classified with enough evidence.
+   Do not mutate data from UI code or from an unreviewed script.
+4. Add provisioning hardening after data cleanup so an `auth0Sub` cannot
+   ambiguously resolve to multiple organizations.
+5. Add isolated invariant tests proving current trial grants, admin top-ups,
+   and chat usage charges keep wallet balance and ledger sum aligned.
+6. Consider an internal admin-only integrity warning for mismatched wallets.
+   The warning should not change `/api/me`, `/api/chat`, or runtime billing
+   semantics.
+
 ## Expected Or Suspicious?
 
 The mismatch is suspicious for current code paths.
