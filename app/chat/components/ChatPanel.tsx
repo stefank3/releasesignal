@@ -578,16 +578,32 @@ function CompactRequirementBar(args: {
   const textColor = isDark ? "#EDEAE3" : "#262521";
   const mutedText = isDark ? "#A39F92" : "#6F6A5C";
   const editorInput = buildRefinedRequirementInput(args.chat.sessionArtifact);
-  const seededRequirementRef = React.useRef<string | null>(null);
+  const seedKey = editorInput
+    ? JSON.stringify([
+        args.chat.activeSessionId ?? "no-session",
+        version ?? "no-version",
+        editorInput,
+      ])
+    : null;
+  const seededRequirementSeedKeyRef = React.useRef<string | null>(null);
+  const [clearedRequirementSeedKey, setClearedRequirementSeedKey] =
+    React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setClearedRequirementSeedKey(null);
+    seededRequirementSeedKeyRef.current = null;
+  }, [args.chat.activeSessionId]);
 
   React.useEffect(() => {
     if (!editorInput) return;
-    if (seededRequirementRef.current === editorInput) return;
+    if (!seedKey) return;
+    if (clearedRequirementSeedKey === seedKey) return;
+    if (seededRequirementSeedKeyRef.current === seedKey) return;
     if (args.chat.input.trim()) return;
 
     args.chat.setInput(editorInput);
-    seededRequirementRef.current = editorInput;
-  }, [args.chat, editorInput]);
+    seededRequirementSeedKeyRef.current = seedKey;
+  }, [args.chat, clearedRequirementSeedKey, editorInput, seedKey]);
 
   const buttonStyle: React.CSSProperties = {
     borderRadius: 12,
@@ -706,6 +722,8 @@ function CompactRequirementBar(args: {
         <button
           type="button"
           onClick={() => {
+            setClearedRequirementSeedKey(seedKey);
+            seededRequirementSeedKeyRef.current = seedKey;
             args.chat.setInput("");
             args.onAfterSendAction?.();
           }}
