@@ -426,8 +426,6 @@ export function useChatSession(): UseChatSessionReturn {
 
         const parsed = JSON.parse(raw) as PersistedState;
         if (parsed?.mode) setMode(parsed.mode);
-        if (Array.isArray(parsed.items)) setItems(parsed.items);
-        if (typeof parsed.input === "string") setInput(parsed.input);
       } catch (e) {
         if (!controller.signal.aborted) {
           localStorage.removeItem(STORAGE_KEY);
@@ -447,12 +445,12 @@ export function useChatSession(): UseChatSessionReturn {
     if (!identityReady) return;
 
     try {
-      const payload: PersistedState = { mode, items, input };
+      const payload: PersistedState = { mode, items: [], input: "" };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // ignore
     }
-  }, [identityReady, mode, items, input]);
+  }, [identityReady, mode]);
 
   /*
   ---------------------------------------------------------

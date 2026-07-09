@@ -96,8 +96,6 @@ import { ActivityTimelinePanel } from "./workspace/ActivityTimelinePanel";
 import { ArtifactDocumentSurface } from "./workspace/ArtifactDocumentSurface";
 import { getLatestArtifactDocumentIndexesToHide } from "./workspace/artifactDocumentItems";
 
-const STORAGE_KEY = "stefans-mvp-chat-v1";
-
 type Props = {
   chat: UseChatSessionReturn;
   onAfterSendAction?: () => void;
@@ -708,15 +706,14 @@ function CompactRequirementBar(args: {
         <button
           type="button"
           onClick={() => {
-            args.chat.startNewSessionInMode(args.chat.mode);
-            localStorage.removeItem(STORAGE_KEY);
+            args.chat.setInput("");
             args.onAfterSendAction?.();
           }}
           style={destructiveTextButtonStyle}
           disabled={args.isBusy}
-          title="Clear the current workspace view"
+          title="Clear the requirement editor input"
         >
-          Clear...
+          Clear input
         </button>
       </div>
 
