@@ -53,6 +53,22 @@ function getStatusTone(status: ReleaseReadinessSummaryModel["status"]): Tone {
   }
 }
 
+function getReadinessBand(status: ReleaseReadinessSummaryModel["status"]): string {
+  switch (status) {
+    case "ready":
+    case "ready_with_risk":
+      return "Strong";
+    case "partial":
+    case "weak":
+      return "Moderate";
+    case "not_ready":
+    case "blocked":
+    case "insufficient_data":
+    default:
+      return "Low";
+  }
+}
+
 function getToneStyle(tone: Tone, isDark: boolean): {
   border: string;
   background: string;
@@ -199,6 +215,7 @@ export function ReleaseReadinessSummary({
   const isDark = resolvedTheme === "dark";
   const factors = readiness.factors;
   const statusTone = getStatusTone(readiness.status);
+  const readinessBand = getReadinessBand(readiness.status);
   const shellBackground = isDark ? "#302F2A" : "#FCFBF6";
   const shellBorder = isDark ? "1px solid #3A382F" : "1px solid #D9D3C2";
   const textColor = isDark ? "#EDEAE3" : "#262521";
@@ -286,7 +303,7 @@ export function ReleaseReadinessSummary({
 
         <Tile
           label="Status / Band"
-          value={STATUS_LABELS[readiness.status]}
+          value={readinessBand}
           tone={statusTone}
           isDark={isDark}
         />

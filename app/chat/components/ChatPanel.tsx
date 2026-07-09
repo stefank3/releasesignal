@@ -367,20 +367,39 @@ function normalizeStageTitle(title: string | undefined): string {
 }
 
 function getStageIndex(args: {
-  currentStage: string;
   requirementReady: boolean;
   suiteReady: boolean;
   reviewReady: boolean;
   executionEvidenceReady: boolean;
+  readinessCalculated?: boolean;
 }): number {
-  const stage = args.currentStage.toLowerCase();
-
-  if (stage.includes("execution") || args.executionEvidenceReady) return 4;
-  if (stage.includes("review") || args.reviewReady) return 3;
-  if (stage.includes("test design") || stage.includes("suite") || args.suiteReady) {
-    return 2;
-  }
+  if (args.readinessCalculated) return 5;
+  if (args.executionEvidenceReady) return 4;
+  if (args.reviewReady) return 3;
+  if (args.suiteReady) return 2;
   return 1;
+}
+
+function isReadinessCalculated(status: keyof typeof STATUS_LABELS): boolean {
+  return status !== "insufficient_data";
+}
+
+function getReadinessStageLabel(status: keyof typeof STATUS_LABELS): string {
+  if (isReadinessCalculated(status)) return "Readiness signal calculated";
+  return "Review release readiness";
+}
+
+function getReadinessNextAction(status: keyof typeof STATUS_LABELS): string {
+  switch (status) {
+    case "ready":
+      return "Next: review the readiness signal, then make the final release decision.";
+    case "ready_with_risk":
+      return "Next: review remaining warnings and decide whether the residual risk is acceptable.";
+    case "not_ready":
+      return "Next: address failed or skipped execution results, then re-upload evidence and review readiness again.";
+    default:
+      return "Next: review the readiness signal and decide the next release action.";
+  }
 }
 
 function toReviewStrength(score: number | null | undefined): string | null {
@@ -460,13 +479,17 @@ function PopulatedCommandBand(args: {
   const reviewScore = artifact?.reviewResult?.score;
   const reviewStrength = toReviewStrength(reviewScore);
   const readiness = buildReleaseReadinessSummary(artifact ?? null);
+  const readinessCalculated = isReadinessCalculated(readiness.status);
   const currentStage = normalizeStageTitle(args.chat.workflowStatus.title);
+  const stageLabel = readinessCalculated
+    ? getReadinessStageLabel(readiness.status)
+    : currentStage;
   const stageIndex = getStageIndex({
-    currentStage,
     requirementReady: args.chat.hasPinnedRequirement,
     suiteReady: args.chat.hasPersistentTestSuite,
     reviewReady: args.chat.hasReviewArtifact,
     executionEvidenceReady: !!artifact?.executionIntelligence,
+    readinessCalculated,
   });
   const workspaceName =
     args.chat.sessions.find((session) => session.id === args.chat.activeSessionId)
@@ -479,8 +502,12 @@ function PopulatedCommandBand(args: {
   const readinessLabel =
     readiness.status === "insufficient_data" && readinessNeedsExecution
       ? "Readiness: Not enough data yet - Needs execution"
-      : `Readiness: ${STATUS_LABELS[readiness.status]}`;
-  const nextAction = readinessNeedsExecution
+      : readinessCalculated
+        ? `Stage 5 readiness: ${STATUS_LABELS[readiness.status]}`
+        : `Readiness: ${STATUS_LABELS[readiness.status]}`;
+  const nextAction = readinessCalculated
+    ? getReadinessNextAction(readiness.status)
+    : readinessNeedsExecution
     ? "Next: add execution results to generate your readiness signal."
     : `Next: ${args.chat.workflowStatus.nextAction}`;
 
@@ -512,7 +539,10 @@ function PopulatedCommandBand(args: {
         }}
       >
         <div style={{ fontSize: 13, fontWeight: 950 }}>
-          Stage {stageIndex} of 5 - {workspaceName}
+          Stage {stageIndex} of 5 - {stageLabel}
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.35 }}>
+          {workspaceName}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Pill

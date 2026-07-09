@@ -326,9 +326,6 @@ export function ReleaseReadinessPanel({
                 Status / Band
               </div>
               <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>
-                {STATUS_LABELS[readiness.status]}
-              </div>
-              <div style={{ marginTop: 2, fontSize: 11, opacity: 0.72 }}>
                 {readinessBand}
               </div>
             </div>

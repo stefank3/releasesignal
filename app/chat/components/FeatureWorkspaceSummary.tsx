@@ -47,6 +47,8 @@
 "use client";
 
 import React from "react";
+import { buildReleaseReadinessSummary } from "@/lib/release-readiness/releaseReadinessService";
+import type { ReleaseReadinessStatus } from "@/lib/release-readiness/releaseReadinessTypes";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { ExecutionEvidenceSummary } from "./ExecutionEvidenceSummary";
 import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
@@ -517,20 +519,39 @@ function normalizeStageTitle(title: string | undefined): string {
 }
 
 function getStageIndex(args: {
-  currentStage: string;
   requirementReady: boolean;
   suiteReady: boolean;
   reviewReady: boolean;
   executionEvidenceReady: boolean;
+  readinessCalculated?: boolean;
 }): number {
-  const stage = args.currentStage.toLowerCase();
-
-  if (stage.includes("execution") || args.executionEvidenceReady) return 4;
-  if (stage.includes("review") || args.reviewReady) return 3;
-  if (stage.includes("test design") || stage.includes("suite") || args.suiteReady) {
-    return 2;
-  }
+  if (args.readinessCalculated) return 5;
+  if (args.executionEvidenceReady) return 4;
+  if (args.reviewReady) return 3;
+  if (args.suiteReady) return 2;
   return 1;
+}
+
+function isReadinessCalculated(status: ReleaseReadinessStatus): boolean {
+  return status !== "insufficient_data";
+}
+
+function getReadinessStageLabel(status: ReleaseReadinessStatus): string {
+  if (isReadinessCalculated(status)) return "Readiness signal calculated";
+  return "Review release readiness";
+}
+
+function getReadinessNextAction(status: ReleaseReadinessStatus): string {
+  switch (status) {
+    case "ready":
+      return "Review the readiness signal, then make the final release decision.";
+    case "ready_with_risk":
+      return "Review remaining warnings and decide whether the residual risk is acceptable.";
+    case "not_ready":
+      return "Address failed or skipped execution results, then re-upload evidence and review readiness again.";
+    default:
+      return "Review the readiness signal and decide the next release action.";
+  }
 }
 
 function toRelativeStrength(score: number | null | undefined): string | null {
@@ -700,15 +721,22 @@ export default function FeatureWorkspaceSummary({
   // The UI does not calculate execution truth, mutate artifacts, or infer release readiness.
   const executionEvidence = chat.sessionArtifact?.executionIntelligence ?? null;
   const executionEvidenceReady = !!executionEvidence;
+  const readiness = buildReleaseReadinessSummary(chat.sessionArtifact ?? null);
+  const readinessCalculated = isReadinessCalculated(readiness.status);
 
   const currentStage = normalizeStageTitle(chat.workflowStatus.title);
-  const nextAction = chat.workflowStatus.nextAction;
+  const displayedStage = readinessCalculated
+    ? getReadinessStageLabel(readiness.status)
+    : currentStage;
+  const nextAction = readinessCalculated
+    ? getReadinessNextAction(readiness.status)
+    : chat.workflowStatus.nextAction;
   const stageIndex = getStageIndex({
-    currentStage,
     requirementReady,
     suiteReady,
     reviewReady,
     executionEvidenceReady,
+    readinessCalculated,
   });
 
   const hasAnyArtifacts =
@@ -921,7 +949,7 @@ export default function FeatureWorkspaceSummary({
     >
       <div style={{ display: "grid", gap: 8 }}>
         <StageBadge
-          text={`Stage ${stageIndex} of 5 - ${currentStage}`}
+          text={`Stage ${stageIndex} of 5 - ${displayedStage}`}
           resolvedTheme={resolvedTheme}
         />
 
@@ -1185,7 +1213,7 @@ export default function FeatureWorkspaceSummary({
         }}
       >
         <div>
-          Current stage: <strong style={{ fontWeight: 900 }}>{currentStage}</strong>
+          Current stage: <strong style={{ fontWeight: 900 }}>{displayedStage}</strong>
         </div>
         <div>
           Next step: <strong style={{ fontWeight: 900 }}>{nextAction}</strong>
