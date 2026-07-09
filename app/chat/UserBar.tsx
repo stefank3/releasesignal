@@ -29,22 +29,27 @@ type MeResponse =
   | { authenticated: false };
 
 function formatAccountStatus(me: Extract<MeResponse, { authenticated: true }>) {
-  const credits = `${me.creditsRemaining.toLocaleString()} credits left`;
+  if (me.isAdmin) {
+    return "Credits: admin";
+  }
+
+  const formattedCredits = me.creditsRemaining.toLocaleString();
+  const credits = `${formattedCredits} credits left`;
 
   if (me.planStatus === "trialing") {
     const daysLeft =
       typeof me.trialDaysRemaining === "number"
-        ? ` - ${me.trialDaysRemaining} days left`
+        ? `, ${me.trialDaysRemaining} days left`
         : "";
 
-    return `Beta trial - ${credits}${daysLeft}`;
+    return `Beta trial: ${credits}${daysLeft}`;
   }
 
   if (me.planCode === PRODUCT_PLAN_CODES.standardPaid) {
-    return `${PRODUCT_PACKAGE_LABELS.basePlan} - ${credits}`;
+    return `${PRODUCT_PACKAGE_LABELS.basePlan}: ${credits}`;
   }
 
-  return `Credits - ${credits}`;
+  return `Credits: ${formattedCredits} left`;
 }
 
 function formatTrialTitle(me: Extract<MeResponse, { authenticated: true }>) {
