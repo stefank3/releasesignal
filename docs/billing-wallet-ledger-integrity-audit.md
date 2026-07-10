@@ -496,6 +496,102 @@ Before any cleanup PR, review each mismatched wallet and confirm:
    The warning should not change `/api/me`, `/api/chat`, or runtime billing
    semantics.
 
+## Read-Only Classification Script
+
+PR #64C.10 adds a local diagnostic classifier:
+
+```bash
+npm run billing:audit-wallet-ledger
+```
+
+The command runs:
+
+```bash
+node scripts/auditBillingWalletLedger.mjs
+```
+
+The script uses the configured `DATABASE_URL`, instantiates Prisma directly,
+and performs read-only Prisma operations only. It does not provide repair,
+reconcile, clamp, backfill, or mutation flags.
+
+### Script Safeguards
+
+- Uses Prisma read APIs only: `findMany`, `aggregate`, and in-memory
+  classification.
+- Does not call `create`, `update`, `delete`, `upsert`, `executeRaw`, or
+  transaction mutation logic.
+- Does not change `/api/me`, `/api/chat`, billing helpers, wallet writes, or
+  ledger writes.
+- Does not print emails, names, Auth0 subjects, or raw user-identifying data.
+- Prints short internal organization/wallet references and anonymized
+  organization hashes for manual correlation.
+- Labels Auth0 admin status as `unknown from DB` because app-admin truth lives
+  in Auth0 token/role evidence, not in `OrgMember.role`.
+- Prints a diagnostic-only banner before producing results.
+
+### Output Meaning
+
+The summary includes:
+
+- total credit wallets;
+- total wallet/ledger mismatches;
+- wallets with `CreditWallet.balance = 1000`;
+- mismatches with active subscription/activity evidence;
+- mismatches with no ledger entries;
+- mismatches with ledger entries but wrong wallet balance;
+- category counts;
+- highest-risk rows requiring manual review.
+
+Rows include truncated or anonymized internal references, wallet balance,
+ledger sum, delta, ledger reason types, subscription evidence, activity counts,
+and the likely category.
+
+### Implemented Categories
+
+- `admin/test/historical suspected`: legacy plan, admin top-up, inactive
+  history, or stale/test-like evidence. Manual review is still required.
+- `active non-admin risk`: active/trialing subscription plus activity evidence.
+  Because Auth0 app-admin status is not available from DB alone, this means the
+  row may affect non-admin display or charging until manually reviewed.
+- `missing grant ledger suspected`: wallet balance is higher than ledger sum
+  and no trial grant or admin top-up evidence explains the positive balance.
+- `missing charge ledger suspected`: wallet balance is lower than ledger sum
+  and no chat usage ledger evidence explains the reduction.
+- `wallet-only historical balance suspected`: wallet has nonzero balance and no
+  ledger entries.
+- `insufficient evidence`: DB-only facts do not support a safer classification.
+
+### Manual Review Instructions
+
+Before cleanup, compare each high-risk row against:
+
+1. Auth0 app-admin role evidence for the related subject or subjects.
+2. Runtime selected organization for `/api/me`, `/api/chat`, and admin billing
+   paths.
+3. Latest subscription status and whether it is active, trialing, expired,
+   canceled, legacy, or missing.
+4. Whether the wallet balance is visible to a non-admin user.
+5. Whether `chat_usage`, `trial_grant`, or `admin_adjust` ledger reasons
+   explain the mismatch.
+6. Recent chat, message, and telemetry activity.
+7. Whether the wallet balance or ledger sum is authoritative for that exact
+   organization.
+
+Do not use the script output alone to clean data. The output is evidence for a
+human-reviewed cleanup plan.
+
+### Next-Step Decision Tree
+
+- Option A: If Auth0/runtime/manual review proves mismatches are admin, test,
+  stale, or historical only, plan a narrow cleanup PR.
+- Option B: If any mismatch may affect an active non-admin account, perform
+  careful manual review before cleanup and preserve user-visible behavior until
+  the correct source is confirmed.
+- Option C: If DB-only evidence remains insufficient, add more read-only
+  diagnostics or manual Auth0/runtime checks before cleanup.
+- Option D: If reviewed evidence points to a current write-path defect, create
+  a fix PR before any cleanup PR.
+
 ## Expected Or Suspicious?
 
 The mismatch is suspicious for current code paths.
