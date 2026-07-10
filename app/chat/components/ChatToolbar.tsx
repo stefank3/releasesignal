@@ -23,12 +23,14 @@ function modeLabel(m: Mode) {
 type Props = {
   chat: UseChatSessionReturn;
   onAfterUiAction?: () => void;
+  onCreditsMayHaveChanged?: () => void;
   resolvedTheme?: "light" | "dark";
 };
 
 export default function ChatToolbar({
   chat,
   onAfterUiAction,
+  onCreditsMayHaveChanged,
   resolvedTheme = "dark",
 }: Props) {
   const isDark = resolvedTheme === "dark";
@@ -141,8 +143,11 @@ export default function ChatToolbar({
                   resolvedTheme={resolvedTheme}
                   onClickAction={() => {
                     void (async () => {
-                      await chat.send({ replay: true });
+                      const creditsMayHaveChanged = await chat.send({ replay: true });
                       onAfterUiAction?.();
+                      if (creditsMayHaveChanged) {
+                        onCreditsMayHaveChanged?.();
+                      }
                     })();
                   }}
                 >
@@ -178,8 +183,12 @@ export default function ChatToolbar({
                   resolvedTheme={resolvedTheme}
                   onClickAction={() => {
                     void (async () => {
-                      await chat.generateTestsFromRequirement();
+                      const creditsMayHaveChanged =
+                        await chat.generateTestsFromRequirement();
                       onAfterUiAction?.();
+                      if (creditsMayHaveChanged) {
+                        onCreditsMayHaveChanged?.();
+                      }
                     })();
                   }}
                   disabled={!chat.canGenerateTests}

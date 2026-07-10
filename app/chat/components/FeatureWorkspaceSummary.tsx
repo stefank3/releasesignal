@@ -57,6 +57,7 @@ type Props = {
   chat: UseChatSessionReturn;
   resolvedTheme?: "light" | "dark";
   commandCenter?: boolean;
+  onCreditsMayHaveChanged?: () => void;
 };
 
 type Tone = "neutral" | "positive" | "warning" | "negative" | "info";
@@ -688,6 +689,7 @@ export default function FeatureWorkspaceSummary({
   chat,
   resolvedTheme = "dark",
   commandCenter = false,
+  onCreditsMayHaveChanged,
 }: Props) {
   const isDark = resolvedTheme === "dark";
 
@@ -1141,7 +1143,13 @@ export default function FeatureWorkspaceSummary({
                     ? undefined
                     : suiteReady
                       ? () => {
-                          void chat.reviewTestSuite();
+                          void (async () => {
+                            const creditsMayHaveChanged =
+                              await chat.reviewTestSuite();
+                            if (creditsMayHaveChanged) {
+                              onCreditsMayHaveChanged?.();
+                            }
+                          })();
                         }
                       : undefined
                 }

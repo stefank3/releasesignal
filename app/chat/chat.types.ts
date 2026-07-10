@@ -432,6 +432,7 @@ export type ChatApiResponse = {
   raw?: string;
   error?: string;
   details?: string;
+  reason?: string;
 
   sessionId?: string;
   creditsCharged?: number;

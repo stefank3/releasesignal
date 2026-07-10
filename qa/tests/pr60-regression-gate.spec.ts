@@ -112,7 +112,7 @@ test.describe('PR60 normal trial provisioning and credit charging', () => {
   });
 });
 
-test.describe('PR60 admin no-trial/no-credit-billing behavior', () => {
+test.describe('PR60 admin no-trial/normal-credit-billing behavior', () => {
   test('Admin account is not provisioned as a normal trial user', async ({ browser }) => {
     const live = await newLivePage(browser, adminStateEnv);
     test.skip(!live.ok, live.ok ? '' : live.message);
@@ -124,35 +124,41 @@ test.describe('PR60 admin no-trial/no-credit-billing behavior', () => {
     expect(me.planStatus, 'Admin account must not be converted into a trial subscription').not.toBe('trialing');
     expect(me.trialEndsAt, 'Admin account should not expose a trial end timestamp').toBeNull();
     expect(me.trialDaysRemaining, 'Admin account should not expose trial days remaining').toBeNull();
+    expect(me.creditsRemaining, 'Admin account should expose a finite persisted credit balance').toBeGreaterThanOrEqual(0);
   });
 
-  test('Admin chat request does not debit credits', async ({ browser }) => {
+  test('Admin chat request debits persisted credits', async ({ browser }) => {
     const missing = [
       ...missingStorageState(adminStateEnv),
       ...missingOptIn('PR60_ENABLE_ADMIN_CHAT_CHECK')
     ];
     test.skip(
       missing.length > 0,
-      setupMessage('Live admin chat validation is opt-in because it calls the AI route', missing)
+      setupMessage('Live admin chat debit validation is opt-in because it spends persisted credits', missing)
     );
 
     const live = await newLivePage(browser, adminStateEnv);
     if (!live.ok) return;
 
     const before = await expectAuthenticatedMe(live.page);
-    expect(before.isAdmin, 'Admin billing bypass validation must use an admin account').toBe(true);
+    expect(before.isAdmin, 'Admin billing validation must use an admin account').toBe(true);
+    expect(before.creditsRemaining, 'Admin credit debit validation requires available credits').toBeGreaterThan(0);
 
     const { status, body } = await postChatMessage(
       live.page,
-      `PR60 regression admin billing bypass smoke ${new Date().toISOString()}: summarize login smoke risks.`
+      `PR60 regression admin credit debit smoke ${new Date().toISOString()}: summarize login smoke risks.`
     );
 
     expect(status, JSON.stringify(body)).toBe(200);
     expect(body.ok, JSON.stringify(body)).toBe(true);
+    expect(body.creditsCharged, 'Admin should be charged for AI-backed chat').toBeGreaterThan(0);
+    expect(body.creditsRemaining, 'Admin chat response should report remaining persisted credits').toBe(
+      before.creditsRemaining - Number(body.creditsCharged)
+    );
 
     const after = await expectAuthenticatedMe(live.page);
-    expect(after.creditsRemaining, 'Admin AI route access should not debit the admin wallet').toBe(
-      before.creditsRemaining
+    expect(after.creditsRemaining, 'Subsequent admin /api/me should match the chat response balance').toBe(
+      body.creditsRemaining
     );
     expect(after.planStatus, 'Admin chat must not create a normal trial subscription').not.toBe('trialing');
   });

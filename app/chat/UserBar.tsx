@@ -28,13 +28,17 @@ type MeResponse =
     }
   | { authenticated: false };
 
-function formatAccountStatus(me: Extract<MeResponse, { authenticated: true }>) {
-  if (me.isAdmin) {
-    return "Credits: admin";
-  }
+type Props = {
+  creditRefreshKey?: number;
+};
 
+function formatAccountStatus(me: Extract<MeResponse, { authenticated: true }>) {
   const formattedCredits = me.creditsRemaining.toLocaleString();
   const credits = `${formattedCredits} credits left`;
+
+  if (me.isAdmin) {
+    return `Admin: ${credits}`;
+  }
 
   if (me.planStatus === "trialing") {
     const daysLeft =
@@ -62,7 +66,7 @@ function formatTrialTitle(me: Extract<MeResponse, { authenticated: true }>) {
   })}`;
 }
 
-export default function UserBar() {
+export default function UserBar({ creditRefreshKey = 0 }: Props) {
   const [me, setMe] = useState<MeResponse | null>(null);
 
   useEffect(() => {
@@ -80,9 +84,10 @@ export default function UserBar() {
 
         // WHY:
         // If the request fails (401/500/etc.), do NOT remove the entire user bar.
-        // Degrade into a recoverable unauthenticated shell instead.
+        // Keep the last known valid account state on refresh failures so we do
+        // not replace real credits with a fabricated fallback.
         if (!res.ok) {
-          setMe({ authenticated: false });
+          setMe((current) => current ?? { authenticated: false });
           return;
         }
 
@@ -92,14 +97,14 @@ export default function UserBar() {
         // WHY:
         // Network errors should not break the shell UI.
         // Abort during unmount also lands here.
-        setMe({ authenticated: false });
+        setMe((current) => current ?? { authenticated: false });
       }
     })();
 
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [creditRefreshKey]);
 
   if (!me) {
     return <div className="text-sm opacity-70">Loading…</div>;

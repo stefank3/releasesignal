@@ -495,7 +495,6 @@ export async function POST(req: Request) {
 
     orgId = billingResult.orgId;
     const orgState = billingResult.orgState;
-    const skipCreditCharge = billingResult.skipCreditCharge;
 
     /*
     ---------------------------------------------------------
@@ -727,7 +726,6 @@ export async function POST(req: Request) {
             auth0Sub,
             requestId,
             creditsCharged: 1,
-            skipCreditCharge,
             assistantContentToStore: replyTextForUser,
             promptTokens: 0,
             completionTokens: 0,
@@ -956,7 +954,6 @@ export async function POST(req: Request) {
           auth0Sub,
           requestId,
           creditsCharged,
-          skipCreditCharge,
           assistantContentToStore,
           promptTokens,
           completionTokens,
@@ -1314,7 +1311,6 @@ export async function POST(req: Request) {
         auth0Sub,
         requestId,
         creditsCharged,
-        skipCreditCharge,
         assistantContentToStore,
         promptTokens,
         completionTokens,
