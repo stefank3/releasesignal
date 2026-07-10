@@ -149,9 +149,9 @@ export type UseChatSessionReturn = {
   canRefineRequirement: boolean;
   canRegenerateSuite: boolean;
 
-  generateNextBatchOfTests: () => Promise<void>;
-  refineRequirement: () => Promise<void>;
-  regenerateSuite: () => Promise<void>;
+  generateNextBatchOfTests: () => Promise<boolean>;
+  refineRequirement: () => Promise<boolean>;
+  regenerateSuite: () => Promise<boolean>;
 
   rateLimitMsg: string | null;
   rate: RateMeta | null;
@@ -225,10 +225,10 @@ export type UseChatSessionReturn = {
 
   // M12.9 CHANGE:
   // artifact-driven workspace action paths
-  generateTestsFromRequirement: () => Promise<void>;
-  reviewTestSuite: () => Promise<void>;
+  generateTestsFromRequirement: () => Promise<boolean>;
+  reviewTestSuite: () => Promise<boolean>;
 
-  send: (opts?: { replay?: boolean }) => Promise<void>;
+  send: (opts?: { replay?: boolean }) => Promise<boolean>;
 
   shouldAutoScrollRef: MutableRefObject<boolean>;
 };
@@ -861,9 +861,39 @@ export function useChatSession(): UseChatSessionReturn {
     ]);
   };
 
-  const runWorkflowAction = async (action: WorkflowAction) => {
+  const shouldRefreshCreditsFromResponse = (data: ChatApiResponse) =>
+    typeof data?.creditsRemaining === "number";
+
+  const buildCreditAccessErrorMessage = (data: ChatApiResponse) => {
+    if (data?.error === "Insufficient credits") {
+      return "You do not have enough Release Signal credits to complete this action.";
+    }
+
+    if (data?.error === "Account access required") {
+      switch (data.reason) {
+        case "wallet_missing":
+          return "Your Release Signal credit wallet is unavailable. Please try again shortly or contact support.";
+        case "insufficient_credits":
+          return "You do not have enough Release Signal credits to complete this action.";
+        case "trial_expired":
+          return "Your Release Signal trial has expired.";
+        case "subscription_expired":
+          return "Your Release Signal subscription period has expired.";
+        case "subscription_inactive":
+          return "Your Release Signal subscription is not active.";
+        case "subscription_missing":
+          return "Your Release Signal account is not ready for billable actions.";
+        default:
+          return "Your Release Signal account cannot complete this billable action right now.";
+      }
+    }
+
+    return "You do not have enough Release Signal credits to complete this action.";
+  };
+
+  const runWorkflowAction = async (action: WorkflowAction): Promise<boolean> => {
     const requestId = createRequestId();
-    if (!requestId) return;
+    if (!requestId) return false;
 
     setModeLockMsg(null);
     setWorkflowActionError(null);
@@ -874,7 +904,7 @@ export function useChatSession(): UseChatSessionReturn {
         "Another request is already in progress.",
         requestId
       );
-      return;
+      return false;
     }
 
     if (!activeSessionId) {
@@ -883,7 +913,7 @@ export function useChatSession(): UseChatSessionReturn {
         "This action requires an existing session with persisted artifacts.",
         requestId
       );
-      return;
+      return false;
     }
 
     if (
@@ -898,7 +928,7 @@ export function useChatSession(): UseChatSessionReturn {
         "No refined requirement artifact is available for this session.",
         requestId
       );
-      return;
+      return false;
     }
 
     if (
@@ -918,7 +948,7 @@ export function useChatSession(): UseChatSessionReturn {
         "This action requires both a refined requirement artifact and a persisted test suite artifact.",
         requestId
       );
-      return;
+      return false;
     }
 
     if (
@@ -934,7 +964,7 @@ export function useChatSession(): UseChatSessionReturn {
         "No persisted test suite artifact is available for this session.",
         requestId
       );
-      return;
+      return false;
     }
 
     setIsRunningWorkflowAction(true);
@@ -1007,7 +1037,7 @@ export function useChatSession(): UseChatSessionReturn {
           `The backend rejected this request because it expected "${data.sessionMode}" but received "${data.requestedMode}".`,
           serverRequestId
         );
-        return;
+        return false;
       }
 
       if (status === 429) {
@@ -1016,7 +1046,7 @@ export function useChatSession(): UseChatSessionReturn {
         } (requestId: ${serverRequestId})`;
         setRateLimitMsg(details);
         setWorkflowActionError(details);
-        return;
+        return false;
       }
 
       if (status === 401) {
@@ -1026,7 +1056,18 @@ export function useChatSession(): UseChatSessionReturn {
             "Your sign-in session expired. Please sign in again and retry.",
           serverRequestId
         );
-        return;
+        return false;
+      }
+
+      if (status === 402) {
+        appendWorkflowActionError(
+          data?.error === "Account access required"
+            ? "Release Signal account access required"
+            : "Not enough Release Signal credits",
+          buildCreditAccessErrorMessage(data),
+          serverRequestId
+        );
+        return false;
       }
 
       if (!(status >= 200 && status < 300) || data?.ok === false) {
@@ -1035,8 +1076,10 @@ export function useChatSession(): UseChatSessionReturn {
           JSON.stringify(data, null, 2),
           serverRequestId
         );
-        return;
+        return false;
       }
+
+      const shouldRefreshCredits = shouldRefreshCreditsFromResponse(data);
 
       if (data?.sessionId && typeof data.sessionId === "string") {
         setActiveSessionId(data.sessionId);
@@ -1060,7 +1103,7 @@ export function useChatSession(): UseChatSessionReturn {
             "The action completed without producing a persisted test suite artifact or a valid suite response.",
             serverRequestId
           );
-          return;
+          return false;
         }
 
         setMode("cases");
@@ -1088,7 +1131,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
 
         await loadSessions(true);
-        return;
+        return shouldRefreshCredits;
       }
 
       if (action === "generate_next_batch_of_tests") {
@@ -1106,7 +1149,7 @@ export function useChatSession(): UseChatSessionReturn {
             "The action completed without producing a persisted test suite artifact or a valid suite response.",
             serverRequestId
           );
-          return;
+          return false;
         }
 
         setMode("cases");
@@ -1134,7 +1177,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
 
         await loadSessions(true);
-        return;
+        return shouldRefreshCredits;
       }
 
       if (action === "regenerate_suite") {
@@ -1152,7 +1195,7 @@ export function useChatSession(): UseChatSessionReturn {
             "The action completed without producing a persisted test suite artifact or a valid suite response.",
             serverRequestId
           );
-          return;
+          return false;
         }
 
         setMode("cases");
@@ -1180,7 +1223,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
 
         await loadSessions(true);
-        return;
+        return shouldRefreshCredits;
       }
 
       if (action === "refine_requirement") {
@@ -1194,7 +1237,7 @@ export function useChatSession(): UseChatSessionReturn {
             "The action completed without producing an updated refined requirement artifact or recognizable requirement output.",
             serverRequestId
           );
-          return;
+          return false;
         }
 
         setMode("coach");
@@ -1212,7 +1255,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
 
         await loadSessions(true);
-        return;
+        return shouldRefreshCredits;
       }
 
       if (action === "review_test_suite") {
@@ -1225,7 +1268,7 @@ export function useChatSession(): UseChatSessionReturn {
             "The action completed without producing a review result artifact or review payload.",
             serverRequestId
           );
-          return;
+          return false;
         }
 
         setMode("review");
@@ -1255,35 +1298,39 @@ export function useChatSession(): UseChatSessionReturn {
         }
 
         await loadSessions(true);
+        return shouldRefreshCredits;
       }
+
+      return false;
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
 
       setLastRequestId(requestId);
       appendWorkflowActionError("Workflow action failed", message, requestId);
+      return false;
     } finally {
       setIsRunningWorkflowAction(false);
     }
   };
 
   const generateTestsFromRequirement = async () => {
-    await runWorkflowAction("generate_tests_from_requirement");
+    return runWorkflowAction("generate_tests_from_requirement");
   };
 
   const generateNextBatchOfTests = async () => {
-    await runWorkflowAction("generate_next_batch_of_tests");
+    return runWorkflowAction("generate_next_batch_of_tests");
   };
 
   const refineRequirement = async () => {
-    await runWorkflowAction("refine_requirement");
+    return runWorkflowAction("refine_requirement");
   };
 
   const regenerateSuite = async () => {
-    await runWorkflowAction("regenerate_suite");
+    return runWorkflowAction("regenerate_suite");
   };
 
   const reviewTestSuite = async () => {
-    await runWorkflowAction("review_test_suite");
+    return runWorkflowAction("review_test_suite");
   };
 
   /*
@@ -1292,16 +1339,16 @@ export function useChatSession(): UseChatSessionReturn {
   ---------------------------------------------------------
   */
 
-  const send = async (opts?: { replay?: boolean }) => {
+  const send = async (opts?: { replay?: boolean }): Promise<boolean> => {
     const replay = opts?.replay ?? false;
 
     const text = replay ? lastPending?.text ?? "" : input.trim();
-    if (!text || isSending) return;
+    if (!text || isSending) return false;
 
     const requestId = replay
       ? lastPending?.requestId ?? ""
       : createRequestId();
-    if (!requestId) return;
+    if (!requestId) return false;
 
     const effectiveMode = replay ? lastPending?.mode ?? mode : mode;
 
@@ -1320,7 +1367,7 @@ export function useChatSession(): UseChatSessionReturn {
           requestId,
         },
       ]);
-      return;
+      return false;
     }
 
     const sessionIdForRequest = replay
@@ -1432,7 +1479,7 @@ export function useChatSession(): UseChatSessionReturn {
             requestId: serverRequestId,
           },
         ]);
-        return;
+        return false;
       }
 
       if (status === 429) {
@@ -1441,7 +1488,7 @@ export function useChatSession(): UseChatSessionReturn {
             data?.details ?? "Rate limit reached. Please try again shortly."
           } (requestId: ${serverRequestId})`
         );
-        return;
+        return false;
       }
 
       if (status === 401) {
@@ -1457,7 +1504,24 @@ export function useChatSession(): UseChatSessionReturn {
             requestId: serverRequestId,
           },
         ]);
-        return;
+        return false;
+      }
+
+      if (status === 402) {
+        setItems((prev) => [
+          ...prev,
+          {
+            kind: "error",
+            role: "bot",
+            title:
+              data?.error === "Account access required"
+                ? "Release Signal account access required"
+                : "Not enough Release Signal credits",
+            details: buildCreditAccessErrorMessage(data),
+            requestId: serverRequestId,
+          },
+        ]);
+        return false;
       }
 
       if (!(status >= 200 && status < 300) || data?.ok === false) {
@@ -1471,8 +1535,10 @@ export function useChatSession(): UseChatSessionReturn {
             requestId: serverRequestId,
           },
         ]);
-        return;
+        return false;
       }
+
+      const shouldRefreshCredits = shouldRefreshCreditsFromResponse(data);
 
       if (data?.sessionId && typeof data.sessionId === "string") {
         setActiveSessionId(data.sessionId);
@@ -1495,7 +1561,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
         void loadSessions(true);
         setLastPending(null);
-        return;
+        return shouldRefreshCredits;
       }
 
       if (data?.mode === "cases") {
@@ -1529,7 +1595,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
         void loadSessions(true);
         setLastPending(null);
-        return;
+        return shouldRefreshCredits;
       }
 
       if (data?.mode === "review" && data?.raw) {
@@ -1545,7 +1611,7 @@ export function useChatSession(): UseChatSessionReturn {
         ]);
         void loadSessions(true);
         setLastPending(null);
-        return;
+        return shouldRefreshCredits;
       }
 
       const finalText = getDisplayReplyText({
@@ -1570,6 +1636,7 @@ export function useChatSession(): UseChatSessionReturn {
 
       void loadSessions(true);
       setLastPending(null);
+      return shouldRefreshCredits;
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
 
@@ -1584,6 +1651,7 @@ export function useChatSession(): UseChatSessionReturn {
           requestId,
         },
       ]);
+      return false;
     } finally {
       setIsSending(false);
     }

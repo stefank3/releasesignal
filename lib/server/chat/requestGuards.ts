@@ -106,7 +106,6 @@ type BillingPrecheckResult =
       ok: true;
       orgId: string | undefined;
       orgState: Awaited<ReturnType<typeof ensureOrgForUser>>;
-      skipCreditCharge: boolean;
     };
 
 type RateLimitResult =
@@ -369,11 +368,47 @@ export async function ensureBillingPreconditions(args: {
       : undefined;
 
   if (isAdmin) {
+    if (orgState.wallet.balance <= 0) {
+      await args.recordChatMetric({
+        nowMs: Date.now(),
+        mode: args.clientMode,
+        status: 402,
+        latencyMs: Date.now() - args.startTime,
+      });
+
+      log("warn", {
+        event: "billing_failure",
+        requestId: args.requestId,
+        auth0Sub: args.auth0Sub,
+        orgId,
+        mode: args.clientMode,
+        errorType: "insufficient_credits",
+        errorMessage: "Admin wallet has insufficient credits for billable AI usage",
+        durationMs: Date.now() - args.startTime,
+        meta: {
+          reason: "insufficient_credits",
+          creditsRemaining: orgState.wallet.balance,
+          adminAccessBypass: true,
+        },
+      });
+
+      return {
+        ok: false,
+        response: buildAccountAccessRequiredResponse({
+          requestId: args.requestId,
+          clientMode: args.clientMode,
+          reason: "insufficient_credits",
+          creditsRemaining: Math.max(0, orgState.wallet.balance),
+          planStatus: null,
+          currentPeriodEnd: null,
+        }),
+      };
+    }
+
     return {
       ok: true,
       orgId,
       orgState,
-      skipCreditCharge: true,
     };
   }
 
@@ -387,7 +422,6 @@ export async function ensureBillingPreconditions(args: {
       ok: true,
       orgId,
       orgState,
-      skipCreditCharge: false,
     };
   }
 

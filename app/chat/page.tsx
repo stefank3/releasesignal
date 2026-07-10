@@ -49,6 +49,8 @@ export default function ChatPage() {
   // Page-only: optional rerender tick (used to refresh layout-dependent UI state)
   const [, setUiTick] = useState(0);
   const bumpUiTickAction = () => setUiTick((v) => v + 1);
+  const [creditRefreshKey, setCreditRefreshKey] = useState(0);
+  const refreshCreditsAction = () => setCreditRefreshKey((v) => v + 1);
 
   /*
   ---------------------------------------------------------
@@ -199,6 +201,7 @@ export default function ChatPage() {
         <ChatHeader
           sidebarCollapsed={chat.sidebarCollapsed}
           resolvedTheme={resolvedTheme}
+          creditRefreshKey={creditRefreshKey}
           onToggleSidebarAction={() => chat.setSidebarCollapsed((v) => !v)}
           mode={chat.mode}
           onModeChangeAction={handleModeChangeAction}
@@ -210,13 +213,19 @@ export default function ChatPage() {
           onAfterUiAction={() => {
             bumpUiTickAction();
           }}
+          onCreditsMayHaveChanged={() => {
+            refreshCreditsAction();
+          }}
         />
 
         <ChatPanel
           chat={chat}
           resolvedTheme={resolvedTheme}
-          onAfterSendAction={() => {
+          onAfterUiAction={() => {
             bumpUiTickAction();
+          }}
+          onCreditsMayHaveChanged={() => {
+            refreshCreditsAction();
           }}
         />
 

@@ -35,6 +35,7 @@ type Mode = "coach" | "cases" | "review";
 type Props = {
   sidebarCollapsed: boolean;
   onToggleSidebarAction: () => void;
+  creditRefreshKey?: number;
 
   // M8.1:
   // Current internal mode from session/page state.
@@ -75,6 +76,7 @@ const WORKFLOW_ORDER: Mode[] = ["coach", "cases", "review"];
 export default function ChatHeader({
   sidebarCollapsed,
   onToggleSidebarAction,
+  creditRefreshKey = 0,
   mode,
   onModeChangeAction,
   resolvedTheme = "dark",
@@ -143,7 +145,7 @@ export default function ChatHeader({
         </div>
 
         <div style={{ flex: "0 0 auto" }}>
-          <UserBar />
+          <UserBar creditRefreshKey={creditRefreshKey} />
         </div>
       </div>
 

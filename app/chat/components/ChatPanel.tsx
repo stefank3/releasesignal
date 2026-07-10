@@ -98,7 +98,8 @@ import { getLatestArtifactDocumentIndexesToHide } from "./workspace/artifactDocu
 
 type Props = {
   chat: UseChatSessionReturn;
-  onAfterSendAction?: () => void;
+  onAfterUiAction?: () => void;
+  onCreditsMayHaveChanged?: () => void;
   resolvedTheme?: "light" | "dark";
 };
 
@@ -568,7 +569,8 @@ function CompactRequirementBar(args: {
   inputRef: React.RefObject<HTMLInputElement | null>;
   isBusy: boolean;
   resolvedTheme: "light" | "dark";
-  onAfterSendAction?: () => void;
+  onAfterUiAction?: () => void;
+  onCreditsMayHaveChanged?: () => void;
 }) {
   const isDark = args.resolvedTheme === "dark";
   const [isExpandedEditorOpen, setIsExpandedEditorOpen] = React.useState(false);
@@ -588,6 +590,16 @@ function CompactRequirementBar(args: {
   const seededRequirementSeedKeyRef = React.useRef<string | null>(null);
   const [clearedRequirementSeedKey, setClearedRequirementSeedKey] =
     React.useState<string | null>(null);
+
+  const runBillableAction = (action: () => Promise<boolean>) => {
+    void (async () => {
+      const creditsMayHaveChanged = await action();
+      args.onAfterUiAction?.();
+      if (creditsMayHaveChanged) {
+        args.onCreditsMayHaveChanged?.();
+      }
+    })();
+  };
 
   React.useEffect(() => {
     setClearedRequirementSeedKey(null);
@@ -676,10 +688,7 @@ function CompactRequirementBar(args: {
             <button
               type="button"
               onClick={() => {
-                void (async () => {
-                  await args.chat.send({ replay: true });
-                  args.onAfterSendAction?.();
-                })();
+                runBillableAction(() => args.chat.send({ replay: true }));
               }}
               style={buttonStyle}
             >
@@ -689,7 +698,7 @@ function CompactRequirementBar(args: {
           <button
             type="button"
             onClick={() => {
-              void args.chat.refineRequirement();
+              runBillableAction(() => args.chat.refineRequirement());
             }}
             style={primaryButtonStyle}
             disabled={args.isBusy || !args.chat.canRefineRequirement}
@@ -699,7 +708,7 @@ function CompactRequirementBar(args: {
           <button
             type="button"
             onClick={() => {
-              void args.chat.generateTestsFromRequirement();
+              runBillableAction(() => args.chat.generateTestsFromRequirement());
             }}
             style={buttonStyle}
             disabled={args.isBusy || !args.chat.canGenerateTests}
@@ -710,7 +719,7 @@ function CompactRequirementBar(args: {
             type="button"
             onClick={() => {
               args.chat.startNewSessionInMode("coach");
-              args.onAfterSendAction?.();
+              args.onAfterUiAction?.();
             }}
             style={buttonStyle}
             disabled={args.isBusy}
@@ -725,7 +734,7 @@ function CompactRequirementBar(args: {
             setClearedRequirementSeedKey(seedKey);
             seededRequirementSeedKeyRef.current = seedKey;
             args.chat.setInput("");
-            args.onAfterSendAction?.();
+            args.onAfterUiAction?.();
           }}
           style={destructiveTextButtonStyle}
           disabled={args.isBusy}
@@ -826,10 +835,7 @@ function CompactRequirementBar(args: {
             <button
               type="button"
               onClick={() => {
-                void (async () => {
-                  await args.chat.send();
-                  args.onAfterSendAction?.();
-                })();
+                runBillableAction(() => args.chat.send());
               }}
               style={buttonStyle}
               disabled={args.isBusy || !args.chat.input.trim()}
@@ -873,7 +879,8 @@ function StrategyWorkspaceStart(args: {
   isBusy: boolean;
   hasWorkspaceArtifacts: boolean;
   resolvedTheme: "light" | "dark";
-  onAfterSendAction?: () => void;
+  onAfterUiAction?: () => void;
+  onCreditsMayHaveChanged?: () => void;
 }) {
   const isDark = args.resolvedTheme === "dark";
   const textColor = isDark ? "#ffffff" : "#0f172a";
@@ -900,7 +907,8 @@ function StrategyWorkspaceStart(args: {
         inputRef={args.inputRef}
         isBusy={args.isBusy}
         resolvedTheme={args.resolvedTheme}
-        onAfterSendAction={args.onAfterSendAction}
+        onAfterUiAction={args.onAfterUiAction}
+        onCreditsMayHaveChanged={args.onCreditsMayHaveChanged}
       />
     );
   }
@@ -982,8 +990,11 @@ function StrategyWorkspaceStart(args: {
             onChangeAction={(next: string) => args.chat.setInput(next)}
             onSendAction={() => {
               void (async () => {
-                await args.chat.send();
-                args.onAfterSendAction?.();
+                const creditsMayHaveChanged = await args.chat.send();
+                args.onAfterUiAction?.();
+                if (creditsMayHaveChanged) {
+                  args.onCreditsMayHaveChanged?.();
+                }
               })();
             }}
           />
@@ -1232,13 +1243,24 @@ function PopulatedStrategyRecentActivity(args: {
 
 export default function ChatPanel({
   chat,
-  onAfterSendAction,
+  onAfterUiAction,
+  onCreditsMayHaveChanged,
   resolvedTheme = "dark",
 }: Props) {
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const [isNarrow, setIsNarrow] = useState(false);
+
+  const runBillableAction = (action: () => Promise<boolean>) => {
+    void (async () => {
+      const creditsMayHaveChanged = await action();
+      onAfterUiAction?.();
+      if (creditsMayHaveChanged) {
+        onCreditsMayHaveChanged?.();
+      }
+    })();
+  };
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 980px)");
@@ -1391,7 +1413,8 @@ export default function ChatPanel({
             isBusy={isBusy}
             hasWorkspaceArtifacts={hasWorkspaceArtifacts}
             resolvedTheme={resolvedTheme}
-            onAfterSendAction={onAfterSendAction}
+            onAfterUiAction={onAfterUiAction}
+            onCreditsMayHaveChanged={onCreditsMayHaveChanged}
           />
         ) : null}
 
@@ -1416,6 +1439,7 @@ export default function ChatPanel({
               chat={chat}
               resolvedTheme={resolvedTheme}
               commandCenter={isPopulatedStrategy}
+              onCreditsMayHaveChanged={onCreditsMayHaveChanged}
             />
 
             {showReleaseReadiness ? (
@@ -1436,27 +1460,27 @@ export default function ChatPanel({
                 void chat.updateTestSuite(cases);
               }}
               onGenerateTestsAction={() => {
-                void chat.generateTestsFromRequirement();
+                runBillableAction(() => chat.generateTestsFromRequirement());
               }}
               canGenerateTests={chat.canGenerateTests}
               isGeneratingTests={chat.isRunningWorkflowAction}
               onRefineRequirementAction={() => {
-                void chat.refineRequirement();
+                runBillableAction(() => chat.refineRequirement());
               }}
               canRefineRequirement={chat.canRefineRequirement}
               isRefiningRequirement={chat.isRunningWorkflowAction}
               onGenerateNextBatchAction={() => {
-                void chat.generateNextBatchOfTests();
+                runBillableAction(() => chat.generateNextBatchOfTests());
               }}
               canGenerateNextBatch={canGenerateNextBatch}
               isGeneratingNextBatch={chat.isRunningWorkflowAction}
               onRegenerateSuiteAction={() => {
-                void chat.regenerateSuite();
+                runBillableAction(() => chat.regenerateSuite());
               }}
               canRegenerateSuite={chat.canRegenerateSuite}
               isRegeneratingSuite={chat.isRunningWorkflowAction}
               onReviewTestSuiteAction={() => {
-                void chat.reviewTestSuite();
+                runBillableAction(() => chat.reviewTestSuite());
               }}
               canReviewTestSuite={chat.canReviewTestSuite}
               isReviewingTestSuite={chat.isRunningWorkflowAction}
@@ -1549,10 +1573,7 @@ export default function ChatPanel({
                   resolvedTheme={resolvedTheme}
                   onChangeAction={(next: string) => chat.setInput(next)}
                   onSendAction={() => {
-                    void (async () => {
-                      await chat.send();
-                      onAfterSendAction?.();
-                    })();
+                    runBillableAction(() => chat.send());
                   }}
                 />
               </>
@@ -1570,27 +1591,27 @@ export default function ChatPanel({
                 void chat.updateTestSuite(cases);
               }}
               onGenerateTestsAction={() => {
-                void chat.generateTestsFromRequirement();
+                runBillableAction(() => chat.generateTestsFromRequirement());
               }}
               canGenerateTests={chat.canGenerateTests}
               isGeneratingTests={chat.isRunningWorkflowAction}
               onRefineRequirementAction={() => {
-                void chat.refineRequirement();
+                runBillableAction(() => chat.refineRequirement());
               }}
               canRefineRequirement={chat.canRefineRequirement}
               isRefiningRequirement={chat.isRunningWorkflowAction}
               onGenerateNextBatchAction={() => {
-                void chat.generateNextBatchOfTests();
+                runBillableAction(() => chat.generateNextBatchOfTests());
               }}
               canGenerateNextBatch={canGenerateNextBatch}
               isGeneratingNextBatch={chat.isRunningWorkflowAction}
               onRegenerateSuiteAction={() => {
-                void chat.regenerateSuite();
+                runBillableAction(() => chat.regenerateSuite());
               }}
               canRegenerateSuite={chat.canRegenerateSuite}
               isRegeneratingSuite={chat.isRunningWorkflowAction}
               onReviewTestSuiteAction={() => {
-                void chat.reviewTestSuite();
+                runBillableAction(() => chat.reviewTestSuite());
               }}
               canReviewTestSuite={chat.canReviewTestSuite}
               isReviewingTestSuite={chat.isRunningWorkflowAction}
