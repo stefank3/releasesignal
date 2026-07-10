@@ -592,6 +592,57 @@ human-reviewed cleanup plan.
 - Option D: If reviewed evidence points to a current write-path defect, create
   a fix PR before any cleanup PR.
 
+## Classifier Run Result
+
+The PR #64C.10 classifier was run manually against the configured database after
+merge. The recorded result is anonymized and intentionally excludes raw
+organization IDs, wallet IDs, emails, names, Auth0 subjects, and secrets.
+
+Summary:
+
+```text
+totalWallets = 13
+totalMismatches = 7
+walletsWithBalance1000 = 1
+mismatchesWithActiveNonAdminEvidence = 0
+mismatchesWithNoLedgerEntries = 2
+mismatchesWithLedgerEntriesWrongBalance = 5
+```
+
+Interpretation:
+
+- Active non-admin impact was not detected by the classifier.
+- Visible credit display risk for active non-admin users is currently not
+  proven by this run.
+- A current charging write-path defect is still not proven.
+- The result is consistent with the earlier suspicion that mismatches may be
+  historical, test, admin-adjacent, or manually provisioned data.
+- The mismatches remain suspicious because seven wallets still do not reconcile
+  to ledger sums.
+- No automatic repair, clamp, backfill, or wallet/ledger reconciliation should
+  be performed from this result alone.
+
+Risk assessment:
+
+The classifier result lowers the urgency of a runtime billing fix because it
+did not find active non-admin evidence among the mismatches. It does not prove
+that every mismatched row is safe to clean. Two mismatches have no ledger
+entries, and five have ledger entries but a wrong wallet balance; both groups
+still require row-level review before deciding whether wallet balance or ledger
+sum is authoritative.
+
+Recommended next step:
+
+1. Manually review the anonymized mismatch rows produced by the classifier.
+2. Verify Auth0 app-admin status and runtime organization selection for any
+   related subjects without committing raw identifiers.
+3. If rows are confirmed historical, test, admin-only, or manually provisioned,
+   plan a narrow cleanup PR with reviewed IDs and rollback-first SQL.
+4. If a pattern points to duplicate provisioning or a current deterministic
+   path gap, add provisioning hardening or invariant tests before cleanup.
+5. If reviewed evidence identifies a current billing write-path defect, create
+   a targeted fix PR before any cleanup PR.
+
 ## Expected Or Suspicious?
 
 The mismatch is suspicious for current code paths.
