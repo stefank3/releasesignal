@@ -28,6 +28,7 @@ type Props = {
   disabled?: boolean;
   hasReviewArtifactContext?: boolean;
   inputId?: string;
+  visualVariant?: "default" | "strategy-editor";
   resolvedTheme?: "light" | "dark";
 
   // Naming ends with "Action" to avoid Next/TS “serializable props” warnings in some setups.
@@ -75,6 +76,7 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
     disabled,
     hasReviewArtifactContext = false,
     inputId,
+    visualVariant = "default",
     resolvedTheme = "dark",
     onChangeAction,
     onSendAction,
@@ -86,10 +88,25 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
   const helperText = getHelperText(mode, hasReviewArtifactContext);
 
   const isDark = resolvedTheme === "dark";
+  const isStrategyEditor = visualVariant === "strategy-editor";
+  const [isFocused, setIsFocused] = React.useState(false);
 
   return (
-    <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
-      <div style={{ display: "flex", gap: 10 }}>
+    <div
+      style={{
+        display: "grid",
+        gap: 8,
+        marginTop: isStrategyEditor ? 0 : 14,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: isStrategyEditor ? "center" : undefined,
+          flexWrap: isStrategyEditor ? "wrap" : undefined,
+        }}
+      >
         <input
           id={inputId}
           ref={ref}
@@ -98,16 +115,41 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
           placeholder={placeholder}
           style={{
             flex: 1,
-            padding: "12px 14px",
-            borderRadius: 14,
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.12)"
-              : "1px solid rgba(15,23,42,0.14)",
-            background: isDark ? "rgba(255,255,255,0.92)" : "#ffffff",
-            color: "#111",
+            minWidth: isStrategyEditor ? 240 : undefined,
+            padding: isStrategyEditor ? "10px 12px" : "12px 14px",
+            borderRadius: isStrategyEditor ? 12 : 14,
+            border: isStrategyEditor
+              ? isDark
+                ? "1px solid #3A382F"
+                : "1px solid #D9D3C2"
+              : isDark
+                ? "1px solid rgba(255,255,255,0.12)"
+                : "1px solid rgba(15,23,42,0.14)",
+            background: isStrategyEditor
+              ? isDark
+                ? "#1B1A17"
+                : "#FFFFFF"
+              : isDark
+                ? "rgba(255,255,255,0.92)"
+                : "#ffffff",
+            color: isStrategyEditor
+              ? isDark
+                ? "#EDEAE3"
+                : "#262521"
+              : "#111",
             outline: "none",
-            boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.04)",
+            boxShadow:
+              isStrategyEditor && isFocused
+                ? isDark
+                  ? "0 0 0 2px rgba(217,119,87,0.28)"
+                  : "0 0 0 2px rgba(193,95,60,0.20)"
+                : isDark
+                  ? "none"
+                  : "0 4px 10px rgba(15,23,42,0.04)",
+            colorScheme: isStrategyEditor ? (isDark ? "dark" : "light") : undefined,
           }}
+          onFocus={isStrategyEditor ? () => setIsFocused(true) : undefined}
+          onBlur={isStrategyEditor ? () => setIsFocused(false) : undefined}
           onKeyDown={(e) => {
             if (e.key === "Enter") onSendAction();
           }}
@@ -117,14 +159,25 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
         <button
           onClick={onSendAction}
           style={{
-            padding: "12px 16px",
-            borderRadius: 14,
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.14)"
-              : "1px solid rgba(15,23,42,0.14)",
-            background: isDark ? "rgba(0,0,0,0.55)" : "#ffffff",
-            color: isDark ? "#fff" : "#0f172a",
-            fontWeight: 950,
+            padding: isStrategyEditor ? "8px 11px" : "12px 16px",
+            borderRadius: isStrategyEditor ? 12 : 14,
+            border: isStrategyEditor
+              ? isDark
+                ? "1px solid #D97757"
+                : "1px solid #C15F3C"
+              : isDark
+                ? "1px solid rgba(255,255,255,0.14)"
+                : "1px solid rgba(15,23,42,0.14)",
+            background: isStrategyEditor
+              ? isDark
+                ? "#D97757"
+                : "#C15F3C"
+              : isDark
+                ? "rgba(0,0,0,0.55)"
+                : "#ffffff",
+            color: isStrategyEditor ? "#FFFFFF" : isDark ? "#fff" : "#0f172a",
+            fontWeight: isStrategyEditor ? 900 : 950,
+            fontSize: isStrategyEditor ? 12 : undefined,
             opacity: disabled ? 0.7 : 1,
             cursor: disabled ? "not-allowed" : "pointer",
             whiteSpace: "nowrap",

@@ -272,6 +272,7 @@ const strategyWorkflowSteps = [
 
 function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
   const isDark = args.resolvedTheme === "dark";
+  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
 
   return (
     <div style={{ display: "grid", gap: 8 }}>
@@ -280,7 +281,7 @@ function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
           fontSize: 11,
           fontWeight: 950,
           textTransform: "uppercase",
-          color: isDark ? "rgba(255,255,255,0.58)" : "rgba(15,23,42,0.56)",
+          color: mutedText,
         }}
       >
         Workflow path
@@ -304,14 +305,10 @@ function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
                 alignItems: "center",
                 justifyContent: "center",
                 borderRadius: 999,
-                border: isDark
-                  ? "1px solid rgba(255,255,255,0.14)"
-                  : "1px solid rgba(15,23,42,0.12)",
-                background: isDark
-                  ? "rgba(255,255,255,0.04)"
-                  : "rgba(15,23,42,0.03)",
-                color: isDark ? "rgba(255,255,255,0.80)" : "rgba(15,23,42,0.76)",
-                padding: "6px 9px",
+                border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+                background: isDark ? "#302F2A" : "#FFFFFF",
+                color: mutedText,
+                padding: "4px 8px",
                 fontSize: 11,
                 fontWeight: 900,
                 lineHeight: 1.2,
@@ -323,9 +320,8 @@ function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
               <span
                 aria-hidden="true"
                 style={{
-                  color: isDark
-                    ? "rgba(255,255,255,0.34)"
-                    : "rgba(15,23,42,0.34)",
+                  color: mutedText,
+                  opacity: 0.55,
                   fontSize: 13,
                   fontWeight: 900,
                 }}
@@ -864,27 +860,26 @@ function StrategyWorkspaceStart(args: {
   onCreditsMayHaveChanged?: () => void;
 }) {
   const isDark = args.resolvedTheme === "dark";
-  const textColor = isDark ? "#ffffff" : "#0f172a";
-  const mutedText = isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.66)";
+  const textColor = isDark ? "#EDEAE3" : "#262521";
+  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
 
   const surfaceStyle: React.CSSProperties = {
-    marginBottom: 14,
+    marginBottom: 12,
     border: isDark
       ? "1px solid #3A382F"
       : "1px solid #D9D3C2",
-    borderRadius: 16,
-    padding: 22,
-    background: isDark ? "#262521" : "#FCFBF6",
+    borderRadius: 14,
+    padding: 14,
+    background: isDark ? "#262521" : "#F6F4ED",
     color: textColor,
-    boxShadow: isDark
-      ? "0 8px 30px rgba(0,0,0,0.14)"
-      : "0 8px 24px rgba(15,23,42,0.05)",
+    display: "grid",
+    gap: 12,
   };
 
   const inputShellStyle: React.CSSProperties = {
     border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 12,
+    padding: 12,
     background: isDark ? "#1B1A17" : "#FFFFFF",
     display: "grid",
     gap: 8,
@@ -892,19 +887,43 @@ function StrategyWorkspaceStart(args: {
 
   const secondaryShellStyle: React.CSSProperties = {
     display: "grid",
-    gap: 12,
+    gap: 10,
     borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-    paddingTop: 14,
+    paddingTop: 12,
   };
 
   const exampleChipStyle: React.CSSProperties = {
     border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
     borderRadius: 999,
-    padding: "5px 8px",
-    background: isDark ? "#302F2A" : "#F6F4ED",
+    padding: "4px 8px",
+    background: isDark ? "#302F2A" : "#FFFFFF",
     color: mutedText,
     fontSize: 11,
     fontWeight: 900,
+  };
+
+  const emptyActionButtonStyle: React.CSSProperties = {
+    borderRadius: 12,
+    border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+    background: isDark ? "#302F2A" : "#FFFFFF",
+    color: textColor,
+    padding: "8px 11px",
+    fontSize: 12,
+    fontWeight: 900,
+    cursor: args.isBusy ? "not-allowed" : "pointer",
+    opacity: args.isBusy ? 0.58 : 1,
+    boxShadow: isDark ? "none" : "0 3px 8px rgba(38,37,33,0.06)",
+  };
+
+  const emptyClearInputStyle: React.CSSProperties = {
+    border: "none",
+    background: "transparent",
+    color: isDark ? "#E8776A" : "#B0392E",
+    padding: "8px 4px",
+    fontSize: 12,
+    fontWeight: 900,
+    cursor: args.isBusy ? "not-allowed" : "pointer",
+    opacity: args.isBusy ? 0.58 : 1,
   };
 
   if (args.hasWorkspaceArtifacts) {
@@ -926,8 +945,46 @@ function StrategyWorkspaceStart(args: {
       data-tour-anchor="workflow-start"
       style={surfaceStyle}
     >
-      <div style={{ display: "grid", gap: 16 }}>
-        <div style={{ display: "grid", gap: 8, maxWidth: 860 }}>
+      <div
+        aria-label="Workspace action bar"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+          paddingBottom: 12,
+          borderBottom: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            args.chat.startNewSessionInMode("coach");
+            args.onAfterUiAction?.();
+          }}
+          style={emptyActionButtonStyle}
+          disabled={args.isBusy}
+        >
+          New workspace
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            args.chat.setInput("");
+            args.onAfterUiAction?.();
+          }}
+          style={emptyClearInputStyle}
+          disabled={args.isBusy}
+          title="Clear the requirement input"
+        >
+          Clear input
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 6, maxWidth: 860 }}>
           <div>
             <div
               style={{
@@ -945,8 +1002,8 @@ function StrategyWorkspaceStart(args: {
               style={{
                 margin: "4px 0 0",
                 color: textColor,
-                fontSize: 30,
-                lineHeight: 1.12,
+                fontSize: 20,
+                lineHeight: 1.2,
                 fontWeight: 950,
               }}
             >
@@ -958,8 +1015,8 @@ function StrategyWorkspaceStart(args: {
             style={{
               margin: 0,
               color: mutedText,
-              fontSize: 14,
-              lineHeight: 1.6,
+              fontSize: 12,
+              lineHeight: 1.5,
             }}
           >
             Paste a product requirement, user story, API specification, bug fix,
@@ -992,6 +1049,7 @@ function StrategyWorkspaceStart(args: {
           <ChatInput
             ref={args.inputRef}
             inputId="strategy-requirement-input"
+            visualVariant="strategy-editor"
             mode={args.chat.mode}
             value={args.chat.input}
             disabled={args.isBusy}

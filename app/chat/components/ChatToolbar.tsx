@@ -76,16 +76,9 @@ export default function ChatToolbar({
   const isBusy = chat.isSending || chat.isRunningWorkflowAction;
   const hasWorkspace = !!chat.activeSessionId;
   const showGenerateTestsAction = chat.hasPinnedRequirement && hasWorkspace;
-  const isPopulatedStrategy =
-    chat.mode === "coach" &&
-    (chat.hasPinnedRequirement ||
-      chat.hasPersistentTestSuite ||
-      chat.hasReviewArtifact ||
-      !!chat.sessionArtifact?.executionIntelligence);
-
   return (
     <>
-      {isPopulatedStrategy ? null : (
+      {chat.mode === "coach" ? null : (
         <Toolbar
           resolvedTheme={resolvedTheme}
           right={
