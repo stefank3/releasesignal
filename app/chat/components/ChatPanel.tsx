@@ -249,28 +249,23 @@ function EmptyWorkspaceHint(args: { resolvedTheme: "light" | "dark" }) {
 
 const strategyWorkflowSteps = [
   {
-    title: "Refine requirement",
-    body: "Clarify scope, rules, risks.",
+    title: "Strategy",
     tourAnchor: "workflow-preview-requirement",
   },
   {
-    title: "Generate test suite",
-    body: "Structured, reviewable cases.",
+    title: "Test Design",
     tourAnchor: "workflow-preview-test-design",
   },
   {
-    title: "Review coverage",
-    body: "Find gaps and weak checks.",
+    title: "Test Review",
     tourAnchor: "workflow-preview-review",
   },
   {
-    title: "Add execution results",
-    body: "Upload pass/fail evidence.",
+    title: "Execution",
     tourAnchor: "workflow-preview-results",
   },
   {
-    title: "Release readiness",
-    body: "Your decision-support signal.",
+    title: "Release Readiness",
     tourAnchor: "workflow-preview-readiness",
   },
 ];
@@ -279,80 +274,66 @@ function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
   const isDark = args.resolvedTheme === "dark";
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div style={{ display: "grid", gap: 8 }}>
       <div
         style={{
           fontSize: 11,
           fontWeight: 950,
-          letterSpacing: 0.8,
           textTransform: "uppercase",
           color: isDark ? "rgba(255,255,255,0.58)" : "rgba(15,23,42,0.56)",
         }}
       >
-        What happens next
+        Workflow path
       </div>
 
       <div
-        aria-label="What happens next"
+        aria-label="Workflow path"
         style={{
-          display: "grid",
-          gap: 10,
-          gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))",
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
         }}
       >
         {strategyWorkflowSteps.map((step, index) => (
-          <div
-            key={step.title}
-            data-tour-anchor={step.tourAnchor}
-            style={{
-              borderRadius: 12,
-              border: isDark
-                ? "1px dashed rgba(255,255,255,0.12)"
-                : "1px dashed rgba(15,23,42,0.14)",
-              background: isDark ? "rgba(255,255,255,0.025)" : "rgba(15,23,42,0.025)",
-              padding: 12,
-              display: "grid",
-              gap: 8,
-              minHeight: 118,
-            }}
-          >
-            <div
+          <React.Fragment key={step.title}>
+            <span
+              data-tour-anchor={step.tourAnchor}
               style={{
-                width: 24,
-                height: 24,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 borderRadius: 999,
-                display: "grid",
-                placeItems: "center",
                 border: isDark
-                  ? "1px solid rgba(255,255,255,0.12)"
+                  ? "1px solid rgba(255,255,255,0.14)"
                   : "1px solid rgba(15,23,42,0.12)",
-                color: isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.68)",
-                fontSize: 12,
+                background: isDark
+                  ? "rgba(255,255,255,0.04)"
+                  : "rgba(15,23,42,0.03)",
+                color: isDark ? "rgba(255,255,255,0.80)" : "rgba(15,23,42,0.76)",
+                padding: "6px 9px",
+                fontSize: 11,
                 fontWeight: 900,
-              }}
-            >
-              {index + 1}
-            </div>
-            <div
-              style={{
-                color: isDark ? "rgba(255,255,255,0.82)" : "rgba(15,23,42,0.82)",
-                fontSize: 13,
-                fontWeight: 900,
-                lineHeight: 1.25,
+                lineHeight: 1.2,
               }}
             >
               {step.title}
-            </div>
-            <div
-              style={{
-                color: isDark ? "rgba(255,255,255,0.58)" : "rgba(15,23,42,0.58)",
-                fontSize: 11,
-                lineHeight: 1.45,
-              }}
-            >
-              {step.body}
-            </div>
-          </div>
+            </span>
+            {index < strategyWorkflowSteps.length - 1 ? (
+              <span
+                aria-hidden="true"
+                style={{
+                  color: isDark
+                    ? "rgba(255,255,255,0.34)"
+                    : "rgba(15,23,42,0.34)",
+                  fontSize: 13,
+                  fontWeight: 900,
+                }}
+              >
+                →
+              </span>
+            ) : null}
+          </React.Fragment>
         ))}
       </div>
     </div>
@@ -889,15 +870,41 @@ function StrategyWorkspaceStart(args: {
   const surfaceStyle: React.CSSProperties = {
     marginBottom: 14,
     border: isDark
-      ? "1px solid rgba(255,255,255,0.12)"
-      : "1px solid rgba(15,23,42,0.10)",
-    borderRadius: 18,
-    padding: 20,
-    background: isDark ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.72)",
+      ? "1px solid #3A382F"
+      : "1px solid #D9D3C2",
+    borderRadius: 16,
+    padding: 22,
+    background: isDark ? "#262521" : "#FCFBF6",
     color: textColor,
     boxShadow: isDark
       ? "0 8px 30px rgba(0,0,0,0.14)"
       : "0 8px 24px rgba(15,23,42,0.05)",
+  };
+
+  const inputShellStyle: React.CSSProperties = {
+    border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+    borderRadius: 14,
+    padding: 14,
+    background: isDark ? "#1B1A17" : "#FFFFFF",
+    display: "grid",
+    gap: 8,
+  };
+
+  const secondaryShellStyle: React.CSSProperties = {
+    display: "grid",
+    gap: 12,
+    borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+    paddingTop: 14,
+  };
+
+  const exampleChipStyle: React.CSSProperties = {
+    border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+    borderRadius: 999,
+    padding: "5px 8px",
+    background: isDark ? "#302F2A" : "#F6F4ED",
+    color: mutedText,
+    fontSize: 11,
+    fontWeight: 900,
   };
 
   if (args.hasWorkspaceArtifacts) {
@@ -919,70 +926,72 @@ function StrategyWorkspaceStart(args: {
       data-tour-anchor="workflow-start"
       style={surfaceStyle}
     >
-      <div style={{ display: "grid", gap: 14 }}>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            <span
+      <div style={{ display: "grid", gap: 16 }}>
+        <div style={{ display: "grid", gap: 8, maxWidth: 860 }}>
+          <div>
+            <div
               style={{
-                borderRadius: 999,
-                border: isDark
-                  ? "1px solid rgba(255,255,255,0.16)"
-                  : "1px solid rgba(15,23,42,0.12)",
-                background: isDark
-                  ? "rgba(255,255,255,0.06)"
-                  : "rgba(15,23,42,0.04)",
-                color: textColor,
-                padding: "4px 8px",
                 fontSize: 11,
                 fontWeight: 950,
+                textTransform: "uppercase",
+                color: textColor,
+                opacity: 0.68,
               }}
             >
-              Start here
-            </span>
-            <span style={{ fontSize: 12, fontWeight: 850, color: mutedText }}>
-              Turn a requirement into a reviewed test suite and readiness signal
-            </span>
-          </div>
+              Strategy
+            </div>
 
-          <div>
             <h2
               style={{
-                margin: 0,
+                margin: "4px 0 0",
                 color: textColor,
-                fontSize: 28,
+                fontSize: 30,
                 lineHeight: 1.12,
                 fontWeight: 950,
               }}
             >
-              Describe what you&apos;re testing.
+              Start with the change you need to test.
             </h2>
-            <p
-              style={{
-                margin: "8px 0 0",
-                maxWidth: 840,
-                color: mutedText,
-                fontSize: 14,
-                lineHeight: 1.6,
-              }}
-            >
-              Turn a requirement into a reviewed test suite and a clear
-              release-readiness signal. Release Signal supports your release
-              decision; it does not approve releases. The QA/release owner has
-              the final call.
-            </p>
           </div>
+
+          <p
+            style={{
+              margin: 0,
+              color: mutedText,
+              fontSize: 14,
+              lineHeight: 1.6,
+            }}
+          >
+            Paste a product requirement, user story, API specification, bug fix,
+            or workflow change. Release Signal will help refine it into
+            structured QA coverage for your review.
+          </p>
         </div>
 
-        <div data-tour-anchor="start-here-input" style={{ display: "grid", gap: 8 }}>
+        <div
+          data-tour-anchor="start-here-input"
+          style={inputShellStyle}
+        >
+          <div style={{ display: "grid", gap: 3 }}>
+            <label
+              htmlFor="strategy-requirement-input"
+              style={{
+                color: textColor,
+                fontSize: 13,
+                fontWeight: 950,
+              }}
+            >
+              Requirement input
+            </label>
+            <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
+              AI-assisted refinement. Review the structured requirement before
+              generating tests.
+            </div>
+          </div>
+
           <ChatInput
             ref={args.inputRef}
+            inputId="strategy-requirement-input"
             mode={args.chat.mode}
             value={args.chat.input}
             disabled={args.isBusy}
@@ -999,20 +1008,28 @@ function StrategyWorkspaceStart(args: {
             }}
           />
 
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45 }}>
-              AI-assisted - you review generated requirements and tests before
-              using them.
-            </div>
+          <div
+            aria-label="Requirement examples"
+            style={{ display: "flex", gap: 7, flexWrap: "wrap" }}
+          >
+            {["User story", "API requirement", "Bug fix", "Workflow change"].map(
+              (label) => (
+                <span key={label} style={exampleChipStyle}>
+                  {label}
+                </span>
+              )
+            )}
           </div>
         </div>
 
-        <StrategyPanel
-          chat={args.chat}
-          resolvedTheme={args.resolvedTheme}
-        />
+        <div style={secondaryShellStyle}>
+          <StrategyPanel
+            chat={args.chat}
+            resolvedTheme={args.resolvedTheme}
+          />
 
-        <WorkflowPreview resolvedTheme={args.resolvedTheme} />
+          <WorkflowPreview resolvedTheme={args.resolvedTheme} />
+        </div>
       </div>
     </section>
   );

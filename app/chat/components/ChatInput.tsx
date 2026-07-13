@@ -27,6 +27,7 @@ type Props = {
   value: string;
   disabled?: boolean;
   hasReviewArtifactContext?: boolean;
+  inputId?: string;
   resolvedTheme?: "light" | "dark";
 
   // Naming ends with "Action" to avoid Next/TS “serializable props” warnings in some setups.
@@ -73,6 +74,7 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
     value,
     disabled,
     hasReviewArtifactContext = false,
+    inputId,
     resolvedTheme = "dark",
     onChangeAction,
     onSendAction,
@@ -89,6 +91,7 @@ const ChatInput = React.forwardRef<HTMLInputElement, Props>(function ChatInput(
     <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
       <div style={{ display: "flex", gap: 10 }}>
         <input
+          id={inputId}
           ref={ref}
           value={value}
           onChange={(e) => onChangeAction(e.target.value)}
