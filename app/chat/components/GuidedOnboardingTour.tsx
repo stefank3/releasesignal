@@ -17,7 +17,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     title: "Start with a requirement",
     body:
-      "Use Start Here to paste a requirement, Jira/API change, acceptance criteria, or rough scope. AI-assisted - review before you rely on it.",
+      "Paste a requirement, user story, API specification, bug fix, or workflow change into the Strategy input. AI-assisted - review before you rely on it.",
     missingBody:
       "Start with the main workspace input. Paste a Jira-style story, API change, acceptance criteria, or rough requirement.",
     anchorSelectors: [
