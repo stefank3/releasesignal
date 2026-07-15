@@ -93,6 +93,8 @@ type Props = {
   text: string;
   resolvedTheme?: "light" | "dark";
   defaultViewMode?: ViewMode;
+  visualVariant?: "default" | "strategy";
+  showWorkflowActions?: boolean;
   provenanceLabel?: string;
   provenanceDescription?: string;
   extraWorkflowActions?: ReactNode;
@@ -230,6 +232,8 @@ function CasesTextCardContent({
   hasStructuredCases,
   resolvedTheme = "dark",
   defaultViewMode = "expanded",
+  visualVariant = "default",
+  showWorkflowActions = true,
   provenanceLabel,
   provenanceDescription,
   extraWorkflowActions,
@@ -249,6 +253,8 @@ function CasesTextCardContent({
   hasStructuredCases: boolean;
   resolvedTheme?: "light" | "dark";
   defaultViewMode?: ViewMode;
+  visualVariant?: "default" | "strategy";
+  showWorkflowActions?: boolean;
   provenanceLabel?: string;
   provenanceDescription?: string;
   extraWorkflowActions?: ReactNode;
@@ -264,6 +270,7 @@ function CasesTextCardContent({
   isRegeneratingSuite?: boolean;
 }) {
   const isDark = resolvedTheme === "dark";
+  const useStrategyVisuals = visualVariant === "strategy";
 
   const [toast, setToast] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -467,16 +474,64 @@ function CasesTextCardContent({
 
   return (
     <div
+      data-cases-visual={
+        useStrategyVisuals ? `strategy-${resolvedTheme}` : undefined
+      }
       style={{
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.12)"
-          : "1px solid rgba(15,23,42,0.12)",
-        borderRadius: 18,
-        padding: 20,
-        background: isDark ? "rgba(255,255,255,0.05)" : "#ffffff",
-        color: isDark ? "#fff" : "#0f172a",
+        border: useStrategyVisuals
+          ? isDark
+            ? "1px solid #3A382F"
+            : "1px solid #D9D3C2"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.12)"
+            : "1px solid rgba(15,23,42,0.12)",
+        borderRadius: useStrategyVisuals ? 12 : 18,
+        padding: useStrategyVisuals ? 14 : 20,
+        background: useStrategyVisuals
+          ? isDark
+            ? "#262521"
+            : "#F6F4ED"
+          : isDark
+            ? "rgba(255,255,255,0.05)"
+            : "#ffffff",
+        color: useStrategyVisuals
+          ? isDark
+            ? "#EDEAE3"
+            : "#262521"
+          : isDark
+            ? "#fff"
+            : "#0f172a",
       }}
     >
+      {useStrategyVisuals ? (
+        <style>{`
+          [data-cases-visual="strategy-dark"] button,
+          [data-cases-visual="strategy-dark"] input,
+          [data-cases-visual="strategy-dark"] select,
+          [data-cases-visual="strategy-dark"] textarea {
+            border-color: #4A4739 !important;
+            background: #35332C !important;
+            color: #EDEAE3 !important;
+            border-radius: 8px !important;
+          }
+          [data-cases-visual="strategy-light"] button,
+          [data-cases-visual="strategy-light"] input,
+          [data-cases-visual="strategy-light"] select,
+          [data-cases-visual="strategy-light"] textarea {
+            border-color: #C4BCA7 !important;
+            background: #F1EDE2 !important;
+            color: #262521 !important;
+            border-radius: 8px !important;
+          }
+          [data-cases-visual^="strategy-"] button:disabled,
+          [data-cases-visual^="strategy-"] input:disabled,
+          [data-cases-visual^="strategy-"] select:disabled,
+          [data-cases-visual^="strategy-"] textarea:disabled {
+            cursor: not-allowed !important;
+            opacity: .55 !important;
+          }
+        `}</style>
+      ) : null}
       <div
         style={{
           display: "grid",
@@ -539,7 +594,7 @@ function CasesTextCardContent({
           </div>
         ) : null}
 
-        <div>
+        {showWorkflowActions ? <div>
           <SectionLabel
             title="Workflow actions"
             description="Run artifact-driven suite actions from the current persisted workspace."
@@ -585,7 +640,7 @@ function CasesTextCardContent({
 
             {extraWorkflowActions}
           </div>
-        </div>
+        </div> : null}
 
         <div>
           <SectionLabel
@@ -634,7 +689,9 @@ function CasesTextCardContent({
               style={{
                 display: "grid",
                 gap: 8,
-                gridTemplateColumns: "minmax(220px, 1fr) repeat(3, minmax(150px, auto))",
+                gridTemplateColumns: useStrategyVisuals
+                  ? "repeat(auto-fit, minmax(min(180px, 100%), 1fr))"
+                  : "minmax(220px, 1fr) repeat(3, minmax(150px, auto))",
                 alignItems: "center",
               }}
             >
@@ -770,14 +827,22 @@ function CasesTextCardContent({
             <div
               style={{
                 marginBottom: 12,
-                border: isDark
-                  ? "1px solid rgba(255,255,255,0.10)"
-                  : "1px solid rgba(15,23,42,0.10)",
-                borderRadius: 14,
+                border: useStrategyVisuals
+                  ? isDark
+                    ? "1px solid #38362D"
+                    : "1px solid #DFD9C8"
+                  : isDark
+                    ? "1px solid rgba(255,255,255,0.10)"
+                    : "1px solid rgba(15,23,42,0.10)",
+                borderRadius: useStrategyVisuals ? 10 : 14,
                 padding: 14,
-                background: isDark
-                  ? "rgba(255,255,255,0.03)"
-                  : "rgba(15,23,42,0.03)",
+                background: useStrategyVisuals
+                  ? isDark
+                    ? "#21201C"
+                    : "#EDEAE0"
+                  : isDark
+                    ? "rgba(255,255,255,0.03)"
+                    : "rgba(15,23,42,0.03)",
                 fontSize: 13,
                 color: isDark
                   ? "rgba(255,255,255,0.78)"
@@ -802,18 +867,26 @@ function CasesTextCardContent({
                     ? isDark
                       ? "1px solid rgba(255,200,0,0.28)"
                       : "1px solid rgba(202,138,4,0.28)"
-                    : isDark
-                      ? "1px solid rgba(255,255,255,0.10)"
-                      : "1px solid rgba(15,23,42,0.10)",
-                  borderRadius: 14,
+                    : useStrategyVisuals
+                      ? isDark
+                        ? "1px solid #38362D"
+                        : "1px solid #DFD9C8"
+                      : isDark
+                        ? "1px solid rgba(255,255,255,0.10)"
+                        : "1px solid rgba(15,23,42,0.10)",
+                  borderRadius: useStrategyVisuals ? 10 : 14,
                   padding: 12,
                   background: isInvalid
                     ? isDark
                       ? "rgba(255,200,0,0.06)"
                       : "rgba(234,179,8,0.08)"
-                    : isDark
-                      ? "rgba(0,0,0,0.16)"
-                      : "rgba(15,23,42,0.03)",
+                    : useStrategyVisuals
+                      ? isDark
+                        ? "#21201C"
+                        : "#EDEAE0"
+                      : isDark
+                        ? "rgba(0,0,0,0.16)"
+                        : "rgba(15,23,42,0.03)",
                 }}
               >
                 <div
@@ -888,13 +961,27 @@ function CasesTextCardContent({
                             fontWeight: 900,
                             padding: "2px 6px",
                             borderRadius: 999,
-                            border: isDark
-                              ? "1px solid rgba(120,180,255,0.24)"
-                              : "1px solid rgba(37,99,235,0.22)",
-                            background: isDark
-                              ? "rgba(120,180,255,0.10)"
-                              : "rgba(37,99,235,0.08)",
-                            color: isDark ? "#ffffff" : "#0f172a",
+                            border: useStrategyVisuals
+                              ? isDark
+                                ? "1px solid #57402F"
+                                : "1px solid #E4C4B0"
+                              : isDark
+                                ? "1px solid rgba(120,180,255,0.24)"
+                                : "1px solid rgba(37,99,235,0.22)",
+                            background: useStrategyVisuals
+                              ? isDark
+                                ? "#3A2A22"
+                                : "#F5E3D6"
+                              : isDark
+                                ? "rgba(120,180,255,0.10)"
+                                : "rgba(37,99,235,0.08)",
+                            color: useStrategyVisuals
+                              ? isDark
+                                ? "#D97757"
+                                : "#C15F3C"
+                              : isDark
+                                ? "#ffffff"
+                                : "#0f172a",
                           }}
                         >
                           EDITING
@@ -984,12 +1071,20 @@ function CasesTextCardContent({
                         style={{
                           borderRadius: 12,
                           padding: 10,
-                          background: isDark
-                            ? "rgba(255,255,255,0.03)"
-                            : "rgba(15,23,42,0.03)",
-                          border: isDark
-                            ? "1px solid rgba(255,255,255,0.08)"
-                            : "1px solid rgba(15,23,42,0.08)",
+                          background: useStrategyVisuals
+                            ? isDark
+                              ? "#2B2A26"
+                              : "#FCFBF6"
+                            : isDark
+                              ? "rgba(255,255,255,0.03)"
+                              : "rgba(15,23,42,0.03)",
+                          border: useStrategyVisuals
+                            ? isDark
+                              ? "1px solid #38362D"
+                              : "1px solid #DFD9C8"
+                            : isDark
+                              ? "1px solid rgba(255,255,255,0.08)"
+                              : "1px solid rgba(15,23,42,0.08)",
                         }}
                       >
                         <div
@@ -1131,6 +1226,8 @@ export default function CasesTextCard({
   text,
   resolvedTheme = "dark",
   defaultViewMode = "expanded",
+  visualVariant = "default",
+  showWorkflowActions = true,
   provenanceLabel,
   provenanceDescription,
   extraWorkflowActions,
@@ -1160,6 +1257,8 @@ export default function CasesTextCard({
       hasStructuredCases={hasStructuredCases}
       resolvedTheme={resolvedTheme}
       defaultViewMode={defaultViewMode}
+      visualVariant={visualVariant}
+      showWorkflowActions={showWorkflowActions}
       provenanceLabel={provenanceLabel}
       provenanceDescription={provenanceDescription}
       extraWorkflowActions={extraWorkflowActions}

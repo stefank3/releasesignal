@@ -26,6 +26,7 @@ type Props = {
   sessionId?: string | null;
   resolvedTheme?: "light" | "dark";
   commandCenter?: boolean;
+  testDesignVisual?: boolean;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
   onGenerateTestsAction?: () => void;
   canGenerateTests?: boolean;
@@ -163,6 +164,8 @@ function ArtifactSummaryShell({
   children,
   resolvedTheme,
   commandCenter = false,
+  testDesignVisual = false,
+  initiallyOpen = false,
 }: {
   kind: "requirement" | "suite" | "review" | "execution";
   title: string;
@@ -172,9 +175,11 @@ function ArtifactSummaryShell({
   children: React.ReactNode;
   resolvedTheme: "light" | "dark";
   commandCenter?: boolean;
+  testDesignVisual?: boolean;
+  initiallyOpen?: boolean;
 }) {
   const isDark = resolvedTheme === "dark";
-  const [isOpen, setIsOpen] = React.useState(false);
+  const [isOpen, setIsOpen] = React.useState(initiallyOpen);
   const accentColor = isDark ? "#D97757" : "#C15F3C";
 
   return (
@@ -186,8 +191,12 @@ function ArtifactSummaryShell({
         border: isDark
           ? "1px solid #3A382F"
           : "1px solid #D9D3C2",
-        borderRadius: commandCenter ? 12 : 16,
-        background: commandCenter
+        borderRadius: commandCenter || testDesignVisual ? 12 : 16,
+        background: testDesignVisual
+          ? isDark
+            ? "#2B2A26"
+            : "#FCFBF6"
+          : commandCenter
           ? isDark
             ? "#302F2A"
             : "#FFFFFF"
@@ -201,7 +210,7 @@ function ArtifactSummaryShell({
       <summary
         style={{
           cursor: "pointer",
-          padding: commandCenter ? 12 : 14,
+          padding: commandCenter || testDesignVisual ? 12 : 14,
           display: "grid",
           gap: 8,
           minHeight: commandCenter ? 96 : undefined,
@@ -229,12 +238,25 @@ function ArtifactSummaryShell({
             {statusLabel ? (
               <span
                 style={{
-                  border: isDark
-                    ? "1px solid rgba(96,165,250,0.22)"
-                    : "1px solid rgba(37,99,235,0.18)",
-                  background: isDark
-                    ? "rgba(96,165,250,0.08)"
-                    : "rgba(37,99,235,0.06)",
+                  border: testDesignVisual
+                    ? isDark
+                      ? "1px solid #3B5745"
+                      : "1px solid #BFD5BD"
+                    : isDark
+                      ? "1px solid rgba(96,165,250,0.22)"
+                      : "1px solid rgba(37,99,235,0.18)",
+                  background: testDesignVisual
+                    ? isDark
+                      ? "#26332B"
+                      : "#E2ECE0"
+                    : isDark
+                      ? "rgba(96,165,250,0.08)"
+                      : "rgba(37,99,235,0.06)",
+                  color: testDesignVisual
+                    ? isDark
+                      ? "#7CC08A"
+                      : "#2F7A44"
+                    : undefined,
                   borderRadius: 999,
                   padding: "4px 8px",
                   fontSize: 10,
@@ -247,12 +269,20 @@ function ArtifactSummaryShell({
           </span>
           <span
             style={{
-              border: isDark
-                ? "1px solid rgba(255,255,255,0.14)"
-                : "1px solid rgba(15,23,42,0.12)",
+              border: testDesignVisual
+                ? isDark
+                  ? "1px solid #4A4739"
+                  : "1px solid #C4BCA7"
+                : isDark
+                  ? "1px solid rgba(255,255,255,0.14)"
+                  : "1px solid rgba(15,23,42,0.12)",
               borderRadius: 999,
               padding: "5px 9px",
-              background: commandCenter
+              background: testDesignVisual
+                ? isDark
+                  ? "#35332C"
+                  : "#F1EDE2"
+                : commandCenter
                 ? isDark
                   ? "rgba(217,119,87,0.12)"
                   : "rgba(193,95,60,0.08)"
@@ -269,10 +299,11 @@ function ArtifactSummaryShell({
             fontSize: 12,
             lineHeight: 1.45,
             opacity: 0.72,
-            display: commandCenter ? "-webkit-box" : undefined,
-            WebkitLineClamp: commandCenter ? 2 : undefined,
-            WebkitBoxOrient: commandCenter ? "vertical" : undefined,
-            overflow: commandCenter ? "hidden" : undefined,
+            display: commandCenter || testDesignVisual ? "-webkit-box" : undefined,
+            WebkitLineClamp: commandCenter || testDesignVisual ? 2 : undefined,
+            WebkitBoxOrient:
+              commandCenter || testDesignVisual ? "vertical" : undefined,
+            overflow: commandCenter || testDesignVisual ? "hidden" : undefined,
           }}
         >
           {preview || "Saved artifact content is available in the full view."}
@@ -297,12 +328,14 @@ function ExecutionResultsDetail({
   sessionId,
   hasSuite,
   resolvedTheme,
+  uploadButtonLabel,
   onExecutionUploadSuccess,
 }: {
   execution: ExecutionIntelligenceArtifact | null | undefined;
   sessionId?: string | null;
   hasSuite: boolean;
   resolvedTheme: "light" | "dark";
+  uploadButtonLabel?: string;
   onExecutionUploadSuccess?: (args: {
     executionIntelligence: ExecutionIntelligenceArtifact;
     artifact?: SessionArtifact | null;
@@ -315,7 +348,10 @@ function ExecutionResultsDetail({
       sessionId={sessionId ?? null}
       disabled={!hasSuite}
       resolvedTheme={resolvedTheme}
-      buttonLabel={execution ? "Upload new results" : "Upload Execution Results"}
+      buttonLabel={
+        uploadButtonLabel ??
+        (execution ? "Upload new results" : "Upload Execution Results")
+      }
       onUploadSuccess={onExecutionUploadSuccess}
     />
   ) : null;
@@ -503,6 +539,7 @@ export function ArtifactDocumentSurface({
   sessionId = null,
   resolvedTheme = "dark",
   commandCenter = false,
+  testDesignVisual = false,
   onUpdateTestSuiteAction,
   onGenerateTestsAction,
   canGenerateTests = false,
@@ -539,7 +576,9 @@ export function ArtifactDocumentSurface({
         marginBottom: 12,
       }}
     >
-      {commandCenter ? null : <SurfaceLabel resolvedTheme={resolvedTheme} />}
+      {commandCenter || testDesignVisual ? null : (
+        <SurfaceLabel resolvedTheme={resolvedTheme} />
+      )}
 
       <div style={{ display: "grid", gap: 14 }}>
         {documents.map((document) => {
@@ -564,6 +603,7 @@ export function ArtifactDocumentSurface({
                 preview={getDocumentPreview(document.item.text)}
                 resolvedTheme={resolvedTheme}
                 commandCenter={commandCenter}
+                testDesignVisual={testDesignVisual}
               >
                 <RequirementCard
                   text={document.item.text}
@@ -590,10 +630,12 @@ export function ArtifactDocumentSurface({
                 title={
                   commandCenter
                     ? "Generated Test Cases"
+                    : testDesignVisual
+                      ? `Test Suite v${sessionArtifact?.testSuite?.version ?? "—"} — generated test cases${suiteCount ? ` (${suiteCount})` : ""}`
                     : getDocumentTitle(document.kind, suiteCount)
                 }
                 statusLabel={
-                  commandCenter
+                  commandCenter || testDesignVisual
                     ? `Suite v${sessionArtifact?.testSuite?.version ?? "n"}`
                     : undefined
                 }
@@ -601,11 +643,15 @@ export function ArtifactDocumentSurface({
                 preview={getDocumentPreview(document.item.text)}
                 resolvedTheme={resolvedTheme}
                 commandCenter={commandCenter}
+                testDesignVisual={testDesignVisual}
+                initiallyOpen={testDesignVisual}
               >
                 <CasesTextCard
                   text={document.item.text}
                   resolvedTheme={resolvedTheme}
                   defaultViewMode={commandCenter ? "overview" : undefined}
+                  visualVariant={testDesignVisual ? "strategy" : "default"}
+                  showWorkflowActions={!testDesignVisual}
                   provenanceLabel={buildSuiteProvenanceLabel(sessionArtifact)}
                   provenanceDescription="Generated test suite artifact used for review and execution evidence."
                   extraWorkflowActions={
@@ -658,6 +704,7 @@ export function ArtifactDocumentSurface({
               )}
               resolvedTheme={resolvedTheme}
               commandCenter={commandCenter}
+              testDesignVisual={testDesignVisual}
             >
               <div data-tour-anchor="review-actions">
                 <ReviewCard
@@ -689,6 +736,7 @@ export function ArtifactDocumentSurface({
             )}
             resolvedTheme={resolvedTheme}
             commandCenter={commandCenter}
+            testDesignVisual={testDesignVisual}
           >
             <div data-tour-anchor="review-actions">
               <ReviewCard
@@ -707,22 +755,24 @@ export function ArtifactDocumentSurface({
           </ArtifactSummaryShell>
         ) : null}
 
-        {commandCenter ? (
+        {commandCenter || testDesignVisual ? (
           <ArtifactSummaryShell
             key="artifact-document-execution-results"
             kind="execution"
-            title="Execution Results"
+            title={testDesignVisual ? "Execution Evidence" : "Execution Results"}
             statusLabel={getExecutionStatusLabel(execution)}
-            actionLabel="Open execution results"
+            actionLabel={execution ? "Open execution results" : "Upload Test Results"}
             preview={getExecutionPreview(execution)}
             resolvedTheme={resolvedTheme}
             commandCenter={commandCenter}
+            testDesignVisual={testDesignVisual}
           >
             <ExecutionResultsDetail
               execution={execution}
               sessionId={sessionId}
               hasSuite={hasSuite}
               resolvedTheme={resolvedTheme}
+              uploadButtonLabel={testDesignVisual ? "Upload Test Results" : undefined}
               onExecutionUploadSuccess={onExecutionUploadSuccess}
             />
           </ArtifactSummaryShell>

@@ -9,6 +9,7 @@ import type { Mode } from "../chat.types";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 
 import { HeaderButton, Toolbar } from "./ChatUI";
+import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
 
@@ -76,9 +77,221 @@ export default function ChatToolbar({
   const isBusy = chat.isSending || chat.isRunningWorkflowAction;
   const hasWorkspace = !!chat.activeSessionId;
   const showGenerateTestsAction = chat.hasPinnedRequirement && hasWorkspace;
+  const testDesignButtonStyle: React.CSSProperties = {
+    borderRadius: 8,
+    border: isDark ? "1px solid #4A4739" : "1px solid #C4BCA7",
+    background: isDark ? "#35332C" : "#F1EDE2",
+    color: isDark ? "#EDEAE3" : "#262521",
+    padding: "7px 13px",
+    fontSize: 12.5,
+    fontWeight: 700,
+    lineHeight: 1.2,
+    cursor: isBusy ? "not-allowed" : "pointer",
+    opacity: isBusy ? 0.55 : 1,
+    whiteSpace: "nowrap",
+  };
+  const testDesignPrimaryButtonStyle: React.CSSProperties = {
+    ...testDesignButtonStyle,
+    border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
+    background: isDark ? "#D97757" : "#C15F3C",
+    color: "#FFFFFF",
+  };
+  const testDesignClearStyle: React.CSSProperties = {
+    border: "none",
+    background: "transparent",
+    color: isDark ? "#E8776A" : "#B0392E",
+    padding: "7px 10px",
+    fontSize: 12.5,
+    fontWeight: 700,
+    cursor: isBusy ? "not-allowed" : "pointer",
+    opacity: isBusy ? 0.55 : 1,
+    whiteSpace: "nowrap",
+  };
+
+  const runBillableAction = (action: () => Promise<boolean>) => {
+    void (async () => {
+      const creditsMayHaveChanged = await action();
+      onAfterUiAction?.();
+      if (creditsMayHaveChanged) {
+        onCreditsMayHaveChanged?.();
+      }
+    })();
+  };
+
   return (
     <>
-      {chat.mode === "coach" ? null : (
+      {chat.mode === "cases" ? (
+        <section
+          aria-label="Test Design workspace actions"
+          style={{
+            marginTop: 10,
+            marginBottom: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            padding: "9px 12px",
+            borderRadius: 12,
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            background: isDark ? "#2B2A26" : "#FCFBF6",
+            color: isDark ? "#EDEAE3" : "#262521",
+          }}
+        >
+          <span
+            style={{
+              marginRight: 4,
+              color: isDark ? "#7D796C" : "#8B8577",
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+            }}
+          >
+            Test Design
+          </span>
+
+          {chat.lastPending && !isBusy ? (
+            <button
+              type="button"
+              onClick={() => runBillableAction(() => chat.send({ replay: true }))}
+              style={testDesignButtonStyle}
+            >
+              Retry
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => runBillableAction(() => chat.generateTestsFromRequirement())}
+            style={
+              {
+                ...(chat.hasPersistentTestSuite
+                  ? testDesignButtonStyle
+                  : testDesignPrimaryButtonStyle),
+                opacity: chat.canGenerateTests ? 1 : 0.55,
+                cursor: chat.canGenerateTests ? "pointer" : "not-allowed",
+              }
+            }
+            disabled={!chat.canGenerateTests}
+            title={
+              !chat.hasPinnedRequirement
+                ? "Generate Tests needs a saved requirement"
+                : undefined
+            }
+          >
+            {chat.isRunningWorkflowAction ? "Generating..." : "Generate Tests"}
+          </button>
+
+          {!chat.hasPinnedRequirement ? (
+            <span
+              style={{
+                color: isDark ? "#7D796C" : "#8B8577",
+                fontSize: 11,
+                lineHeight: 1.35,
+              }}
+            >
+              Needs a saved requirement
+            </span>
+          ) : null}
+
+          {chat.hasPersistentTestSuite ? (
+            <>
+              <button
+                type="button"
+                onClick={() => runBillableAction(() => chat.regenerateSuite())}
+                style={{
+                  ...testDesignPrimaryButtonStyle,
+                  opacity: chat.canRegenerateSuite ? 1 : 0.55,
+                  cursor: chat.canRegenerateSuite ? "pointer" : "not-allowed",
+                }}
+                disabled={!chat.canRegenerateSuite}
+              >
+                {chat.isRunningWorkflowAction ? "Improving..." : "Improve Test Plan"}
+              </button>
+              <button
+                type="button"
+                onClick={() => runBillableAction(() => chat.generateNextBatchOfTests())}
+                style={{
+                  ...testDesignButtonStyle,
+                  opacity: chat.canGenerateNextBatch ? 1 : 0.55,
+                  cursor: chat.canGenerateNextBatch ? "pointer" : "not-allowed",
+                }}
+                disabled={!chat.canGenerateNextBatch}
+              >
+                {chat.isRunningWorkflowAction
+                  ? "Generating..."
+                  : "Generate Next Batch"}
+              </button>
+              <button
+                type="button"
+                onClick={() => runBillableAction(() => chat.reviewTestSuite())}
+                style={{
+                  ...testDesignButtonStyle,
+                  opacity: chat.canReviewTestSuite ? 1 : 0.55,
+                  cursor: chat.canReviewTestSuite ? "pointer" : "not-allowed",
+                }}
+                disabled={!chat.canReviewTestSuite}
+              >
+                {chat.isRunningWorkflowAction
+                  ? "Reviewing..."
+                  : "Review Test Suite"}
+              </button>
+
+              <TestSuiteExportMenu
+                sessionId={chat.activeSessionId}
+                disabled={!chat.hasPersistentTestSuite || isBusy}
+                resolvedTheme={resolvedTheme}
+                visualVariant="strategy"
+              />
+            </>
+          ) : null}
+
+          {chat.activeSessionId && chat.messagesCursor ? (
+            <button
+              type="button"
+              onClick={() => {
+                void chat.loadSessionMessages(
+                  chat.activeSessionId!,
+                  false,
+                  chat.activeSessionMode
+                );
+              }}
+              style={testDesignButtonStyle}
+              disabled={chat.messagesLoading || chat.isRunningWorkflowAction}
+            >
+              {chat.messagesLoading ? "Loading..." : "Load older"}
+            </button>
+          ) : null}
+
+          <span style={{ flex: "1 1 20px" }} />
+
+          <button
+            type="button"
+            onClick={() => {
+              chat.startNewSessionInMode("coach");
+              onAfterUiAction?.();
+            }}
+            style={testDesignButtonStyle}
+            disabled={isBusy}
+          >
+            New workspace
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              chat.startNewSessionInMode(chat.mode);
+              localStorage.removeItem(STORAGE_KEY);
+              onAfterUiAction?.();
+            }}
+            style={testDesignClearStyle}
+            disabled={isBusy}
+          >
+            Clear
+          </button>
+        </section>
+      ) : null}
+
+      {chat.mode === "review" ? (
         <Toolbar
           resolvedTheme={resolvedTheme}
           right={
@@ -220,7 +433,7 @@ export default function ChatToolbar({
         >
           {null}
         </Toolbar>
-      )}
+      ) : null}
 
       {chat.modeLockMsg
         ? (() => {

@@ -105,6 +105,7 @@ type Props = {
 
 function OnboardingHint(args: {
   showStrategyHint: boolean;
+  testDesignVisual?: boolean;
   hasWorkspaceArtifacts: boolean;
   nextAction: string;
   resolvedTheme: "light" | "dark";
@@ -115,13 +116,29 @@ function OnboardingHint(args: {
     <div
       style={{
         marginBottom: 12,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.10)"
-          : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: 14,
-        padding: 12,
-        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
-        color: isDark ? "#ffffff" : "#0f172a",
+        border: args.testDesignVisual
+          ? isDark
+            ? "1px solid #3A382F"
+            : "1px solid #D9D3C2"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: args.testDesignVisual ? 12 : 14,
+        padding: args.testDesignVisual ? "14px 16px" : 12,
+        background: args.testDesignVisual
+          ? isDark
+            ? "#2B2A26"
+            : "#FCFBF6"
+          : isDark
+            ? "rgba(255,255,255,0.04)"
+            : "rgba(15,23,42,0.03)",
+        color: args.testDesignVisual
+          ? isDark
+            ? "#EDEAE3"
+            : "#262521"
+          : isDark
+            ? "#ffffff"
+            : "#0f172a",
         display: "grid",
         gap: 10,
       }}
@@ -143,12 +160,20 @@ function OnboardingHint(args: {
           gap: 4,
           padding: "8px 10px",
           borderRadius: 10,
-          border: isDark
-            ? "1px solid rgba(255,255,255,0.08)"
-            : "1px solid rgba(15,23,42,0.08)",
+          border: args.testDesignVisual
+            ? isDark
+              ? "1px solid #38362D"
+              : "1px solid #DFD9C8"
+            : isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
           background: isDark
-            ? "rgba(255,255,255,0.03)"
-            : "rgba(255,255,255,0.72)",
+            ? args.testDesignVisual
+              ? "#21201C"
+              : "rgba(255,255,255,0.03)"
+            : args.testDesignVisual
+              ? "#EDEAE0"
+              : "rgba(255,255,255,0.72)",
         }}
       >
         <div style={{ fontSize: 10, fontWeight: 900, opacity: 0.82 }}>
@@ -164,18 +189,31 @@ function OnboardingHint(args: {
 
         <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.45 }}>
           Next suggested move:{" "}
-          <strong style={{ fontWeight: 900 }}>{args.nextAction}</strong>
+          <strong
+            style={{
+              fontWeight: 900,
+              color: args.testDesignVisual
+                ? isDark
+                  ? "#D97757"
+                  : "#C15F3C"
+                : undefined,
+            }}
+          >
+            {args.nextAction}
+          </strong>
         </div>
       </div>
 
-      <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
-        Example:
-        <br />
-        <span style={{ opacity: 0.88 }}>
-          Paste a Jira ticket for login with MFA, clarify scope and risks, then
-          generate a structured test suite.
-        </span>
-      </div>
+      {args.testDesignVisual ? null : (
+        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
+          Example:
+          <br />
+          <span style={{ opacity: 0.88 }}>
+            Paste a Jira ticket for login with MFA, clarify scope and risks, then
+            generate a structured test suite.
+          </span>
+        </div>
+      )}
 
       {/* M12.11 NOTE:
           Clarifies what users should expect from an empty workspace.
@@ -193,6 +231,7 @@ function WorkspaceSectionLabel(args: {
   title: string;
   description: string;
   resolvedTheme: "light" | "dark";
+  testDesignVisual?: boolean;
 }) {
   const isDark = args.resolvedTheme === "dark";
 
@@ -203,7 +242,13 @@ function WorkspaceSectionLabel(args: {
         gap: 3,
         marginBottom: 8,
         paddingLeft: 2,
-        color: isDark ? "#ffffff" : "#0f172a",
+        color: args.testDesignVisual
+          ? isDark
+            ? "#EDEAE3"
+            : "#262521"
+          : isDark
+            ? "#ffffff"
+            : "#0f172a",
       }}
     >
       <div
@@ -1199,9 +1244,14 @@ function PopulatedStrategyRecentActivity(args: {
   chat: UseChatSessionReturn;
   processingBanner?: React.ReactNode;
   resolvedTheme: "light" | "dark";
+  hiddenItemIndexes?: number[];
 }) {
   const isDark = args.resolvedTheme === "dark";
-  const recentItems = args.chat.items.slice(-5).reverse();
+  const hiddenItemIndexes = new Set(args.hiddenItemIndexes ?? []);
+  const recentItems = args.chat.items
+    .filter((_, index) => !hiddenItemIndexes.has(index))
+    .slice(-5)
+    .reverse();
 
   return (
     <section
@@ -1391,35 +1441,6 @@ export default function ChatPanel({
     lineHeight: 1.35,
   };
 
-  const helperBannerStyle: React.CSSProperties = {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 10,
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: isDark
-      ? "1px solid rgba(255,255,255,0.10)"
-      : "1px solid rgba(15,23,42,0.10)",
-    background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
-  };
-
-  const helperButtonStyle: React.CSSProperties = {
-    padding: "8px 12px",
-    borderRadius: 12,
-    border: isDark
-      ? "1px solid rgba(255,255,255,0.16)"
-      : "1px solid rgba(15,23,42,0.16)",
-    background: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.06)",
-    color: isDark ? "#ffffff" : "#0f172a",
-    fontSize: 12,
-    fontWeight: 900,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  };
-
   // M12.10 CHANGE:
   // - separate the summary area from the workflow guidance area
   // - keep both artifact-driven, but give each a distinct visual role
@@ -1430,11 +1451,6 @@ export default function ChatPanel({
   };
 
   const showOnboardingHint = chat.items.length === 0 && !isBusy && !isCoachSession;
-
-  const canUseRefinedRequirement =
-    isTestDesignSession &&
-    chat.hasPinnedRequirement &&
-    !!buildRefinedRequirementInput(chat.sessionArtifact);
 
   const canGenerateNextBatch =
     chat.hasPinnedRequirement && chat.hasPersistentTestSuite;
@@ -1461,6 +1477,71 @@ export default function ChatPanel({
         : getProcessingLabel(chat.mode)}
     </div>
   ) : null;
+  const modeInput = isCoachSession ? null : (
+    <ChatInput
+      ref={inputRef}
+      mode={chat.mode}
+      value={chat.input}
+      disabled={isBusy}
+      hasReviewArtifactContext={
+        chat.mode === "review" &&
+        (chat.hasPersistentTestSuite || chat.hasReviewArtifact)
+      }
+      resolvedTheme={resolvedTheme}
+      onChangeAction={(next: string) => chat.setInput(next)}
+      onSendAction={() => {
+        runBillableAction(() => chat.send());
+      }}
+    />
+  );
+  const activityTimeline = showActivityTimeline && !isTestDesignSession ? (
+    <div>
+      <ActivityTimelinePanel
+        ref={chatBoxRef}
+        resolvedTheme={resolvedTheme}
+        isNarrow={isNarrow}
+        inputSlot={isTestDesignSession ? null : modeInput}
+      >
+        {processingBanner}
+
+        <ChatMessageList
+          items={chat.items}
+          mode={chat.mode}
+          sessionArtifact={chat.sessionArtifact}
+          resolvedTheme={resolvedTheme}
+          hiddenItemIndexes={hiddenTimelineDocumentIndexes}
+          onUpdateTestSuiteAction={(cases) => {
+            void chat.updateTestSuite(cases);
+          }}
+          onGenerateTestsAction={() => {
+            runBillableAction(() => chat.generateTestsFromRequirement());
+          }}
+          canGenerateTests={chat.canGenerateTests}
+          isGeneratingTests={chat.isRunningWorkflowAction}
+          onRefineRequirementAction={() => {
+            runBillableAction(() => chat.refineRequirement());
+          }}
+          canRefineRequirement={chat.canRefineRequirement}
+          isRefiningRequirement={chat.isRunningWorkflowAction}
+          onGenerateNextBatchAction={() => {
+            runBillableAction(() => chat.generateNextBatchOfTests());
+          }}
+          canGenerateNextBatch={canGenerateNextBatch}
+          isGeneratingNextBatch={chat.isRunningWorkflowAction}
+          onRegenerateSuiteAction={() => {
+            runBillableAction(() => chat.regenerateSuite());
+          }}
+          canRegenerateSuite={chat.canRegenerateSuite}
+          isRegeneratingSuite={chat.isRunningWorkflowAction}
+          onReviewTestSuiteAction={() => {
+            runBillableAction(() => chat.reviewTestSuite());
+          }}
+          canReviewTestSuite={chat.canReviewTestSuite}
+          isReviewingTestSuite={chat.isRunningWorkflowAction}
+        />
+      </ActivityTimelinePanel>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -1472,9 +1553,24 @@ export default function ChatPanel({
       }}
     >
       <div>
+        {isTestDesignSession && modeInput ? (
+          <div
+            style={{
+              marginBottom: 12,
+              border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+              borderRadius: 14,
+              padding: 12,
+              background: isDark ? "#262521" : "#F6F4ED",
+            }}
+          >
+            {modeInput}
+          </div>
+        ) : null}
+
         {showOnboardingHint ? (
           <OnboardingHint
             showStrategyHint={isCoachSession}
+            testDesignVisual={isTestDesignSession}
             hasWorkspaceArtifacts={hasWorkspaceArtifacts}
             nextAction={chat.workflowStatus.nextAction}
             resolvedTheme={resolvedTheme}
@@ -1508,6 +1604,7 @@ export default function ChatPanel({
                   : "No persisted workspace artifacts yet. Start by shaping the requirement or continuing the next recommended step."
               }
               resolvedTheme={resolvedTheme}
+              testDesignVisual={isTestDesignSession}
             />
 
             <FeatureWorkspaceSummary
@@ -1517,11 +1614,19 @@ export default function ChatPanel({
               onCreditsMayHaveChanged={onCreditsMayHaveChanged}
             />
 
-            {showReleaseReadiness ? (
+            {showReleaseReadiness && !isTestDesignSession ? (
               <ReleaseReadinessPanel
                 sessionArtifact={chat.sessionArtifact}
                 resolvedTheme={resolvedTheme}
                 commandCenter={isPopulatedStrategy}
+              />
+            ) : null}
+
+            {showReleaseReadiness && isTestDesignSession ? (
+              <ReleaseReadinessPanel
+                sessionArtifact={chat.sessionArtifact}
+                resolvedTheme={resolvedTheme}
+                commandCenter={false}
               />
             ) : null}
 
@@ -1531,6 +1636,7 @@ export default function ChatPanel({
               sessionId={chat.activeSessionId}
               resolvedTheme={resolvedTheme}
               commandCenter={isPopulatedStrategy}
+              testDesignVisual={isTestDesignSession}
               onUpdateTestSuiteAction={(cases) => {
                 void chat.updateTestSuite(cases);
               }}
@@ -1562,7 +1668,16 @@ export default function ChatPanel({
               onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
             />
 
-            {!hasWorkspaceArtifacts && !isBusy ? (
+            {isTestDesignSession ? (
+              <PopulatedStrategyRecentActivity
+                chat={chat}
+                processingBanner={processingBanner}
+                resolvedTheme={resolvedTheme}
+                hiddenItemIndexes={hiddenTimelineDocumentIndexes}
+              />
+            ) : null}
+
+            {!hasWorkspaceArtifacts && !isBusy && !isTestDesignSession ? (
               <EmptyWorkspaceHint resolvedTheme={resolvedTheme} />
             ) : null}
           </div>
@@ -1573,6 +1688,7 @@ export default function ChatPanel({
               title="Workflow guidance"
               description="Current stage and the next recommended workspace move."
               resolvedTheme={resolvedTheme}
+              testDesignVisual={isTestDesignSession}
             />
             <div data-tour-anchor="workflow-guidance">
               <ChatWorkflowBanner
@@ -1595,105 +1711,7 @@ export default function ChatPanel({
           </div>
         ) : null}
 
-        {showActivityTimeline ? (
-        <div>
-          <ActivityTimelinePanel
-            ref={chatBoxRef}
-            resolvedTheme={resolvedTheme}
-            isNarrow={isNarrow}
-            inputSlot={
-              isCoachSession ? null :
-              <>
-                {canUseRefinedRequirement ? (
-                  <div style={helperBannerStyle}>
-                    <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.4 }}>
-                      Use the pinned{" "}
-                      <strong style={{ fontWeight: 900 }}>
-                        Refined Requirement
-                      </strong>{" "}
-                      as the starting point for test generation.
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextInput = buildRefinedRequirementInput(
-                          chat.sessionArtifact
-                        );
-                        if (!nextInput) return;
-
-                        chat.setInput(nextInput);
-
-                        requestAnimationFrame(() => {
-                          inputRef.current?.focus();
-                        });
-                      }}
-                      style={helperButtonStyle}
-                      disabled={isBusy}
-                    >
-                      Use Refined Requirement
-                    </button>
-                  </div>
-                ) : null}
-
-                <ChatInput
-                  ref={inputRef}
-                  mode={chat.mode}
-                  value={chat.input}
-                  disabled={isBusy}
-                  hasReviewArtifactContext={
-                    chat.mode === "review" &&
-                    (chat.hasPersistentTestSuite || chat.hasReviewArtifact)
-                  }
-                  resolvedTheme={resolvedTheme}
-                  onChangeAction={(next: string) => chat.setInput(next)}
-                  onSendAction={() => {
-                    runBillableAction(() => chat.send());
-                  }}
-                />
-              </>
-            }
-          >
-            {processingBanner}
-
-            <ChatMessageList
-              items={chat.items}
-              mode={chat.mode}
-              sessionArtifact={chat.sessionArtifact}
-              resolvedTheme={resolvedTheme}
-              hiddenItemIndexes={hiddenTimelineDocumentIndexes}
-              onUpdateTestSuiteAction={(cases) => {
-                void chat.updateTestSuite(cases);
-              }}
-              onGenerateTestsAction={() => {
-                runBillableAction(() => chat.generateTestsFromRequirement());
-              }}
-              canGenerateTests={chat.canGenerateTests}
-              isGeneratingTests={chat.isRunningWorkflowAction}
-              onRefineRequirementAction={() => {
-                runBillableAction(() => chat.refineRequirement());
-              }}
-              canRefineRequirement={chat.canRefineRequirement}
-              isRefiningRequirement={chat.isRunningWorkflowAction}
-              onGenerateNextBatchAction={() => {
-                runBillableAction(() => chat.generateNextBatchOfTests());
-              }}
-              canGenerateNextBatch={canGenerateNextBatch}
-              isGeneratingNextBatch={chat.isRunningWorkflowAction}
-              onRegenerateSuiteAction={() => {
-                runBillableAction(() => chat.regenerateSuite());
-              }}
-              canRegenerateSuite={chat.canRegenerateSuite}
-              isRegeneratingSuite={chat.isRunningWorkflowAction}
-              onReviewTestSuiteAction={() => {
-                runBillableAction(() => chat.reviewTestSuite());
-              }}
-              canReviewTestSuite={chat.canReviewTestSuite}
-              isReviewingTestSuite={chat.isRunningWorkflowAction}
-            />
-          </ActivityTimelinePanel>
-        </div>
-        ) : null}
+        {activityTimeline}
       </div>
     </div>
   );
