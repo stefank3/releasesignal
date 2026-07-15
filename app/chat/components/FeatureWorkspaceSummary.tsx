@@ -68,9 +68,18 @@ function StatusChip(args: {
   label?: string;
   tone?: "neutral" | "positive" | "warning" | "negative" | "info";
   resolvedTheme: "light" | "dark";
+  testDesign?: boolean;
 }) {
   const isDark = args.resolvedTheme === "dark";
-  const tone = args.tone ?? (args.ready ? "positive" : args.active ? "info" : "neutral");
+  const tone =
+    args.tone ??
+    (args.testDesign && args.active
+      ? "info"
+      : args.ready
+        ? "positive"
+        : args.active
+          ? "info"
+          : "neutral");
 
   return (
     <span
@@ -83,7 +92,27 @@ function StatusChip(args: {
         borderRadius: 999,
         fontSize: 11,
         fontWeight: 900,
-        border: tone === "positive"
+        border: args.testDesign
+          ? tone === "positive"
+            ? isDark
+              ? "1px solid #3B5745"
+              : "1px solid #BFD5BD"
+            : tone === "warning"
+              ? isDark
+                ? "1px solid #57482A"
+                : "1px solid #DCC791"
+              : tone === "negative"
+                ? isDark
+                  ? "1px solid #573330"
+                  : "1px solid #D9AAA4"
+                : tone === "info"
+                  ? isDark
+                    ? "1px solid #57402F"
+                    : "1px solid #E4C4B0"
+                  : isDark
+                    ? "1px solid #38362D"
+                    : "1px solid #DFD9C8"
+          : tone === "positive"
           ? isDark
             ? "1px solid rgba(34,197,94,0.28)"
             : "1px solid rgba(22,163,74,0.25)"
@@ -102,7 +131,27 @@ function StatusChip(args: {
           : isDark
             ? "1px solid rgba(255,255,255,0.10)"
             : "1px solid rgba(15,23,42,0.10)",
-        background: tone === "positive"
+        background: args.testDesign
+          ? tone === "positive"
+            ? isDark
+              ? "#26332B"
+              : "#E2ECE0"
+            : tone === "warning"
+              ? isDark
+                ? "#342C1B"
+                : "#F4E8CB"
+              : tone === "negative"
+                ? isDark
+                  ? "#362220"
+                  : "#F5E0DC"
+                : tone === "info"
+                  ? isDark
+                    ? "#3A2A22"
+                    : "#F5E3D6"
+                  : isDark
+                    ? "#21201C"
+                    : "#EDEAE0"
+          : tone === "positive"
           ? isDark
             ? "rgba(34,197,94,0.14)"
             : "rgba(22,163,74,0.10)"
@@ -121,7 +170,29 @@ function StatusChip(args: {
           : isDark
             ? "rgba(255,255,255,0.05)"
             : "rgba(15,23,42,0.04)",
-        color: isDark ? "#ffffff" : "#0f172a",
+        color: args.testDesign
+          ? tone === "positive"
+            ? isDark
+              ? "#7CC08A"
+              : "#2F7A44"
+            : tone === "warning"
+              ? isDark
+                ? "#E0AE5A"
+                : "#96690F"
+              : tone === "negative"
+                ? isDark
+                  ? "#E8776A"
+                  : "#B0392E"
+                : tone === "info"
+                  ? isDark
+                    ? "#D97757"
+                    : "#C15F3C"
+                  : isDark
+                    ? "#C9C4B6"
+                    : "#45413A"
+          : isDark
+            ? "#ffffff"
+            : "#0f172a",
       }}
     >
       {args.label ??
@@ -133,6 +204,7 @@ function StatusChip(args: {
 function StageBadge(args: {
   text: string;
   resolvedTheme: "light" | "dark";
+  testDesign?: boolean;
 }) {
   const isDark = args.resolvedTheme === "dark";
 
@@ -146,13 +218,27 @@ function StageBadge(args: {
         borderRadius: 999,
         fontSize: 11,
         fontWeight: 900,
-        border: isDark
-          ? "1px solid rgba(120,180,255,0.24)"
-          : "1px solid rgba(37,99,235,0.20)",
-        background: isDark
-          ? "rgba(120,180,255,0.08)"
-          : "rgba(37,99,235,0.06)",
-        color: isDark ? "#ffffff" : "#0f172a",
+        border: args.testDesign
+          ? isDark
+            ? "1px solid #57402F"
+            : "1px solid #E4C4B0"
+          : isDark
+            ? "1px solid rgba(120,180,255,0.24)"
+            : "1px solid rgba(37,99,235,0.20)",
+        background: args.testDesign
+          ? isDark
+            ? "#3A2A22"
+            : "#F5E3D6"
+          : isDark
+            ? "rgba(120,180,255,0.08)"
+            : "rgba(37,99,235,0.06)",
+        color: args.testDesign
+          ? isDark
+            ? "#D97757"
+            : "#C15F3C"
+          : isDark
+            ? "#ffffff"
+            : "#0f172a",
       }}
     >
       {args.text}
@@ -272,11 +358,32 @@ function DashboardTile(args: {
   tone: Tone;
   resolvedTheme: "light" | "dark";
   commandCenter?: boolean;
+  testDesign?: boolean;
 }) {
   const isDark = args.resolvedTheme === "dark";
-  const toneStyles = args.commandCenter
-    ? getCommandCenterTileStyles(args.tone, isDark)
-    : getToneStyles(args.tone, isDark);
+  const toneStyles = args.testDesign
+    ? {
+        border:
+          args.tone === "positive"
+            ? isDark
+              ? "1px solid #3B5745"
+              : "1px solid #BFD5BD"
+            : args.tone === "warning"
+              ? isDark
+                ? "1px solid #57482A"
+                : "1px solid #DCC791"
+              : args.tone === "negative"
+                ? isDark
+                  ? "1px solid #573330"
+                  : "1px solid #D9AAA4"
+                : isDark
+                  ? "1px solid #38362D"
+                  : "1px solid #DFD9C8",
+        background: isDark ? "#21201C" : "#EDEAE0",
+      }
+    : args.commandCenter
+      ? getCommandCenterTileStyles(args.tone, isDark)
+      : getToneStyles(args.tone, isDark);
 
   return (
     <div
@@ -297,7 +404,13 @@ function DashboardTile(args: {
           fontSize: 11,
           fontWeight: 900,
           lineHeight: 1.35,
-          color: isDark ? "#ffffff" : "#0f172a",
+          color: args.testDesign
+            ? isDark
+              ? "#EDEAE3"
+              : "#262521"
+            : isDark
+              ? "#ffffff"
+              : "#0f172a",
         }}
       >
         {args.value}
@@ -326,31 +439,47 @@ function DashboardSummaryCard(args: {
   statusTone?: "neutral" | "positive" | "warning" | "negative" | "info";
   resolvedTheme: "light" | "dark";
   commandCenter?: boolean;
+  testDesign?: boolean;
 }) {
   const isDark = args.resolvedTheme === "dark";
   const accentTone: Tone = args.active ? "info" : args.ready ? "positive" : "neutral";
-  const cardBorder = args.commandCenter
-    ? getCommandCenterCardBorder(accentTone, isDark)
-    : getAccentBorder(accentTone, isDark);
-  const cardBackground = args.commandCenter
-    ? getCommandCenterCardBackground(args.active ? "info" : "neutral", isDark)
-    : getAccentBackground(accentTone, isDark);
+  const cardBorder = args.testDesign
+    ? args.active
+      ? isDark
+        ? "1px solid #8A5240"
+        : "1px solid #D8A18A"
+      : isDark
+        ? "1px solid #3A382F"
+        : "1px solid #D9D3C2"
+    : args.commandCenter
+      ? getCommandCenterCardBorder(accentTone, isDark)
+      : getAccentBorder(accentTone, isDark);
+  const cardBackground = args.testDesign
+    ? isDark
+      ? "#2B2A26"
+      : "#FCFBF6"
+    : args.commandCenter
+      ? getCommandCenterCardBackground(args.active ? "info" : "neutral", isDark)
+      : getAccentBackground(accentTone, isDark);
 
   return (
     <div
       data-tour-anchor={args.tourAnchor}
       style={{
         border: cardBorder,
-        borderRadius: args.commandCenter ? 12 : 14,
+        borderRadius: args.testDesign ? 13 : args.commandCenter ? 12 : 14,
         padding: 12,
         background: cardBackground,
         display: "grid",
         gap: 10,
-        minHeight: args.commandCenter ? 276 : 250,
+        minHeight: args.testDesign ? 0 : args.commandCenter ? 276 : 250,
+        height: args.testDesign ? "100%" : undefined,
         alignContent: "start",
         gridTemplateRows: args.commandCenter
           ? "auto auto auto 1fr auto"
-          : undefined,
+          : args.testDesign
+            ? "auto auto auto auto 1fr auto"
+            : undefined,
       }}
     >
       <div
@@ -369,12 +498,20 @@ function DashboardSummaryCard(args: {
               letterSpacing: 0.6,
               textTransform: "uppercase",
               color: args.active
-                ? isDark
-                  ? "rgba(147,197,253,0.95)"
-                  : "rgba(37,99,235,0.86)"
+                ? args.testDesign
+                  ? isDark
+                    ? "#D97757"
+                    : "#C15F3C"
+                  : isDark
+                    ? "rgba(147,197,253,0.95)"
+                    : "rgba(37,99,235,0.86)"
                 : isDark
-                  ? "rgba(255,255,255,0.58)"
-                  : "rgba(15,23,42,0.55)",
+                  ? args.testDesign
+                    ? "#7D796C"
+                    : "rgba(255,255,255,0.58)"
+                  : args.testDesign
+                    ? "#8B8577"
+                    : "rgba(15,23,42,0.55)",
             }}
           >
             {args.stepLabel}
@@ -383,7 +520,13 @@ function DashboardSummaryCard(args: {
             style={{
               fontSize: 13,
               fontWeight: 950,
-              color: isDark ? "#ffffff" : "#0f172a",
+              color: args.testDesign
+                ? isDark
+                  ? "#EDEAE3"
+                  : "#262521"
+                : isDark
+                  ? "#ffffff"
+                  : "#0f172a",
             }}
           >
             {args.title}
@@ -396,6 +539,7 @@ function DashboardSummaryCard(args: {
           label={args.statusLabel}
           tone={args.statusTone}
           resolvedTheme={args.resolvedTheme}
+          testDesign={args.testDesign}
         />
       </div>
 
@@ -404,13 +548,29 @@ function DashboardSummaryCard(args: {
           fontSize: 12,
           fontWeight: 900,
           lineHeight: 1.4,
-          color: isDark ? "#ffffff" : "#0f172a",
+          color: args.testDesign
+            ? isDark
+              ? "#EDEAE3"
+              : "#262521"
+            : isDark
+              ? "#ffffff"
+              : "#0f172a",
         }}
       >
         {args.emphasis}
       </div>
 
-      <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.82 }}>
+      <div
+        style={{
+          fontSize: 12,
+          lineHeight: 1.45,
+          opacity: 0.82,
+          display: args.testDesign ? "-webkit-box" : undefined,
+          WebkitLineClamp: args.testDesign ? 2 : undefined,
+          WebkitBoxOrient: args.testDesign ? "vertical" : undefined,
+          overflow: args.testDesign ? "hidden" : undefined,
+        }}
+      >
         {args.description}
       </div>
 
@@ -429,12 +589,23 @@ function DashboardSummaryCard(args: {
             tone={tile.tone}
             resolvedTheme={args.resolvedTheme}
             commandCenter={args.commandCenter}
+            testDesign={args.testDesign}
           />
         ))}
       </div>
 
       {args.helpText ? (
-        <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.74 }}>
+        <div
+          style={{
+            fontSize: 11,
+            lineHeight: 1.45,
+            opacity: 0.74,
+            display: args.testDesign ? "-webkit-box" : undefined,
+            WebkitLineClamp: args.testDesign ? 2 : undefined,
+            WebkitBoxOrient: args.testDesign ? "vertical" : undefined,
+            overflow: args.testDesign ? "hidden" : undefined,
+          }}
+        >
           {args.helpText}
         </div>
       ) : null}
@@ -510,6 +681,156 @@ function ArtifactOpenButton(args: {
     >
       {args.label}
     </button>
+  );
+}
+
+function TestDesignSuiteSummary(args: {
+  chat: UseChatSessionReturn;
+  resolvedTheme: "light" | "dark";
+}) {
+  const suite = args.chat.sessionArtifact?.testSuite;
+  if (!suite) return null;
+
+  const isDark = args.resolvedTheme === "dark";
+  const review = args.chat.sessionArtifact?.reviewResult;
+  const reviewed = args.chat.hasReviewArtifact;
+  const suiteBasedOnRequirementVersion = (
+    suite as typeof suite & { basedOnRequirementVersion?: number }
+  ).basedOnRequirementVersion;
+  const reviewValue = reviewed
+    ? typeof review?.score === "number"
+      ? `Yes · ${review.score}/100`
+      : "Yes"
+    : "Not reviewed";
+  const lineage =
+    typeof suiteBasedOnRequirementVersion === "number"
+      ? `Generated from Requirement v${suiteBasedOnRequirementVersion}`
+      : "Requirement lineage unavailable";
+  const tileStyle: React.CSSProperties = {
+    borderRadius: 10,
+    border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
+    background: isDark ? "#21201C" : "#EDEAE0",
+    padding: "9px 12px",
+    display: "grid",
+    gap: 4,
+  };
+  const labelStyle: React.CSSProperties = {
+    color: isDark ? "#7D796C" : "#8B8577",
+    fontSize: 10,
+    fontWeight: 800,
+    letterSpacing: ".1em",
+    textTransform: "uppercase",
+  };
+
+  return (
+    <section
+      aria-label="Current Test Suite summary"
+      style={{
+        borderRadius: 12,
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        background: isDark ? "#2B2A26" : "#FCFBF6",
+        padding: "14px 16px",
+        display: "grid",
+        gap: 10,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+          <span
+            style={{
+              color: isDark ? "#EDEAE3" : "#262521",
+              fontSize: 13.5,
+              fontWeight: 800,
+            }}
+          >
+            Test Suite
+          </span>
+          <span
+            style={{
+              borderRadius: 999,
+              border: isDark ? "1px solid #3B5745" : "1px solid #BFD5BD",
+              background: isDark ? "#26332B" : "#E2ECE0",
+              color: isDark ? "#7CC08A" : "#2F7A44",
+              padding: "3px 9px",
+              fontSize: 11,
+              fontWeight: 800,
+            }}
+          >
+            Saved · v{suite.version}
+          </span>
+        </div>
+        <span
+          style={{
+            color: isDark ? "#7D796C" : "#8B8577",
+            fontSize: 12,
+          }}
+        >
+          {lineage}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gap: 8,
+        }}
+      >
+        {[
+          ["Version", `v${suite.version}`],
+          ["Cases", String(suite.cases.length)],
+          ["State", "Saved"],
+          ["Reviewed", reviewValue],
+        ].map(([label, value]) => (
+          <div key={label} style={tileStyle}>
+            <div style={labelStyle}>{label}</div>
+            <div
+              style={{
+                color:
+                  label === "State" || (label === "Reviewed" && reviewed)
+                    ? isDark
+                      ? "#7CC08A"
+                      : "#2F7A44"
+                    : isDark
+                      ? "#EDEAE3"
+                      : "#262521",
+                fontSize: 15,
+                fontWeight: 800,
+                lineHeight: 1.25,
+              }}
+            >
+              {value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+          color: isDark ? "#A39F92" : "#6F6A5C",
+          fontSize: 11.5,
+          lineHeight: 1.45,
+        }}
+      >
+        <span>AI-assisted — review generated cases before you rely on them.</span>
+        <span style={{ color: isDark ? "#7D796C" : "#8B8577", fontSize: 11 }}>
+          Persisted suite artifact
+        </span>
+      </div>
+    </section>
   );
 }
 
@@ -692,6 +1013,7 @@ export default function FeatureWorkspaceSummary({
   onCreditsMayHaveChanged,
 }: Props) {
   const isDark = resolvedTheme === "dark";
+  const testDesignVisual = chat.mode === "cases" && !commandCenter;
 
   const requirementReady = chat.hasPinnedRequirement;
   const suiteReady = chat.hasPersistentTestSuite;
@@ -776,8 +1098,12 @@ export default function FeatureWorkspaceSummary({
 
   const requirementTiles = [
     {
-      label: "State",
-      value: requirementReady ? "Saved" : "Not started yet",
+      label: testDesignVisual ? "Artifact state" : "State",
+      value: requirementReady
+        ? "Saved"
+        : testDesignVisual
+          ? "No saved requirement"
+          : "Not started yet",
       tone: requirementReady ? "positive" : "neutral",
     },
     {
@@ -938,37 +1264,82 @@ export default function FeatureWorkspaceSummary({
     <div
       style={{
         marginBottom: 12,
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.10)"
-          : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: 18,
+        border: testDesignVisual
+          ? isDark
+            ? "1px solid #3A382F"
+            : "1px solid #D9D3C2"
+          : isDark
+            ? "1px solid rgba(255,255,255,0.10)"
+            : "1px solid rgba(15,23,42,0.10)",
+        borderRadius: testDesignVisual ? 14 : 18,
         padding: 14,
-        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(15,23,42,0.03)",
-        color: isDark ? "#ffffff" : "#0f172a",
+        background: testDesignVisual
+          ? isDark
+            ? "#262521"
+            : "#F6F4ED"
+          : isDark
+            ? "rgba(255,255,255,0.04)"
+            : "rgba(15,23,42,0.03)",
+        color: testDesignVisual
+          ? isDark
+            ? "#EDEAE3"
+            : "#262521"
+          : isDark
+            ? "#ffffff"
+            : "#0f172a",
         display: "grid",
         gap: 12,
       }}
     >
-      <div style={{ display: "grid", gap: 8 }}>
+      {testDesignVisual && suiteReady ? (
+        <TestDesignSuiteSummary chat={chat} resolvedTheme={resolvedTheme} />
+      ) : null}
+
+      <div
+        style={
+          testDesignVisual
+            ? {
+                display: "grid",
+                gap: 8,
+                borderRadius: 14,
+                border: isDark ? "1px solid #55452F" : "1px solid #DFC9AE",
+                background: isDark
+                  ? "linear-gradient(135deg,#33291F 0%,#262521 72%)"
+                  : "linear-gradient(135deg,#F0E2CE 0%,#F6F4ED 72%)",
+                padding: "15px 18px",
+              }
+            : { display: "grid", gap: 8 }
+        }
+      >
         <StageBadge
           text={`Stage ${stageIndex} of 5 - ${displayedStage}`}
           resolvedTheme={resolvedTheme}
+          testDesign={testDesignVisual}
         />
 
         {commandCenter ? null : (
           <div style={{ display: "grid", gap: 4 }}>
-            <div style={{ fontSize: 13, fontWeight: 950 }}>
+            <div
+              style={{
+                fontSize: testDesignVisual ? 18 : 13,
+                fontWeight: 950,
+                lineHeight: 1.25,
+              }}
+            >
               Feature Workspace
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
-              This session is tracked as a QA workspace backed by persisted
-              artifacts, not free-form AI text.
+              {testDesignVisual
+                ? displayedStage
+                : "This session is tracked as a QA workspace backed by persisted artifacts, not free-form AI text."}
             </div>
 
             <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
               {hasAnyArtifacts
-                ? "The cards below show the latest saved requirement, suite, review, and execution evidence."
+                ? testDesignVisual
+                  ? nextAction
+                  : "The cards below show the latest saved requirement, suite, review, and execution evidence."
                 : "No saved workspace artifacts exist yet. Start by refining a requirement or pasting a Jira/API change description."}
             </div>
           </div>
@@ -981,7 +1352,9 @@ export default function FeatureWorkspaceSummary({
           gap: 10,
           gridTemplateColumns: commandCenter
             ? "repeat(auto-fit, minmax(210px, 1fr))"
-            : "repeat(auto-fit, minmax(220px, 1fr))",
+            : testDesignVisual
+              ? "repeat(auto-fit, minmax(210px, 1fr))"
+              : "repeat(auto-fit, minmax(220px, 1fr))",
         }}
       >
         <DashboardSummaryCard
@@ -992,6 +1365,10 @@ export default function FeatureWorkspaceSummary({
           stepLabel={
             commandCenter
               ? "STEP 1"
+              : testDesignVisual
+                ? stageIndex === 1
+                  ? "STEP 1 · NOW"
+                  : "STEP 1"
               : stageIndex === 1 && !requirementReady
                 ? "Step 1 - Now"
                 : "Step 1"
@@ -1032,6 +1409,7 @@ export default function FeatureWorkspaceSummary({
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
+          testDesign={testDesignVisual}
         />
 
         <DashboardSummaryCard
@@ -1042,6 +1420,10 @@ export default function FeatureWorkspaceSummary({
           stepLabel={
             commandCenter
               ? "STEP 2"
+              : testDesignVisual
+                ? stageIndex === 2
+                  ? "STEP 2 · NOW"
+                  : "STEP 2"
               : stageIndex === 2 && !suiteReady
                 ? "Step 2 - Now"
                 : "Step 2"
@@ -1078,7 +1460,7 @@ export default function FeatureWorkspaceSummary({
                 kind="suite"
                 resolvedTheme={resolvedTheme}
               />
-            ) : suiteReady ? (
+            ) : suiteReady && !testDesignVisual ? (
               <TestSuiteExportMenu
                 sessionId={exportSessionId}
                 disabled={!suiteReady}
@@ -1087,6 +1469,7 @@ export default function FeatureWorkspaceSummary({
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
+          testDesign={testDesignVisual}
         />
 
         <DashboardSummaryCard
@@ -1097,6 +1480,10 @@ export default function FeatureWorkspaceSummary({
           stepLabel={
             commandCenter
               ? "STEP 3"
+              : testDesignVisual
+                ? stageIndex === 3
+                  ? "STEP 3 · NOW"
+                  : "STEP 3"
               : stageIndex === 3 && !reviewReady
                 ? "Step 3 - Now"
                 : "Step 3"
@@ -1158,9 +1545,13 @@ export default function FeatureWorkspaceSummary({
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
+          testDesign={testDesignVisual}
         />
 
-        <div data-tour-anchor="execution-evidence-card">
+        <div
+          data-tour-anchor="execution-evidence-card"
+          style={testDesignVisual ? { display: "grid" } : undefined}
+        >
           {commandCenter ? (
             <DashboardSummaryCard
               title="Execution"
@@ -1193,20 +1584,58 @@ export default function FeatureWorkspaceSummary({
               resolvedTheme={resolvedTheme}
               commandCenter={commandCenter}
             />
-          ) : (
-            <ExecutionEvidenceSummary
-              execution={executionEvidence}
-              sessionId={exportSessionId}
-              uploadDisabled={!suiteReady}
+          ) : testDesignVisual ? (
+            <DashboardSummaryCard
+              title="Execution Evidence"
+              ready={executionEvidenceReady}
+              active={stageIndex === 4}
+              stepLabel={stageIndex === 4 ? "STEP 4 · NOW" : "STEP 4"}
+              statusLabel={executionEvidenceReady ? executionStatus : undefined}
+              statusTone={
+                executionEvidenceReady ? toExecutionTone(executionStatus) : undefined
+              }
+              emphasis={
+                executionEvidenceReady
+                  ? "Execution results are available"
+                  : "No execution results yet"
+              }
+              description={
+                executionEvidenceReady
+                  ? "Persisted execution evidence is linked to the current suite."
+                  : "Upload execution results after the test suite is ready."
+              }
+              tiles={[...executionTiles]}
+              helpText={
+                executionEvidenceReady
+                  ? "Open the execution artifact below for the detailed status breakdown."
+                  : "The execution artifact below contains the existing upload action."
+              }
+              meta={
+                executionEvidenceReady
+                  ? "Execution artifact present"
+                  : suiteReady
+                    ? "Ready for execution results"
+                    : "Generate the suite before uploading results"
+              }
               resolvedTheme={resolvedTheme}
-              commandCenter={commandCenter}
-              onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
+              testDesign
             />
+          ) : (
+            <div>
+              <ExecutionEvidenceSummary
+                execution={executionEvidence}
+                sessionId={exportSessionId}
+                uploadDisabled={!suiteReady}
+                resolvedTheme={resolvedTheme}
+                commandCenter={commandCenter}
+                onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
+              />
+            </div>
           )}
         </div>
       </div>
 
-      {commandCenter ? null : (
+      {commandCenter || testDesignVisual ? null : (
         <div
         style={{
           display: "grid",
@@ -1214,9 +1643,13 @@ export default function FeatureWorkspaceSummary({
           fontSize: 11,
           opacity: 0.78,
           lineHeight: 1.45,
-          borderTop: isDark
-            ? "1px solid rgba(255,255,255,0.08)"
-            : "1px solid rgba(15,23,42,0.08)",
+          borderTop: testDesignVisual
+            ? isDark
+              ? "1px solid #3A382F"
+              : "1px solid #D9D3C2"
+            : isDark
+              ? "1px solid rgba(255,255,255,0.08)"
+              : "1px solid rgba(15,23,42,0.08)",
           paddingTop: 10,
         }}
       >
