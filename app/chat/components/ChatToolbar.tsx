@@ -8,7 +8,6 @@ import React from "react";
 import type { Mode } from "../chat.types";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 
-import { HeaderButton, Toolbar } from "./ChatUI";
 import { TestSuiteExportMenu } from "./TestSuiteExportMenu";
 
 const STORAGE_KEY = "stefans-mvp-chat-v1";
@@ -36,7 +35,6 @@ export default function ChatToolbar({
 }: Props) {
   const isDark = resolvedTheme === "dark";
   const textColor = isDark ? "#ffffff" : "#0f172a";
-  const subtleText = isDark ? "rgba(255,255,255,0.72)" : "rgba(15,23,42,0.68)";
 
   const bannerStyle: React.CSSProperties = {
     marginTop: 10,
@@ -292,147 +290,104 @@ export default function ChatToolbar({
       ) : null}
 
       {chat.mode === "review" ? (
-        <Toolbar
-          resolvedTheme={resolvedTheme}
-          right={
-          <details style={{ position: "relative" }}>
-            <summary
-              aria-label="Workspace actions"
-              title="Workspace actions"
-              style={{
-                listStyle: "none",
-                cursor: "pointer",
-                width: 34,
-                height: 34,
-                borderRadius: 10,
-                border: isDark
-                  ? "1px solid rgba(255,255,255,0.18)"
-                  : "1px solid rgba(15,23,42,0.14)",
-                background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
-                color: textColor,
-                display: "grid",
-                placeItems: "center",
-                fontSize: 18,
-                fontWeight: 900,
-                boxShadow: isDark ? "none" : "0 4px 10px rgba(15,23,42,0.05)",
-              }}
-            >
-              ...
-            </summary>
-
-            <div
-              style={{
-                position: "absolute",
-                right: 0,
-                top: 40,
-                zIndex: 20,
-                minWidth: 220,
-                display: "grid",
-                gap: 8,
-                padding: 10,
-                borderRadius: 12,
-                border: isDark
-                  ? "1px solid rgba(255,255,255,0.16)"
-                  : "1px solid rgba(15,23,42,0.12)",
-                background: isDark ? "#111827" : "#ffffff",
-                boxShadow: isDark
-                  ? "0 18px 48px rgba(0,0,0,0.36)"
-                  : "0 18px 42px rgba(15,23,42,0.16)",
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 900, color: subtleText }}>
-                Workspace actions
-              </div>
-
-              {chat.lastPending && !chat.isSending && !chat.isRunningWorkflowAction ? (
-                <HeaderButton
-                  resolvedTheme={resolvedTheme}
-                  onClickAction={() => {
-                    void (async () => {
-                      const creditsMayHaveChanged = await chat.send({ replay: true });
-                      onAfterUiAction?.();
-                      if (creditsMayHaveChanged) {
-                        onCreditsMayHaveChanged?.();
-                      }
-                    })();
-                  }}
-                >
-                  Retry
-                </HeaderButton>
-              ) : null}
-
-              <HeaderButton
-                resolvedTheme={resolvedTheme}
-                onClickAction={() => {
-                  chat.startNewSessionInMode(chat.mode);
-                  localStorage.removeItem(STORAGE_KEY);
-                  onAfterUiAction?.();
-                }}
-                disabled={isBusy}
-              >
-                Clear
-              </HeaderButton>
-
-              <HeaderButton
-                resolvedTheme={resolvedTheme}
-                onClickAction={() => {
-                  chat.startNewSessionInMode("coach");
-                  onAfterUiAction?.();
-                }}
-                disabled={isBusy}
-              >
-                New workspace
-              </HeaderButton>
-
-              {showGenerateTestsAction ? (
-                <HeaderButton
-                  resolvedTheme={resolvedTheme}
-                  onClickAction={() => {
-                    void (async () => {
-                      const creditsMayHaveChanged =
-                        await chat.generateTestsFromRequirement();
-                      onAfterUiAction?.();
-                      if (creditsMayHaveChanged) {
-                        onCreditsMayHaveChanged?.();
-                      }
-                    })();
-                  }}
-                  disabled={!chat.canGenerateTests}
-                >
-                  {chat.isRunningWorkflowAction ? "Generating..." : "Generate Tests"}
-                </HeaderButton>
-              ) : null}
-
-              {chat.activeSessionId && chat.messagesCursor ? (
-                <HeaderButton
-                  resolvedTheme={resolvedTheme}
-                  onClickAction={() => {
-                    void (async () => {
-                      await chat.loadSessionMessages(
-                        chat.activeSessionId!,
-                        false,
-                        chat.activeSessionMode
-                      );
-                    })();
-                  }}
-                  disabled={chat.messagesLoading || chat.isRunningWorkflowAction}
-                >
-                  {chat.messagesLoading ? "Loading..." : "Load older"}
-                </HeaderButton>
-              ) : null}
-
-              {chat.activeSessionId ? (
-                <div style={{ fontSize: 11, color: subtleText, lineHeight: 1.35 }}>
-                  Workspace {chat.activeSessionId.slice(0, 8)}... uses persisted
-                  artifacts.
-                </div>
-              ) : null}
-            </div>
-          </details>
-          }
+        <section
+          aria-label="Test Review workspace actions"
+          style={{
+            marginTop: 10,
+            marginBottom: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            padding: "9px 12px",
+            borderRadius: 12,
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            background: isDark ? "#2B2A26" : "#FCFBF6",
+            color: isDark ? "#EDEAE3" : "#262521",
+          }}
         >
-          {null}
-        </Toolbar>
+          <span
+            style={{
+              marginRight: 4,
+              color: isDark ? "#7D796C" : "#8B8577",
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+            }}
+          >
+            Test Review
+          </span>
+
+          {chat.lastPending && !chat.isSending && !chat.isRunningWorkflowAction ? (
+            <button
+              type="button"
+              onClick={() => runBillableAction(() => chat.send({ replay: true }))}
+              style={testDesignButtonStyle}
+            >
+              Retry
+            </button>
+          ) : null}
+
+          {showGenerateTestsAction ? (
+            <button
+              type="button"
+              onClick={() => runBillableAction(() => chat.generateTestsFromRequirement())}
+              style={{
+                ...testDesignButtonStyle,
+                opacity: chat.canGenerateTests ? 1 : 0.55,
+                cursor: chat.canGenerateTests ? "pointer" : "not-allowed",
+              }}
+              disabled={!chat.canGenerateTests}
+            >
+              {chat.isRunningWorkflowAction ? "Generating..." : "Generate Tests"}
+            </button>
+          ) : null}
+
+          {chat.activeSessionId && chat.messagesCursor ? (
+            <button
+              type="button"
+              onClick={() => {
+                void chat.loadSessionMessages(
+                  chat.activeSessionId!,
+                  false,
+                  chat.activeSessionMode
+                );
+              }}
+              style={testDesignButtonStyle}
+              disabled={chat.messagesLoading || chat.isRunningWorkflowAction}
+            >
+              {chat.messagesLoading ? "Loading..." : "Load older"}
+            </button>
+          ) : null}
+
+          <span style={{ flex: "1 1 20px" }} />
+
+          <button
+            type="button"
+            onClick={() => {
+              chat.startNewSessionInMode("coach");
+              onAfterUiAction?.();
+            }}
+            style={testDesignButtonStyle}
+            disabled={isBusy}
+          >
+            New workspace
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              chat.startNewSessionInMode(chat.mode);
+              localStorage.removeItem(STORAGE_KEY);
+              onAfterUiAction?.();
+            }}
+            style={testDesignClearStyle}
+            disabled={isBusy}
+          >
+            Clear
+          </button>
+        </section>
       ) : null}
 
       {chat.modeLockMsg

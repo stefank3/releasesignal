@@ -27,6 +27,7 @@ type Props = {
   resolvedTheme?: "light" | "dark";
   commandCenter?: boolean;
   testDesignVisual?: boolean;
+  initiallyOpenSuite?: boolean;
   onUpdateTestSuiteAction?: (cases: TestCase[]) => void;
   onGenerateTestsAction?: () => void;
   canGenerateTests?: boolean;
@@ -540,6 +541,7 @@ export function ArtifactDocumentSurface({
   resolvedTheme = "dark",
   commandCenter = false,
   testDesignVisual = false,
+  initiallyOpenSuite = testDesignVisual,
   onUpdateTestSuiteAction,
   onGenerateTestsAction,
   canGenerateTests = false,
@@ -644,7 +646,7 @@ export function ArtifactDocumentSurface({
                 resolvedTheme={resolvedTheme}
                 commandCenter={commandCenter}
                 testDesignVisual={testDesignVisual}
-                initiallyOpen={testDesignVisual}
+                initiallyOpen={initiallyOpenSuite}
               >
                 <CasesTextCard
                   text={document.item.text}

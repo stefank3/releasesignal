@@ -72,36 +72,26 @@ function reviewToJson(r: ReviewResult) {
 function SmallButton({
   children,
   onClick,
-  variant = "light",
   resolvedTheme = "light",
 }: {
   children: React.ReactNode;
   onClick: () => void;
-  variant?: "light" | "dark";
   resolvedTheme?: "light" | "dark";
 }) {
   const isDarkTheme = resolvedTheme === "dark";
-  const useDarkVariant = variant === "dark";
 
   return (
     <button
       type="button"
       onClick={onClick}
       style={{
-        padding: "6px 10px",
-        borderRadius: 10,
-        border: useDarkVariant
-          ? "1px solid #111"
-          : isDarkTheme
-            ? "1px solid rgba(255,255,255,0.18)"
-            : "1px solid #ddd",
-        background: useDarkVariant
-          ? "#111"
-          : isDarkTheme
-            ? "rgba(255,255,255,0.06)"
-            : "#fff",
-        color: useDarkVariant ? "#fff" : isDarkTheme ? "#fff" : "#111",
-        fontWeight: 900,
+        padding: "7px 11px",
+        borderRadius: 8,
+        border: isDarkTheme ? "1px solid #4A4739" : "1px solid #C4BCA7",
+        background: isDarkTheme ? "#35332C" : "#F1EDE2",
+        color: isDarkTheme ? "#EDEAE3" : "#262521",
+        fontSize: 12,
+        fontWeight: 800,
         cursor: "pointer",
       }}
     >
@@ -174,16 +164,16 @@ function BarRow({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "220px 1fr 70px",
-        gap: 12,
+        gridTemplateColumns: "minmax(120px, 160px) minmax(100px, 1fr) auto",
+        gap: 10,
         alignItems: "center",
       }}
     >
       <div
         style={{
-          fontSize: 13,
-          fontWeight: 600,
-          color: isDark ? "#fff" : "#111",
+          fontSize: 12,
+          fontWeight: 700,
+          color: isDark ? "#EDEAE3" : "#262521",
         }}
       >
         {label}
@@ -191,29 +181,28 @@ function BarRow({
 
       <div
         style={{
-          height: 10,
+          height: 8,
           borderRadius: 999,
-          border: isDark
-            ? "1px solid rgba(255,255,255,0.14)"
-            : "1px solid #ddd",
+          border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
           overflow: "hidden",
-          background: isDark ? "rgba(255,255,255,0.08)" : "#fafafa",
+          background: isDark ? "#21201C" : "#EDEAE0",
         }}
       >
         <div
           style={{
             width: `${pct}%`,
             height: "100%",
-            background: isDark ? "#fff" : "#111",
+            background: isDark ? "#7CC08A" : "#2F7A44",
           }}
         />
       </div>
 
       <div
         style={{
-          fontSize: 13,
+          fontSize: 12,
           textAlign: "right",
-          color: isDark ? "#fff" : "#111",
+          color: isDark ? "#EDEAE3" : "#262521",
+          fontWeight: 800,
         }}
       >
         {safeValue}/{max}
@@ -236,16 +225,18 @@ function Section({
 
   return (
     <div>
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 800,
-          marginBottom: 8,
-          color: isDark ? "#fff" : "#111",
-        }}
-      >
-        {title}
-      </div>
+      {title ? (
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 800,
+            marginBottom: 8,
+            color: isDark ? "#fff" : "#111",
+          }}
+        >
+          {title}
+        </div>
+      ) : null}
 
       {items.length === 0 ? (
         <div
@@ -254,7 +245,7 @@ function Section({
             color: isDark ? "rgba(255,255,255,0.68)" : "#666",
           }}
         >
-          None.
+          None found in this review.
         </div>
       ) : (
         <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -307,16 +298,11 @@ function ReviewEmptyState({
   return (
     <div
       style={{
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.12)"
-          : "1px solid #e6e6e6",
-        borderRadius: 18,
-        padding: 20,
-        background: isDark ? "rgba(255,255,255,0.05)" : "#fff",
-        boxShadow: isDark
-          ? "0 6px 22px rgba(0,0,0,0.18)"
-          : "0 6px 22px rgba(0,0,0,0.06)",
-        color: isDark ? "#fff" : "#111",
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        borderRadius: 14,
+        padding: 14,
+        background: isDark ? "#262521" : "#F6F4ED",
+        color: isDark ? "#EDEAE3" : "#262521",
         display: "grid",
         gap: 14,
       }}
@@ -339,12 +325,10 @@ function ReviewEmptyState({
 
       <div
         style={{
-          border: isDark
-            ? "1px solid rgba(255,255,255,0.10)"
-            : "1px solid #f0f0f0",
-          borderRadius: 16,
+          border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
+          borderRadius: 12,
           padding: 14,
-          background: isDark ? "rgba(255,255,255,0.04)" : "#fafafa",
+          background: isDark ? "#21201C" : "#FFFFFF",
           display: "grid",
           gap: 8,
         }}
@@ -396,6 +380,9 @@ export default function ReviewCard({
   onGenerateFromGapsAction,
   canGenerateFromGaps = false,
   isGeneratingFromGaps = false,
+  lineageStatus,
+  lineageLabels = [],
+  lineageReasons = [],
 }: {
   review: ReviewResult;
   resolvedTheme?: "light" | "dark";
@@ -407,6 +394,9 @@ export default function ReviewCard({
   onGenerateFromGapsAction?: () => void;
   canGenerateFromGaps?: boolean;
   isGeneratingFromGaps?: boolean;
+  lineageStatus?: "current" | "stale" | "unknown";
+  lineageLabels?: string[];
+  lineageReasons?: string[];
 }) {
   const [toast, setToast] = useState<string | null>(null);
 
@@ -433,6 +423,12 @@ export default function ReviewCard({
           : score >= 40
             ? "Weak"
             : "Poor";
+  const coverageFindingWithoutGrade = String(review.verdict ?? "")
+    .replace(/^(excellent|good|fair|weak|poor)\s*[-\u2013\u2014:]\s*/i, "")
+    .trim();
+  const coverageFinding = coverageFindingWithoutGrade
+    ? `${coverageFindingWithoutGrade.charAt(0).toUpperCase()}${coverageFindingWithoutGrade.slice(1)}`
+    : review.verdict;
 
   const copyText = async (text: string, label: string) => {
     try {
@@ -443,71 +439,138 @@ export default function ReviewCard({
     }
   };
 
+  const lineageTone =
+    lineageStatus === "current"
+      ? {
+          border: isDark ? "1px solid #3B5745" : "1px solid #BFD5BD",
+          background: isDark ? "#26332B" : "#E2ECE0",
+          color: isDark ? "#7CC08A" : "#2F7A44",
+        }
+      : lineageStatus === "stale"
+        ? {
+            border: isDark ? "1px solid #57482A" : "1px solid #DCC791",
+            background: isDark ? "#342C1B" : "#F4E8CB",
+            color: isDark ? "#E0AE5A" : "#96690F",
+          }
+        : {
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            background: isDark ? "#302F2A" : "#EDEAE0",
+            color: isDark ? "#A39F92" : "#6F6A5C",
+          };
+
   return (
-    <div
+    <section
+      aria-label="Review Result"
       style={{
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.12)"
-          : "1px solid #e6e6e6",
-        borderRadius: 18,
-        padding: 20,
-        background: isDark ? "rgba(255,255,255,0.05)" : "#fff",
-        boxShadow: isDark
-          ? "0 6px 22px rgba(0,0,0,0.18)"
-          : "0 6px 22px rgba(0,0,0,0.06)",
-        color: isDark ? "#fff" : "#111",
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        borderRadius: 14,
+        padding: 14,
+        background: isDark ? "#262521" : "#F6F4ED",
+        color: isDark ? "#EDEAE3" : "#262521",
         display: "grid",
-        gap: 16,
+        gap: 14,
       }}
     >
       <div
         style={{
           display: "flex",
-          alignItems: "flex-start",
+          alignItems: "center",
           justifyContent: "space-between",
-          gap: 14,
+          gap: 12,
           flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: 0.2 }}>
-            Review Score
+        <div style={{ display: "grid", gap: 5, minWidth: 0 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 16, fontWeight: 950, letterSpacing: 0.1 }}>
+              Review Result
+            </div>
+            <span
+              style={{
+                ...lineageTone,
+                borderRadius: 999,
+                padding: "4px 8px",
+                fontSize: 10,
+                fontWeight: 900,
+                textTransform: "capitalize",
+              }}
+            >
+              {lineageStatus ? `Review artifact · ${lineageStatus}` : "Review artifact"}
+            </span>
           </div>
           <div
             style={{
-              fontSize: 13,
-              color: isDark ? "rgba(255,255,255,0.76)" : "#444",
+              fontSize: 12,
+              color: isDark ? "#A39F92" : "#6F6A5C",
               lineHeight: 1.45,
+              maxWidth: 760,
             }}
           >
-            {review.verdict}
+            <strong style={{ color: isDark ? "#EDEAE3" : "#262521" }}>
+              Coverage finding
+            </strong>
+            <br />
+            {coverageFinding}
           </div>
         </div>
 
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 900,
-            padding: "4px 8px",
-            borderRadius: 999,
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.14)"
-              : "1px solid rgba(15,23,42,0.12)",
-            background: isDark
-              ? "rgba(255,255,255,0.04)"
-              : "rgba(15,23,42,0.04)",
-            color: isDark
-              ? "rgba(255,255,255,0.82)"
-              : "rgba(15,23,42,0.82)",
-          }}
-        >
-          Review artifact
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div
+            style={{
+              border: isDark ? "1px solid #3B5745" : "1px solid #BFD5BD",
+              borderRadius: 999,
+              padding: "8px 11px",
+              background: isDark ? "#26332B" : "#E2ECE0",
+              color: isDark ? "#7CC08A" : "#2F7A44",
+              fontWeight: 950,
+              fontSize: 14,
+            }}
+          >
+            <span style={{ fontSize: 10, marginRight: 6, opacity: 0.78 }}>
+              Review Score
+            </span>
+            {score}/100
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 900 }}>
+            Suite grade: {grade}
+          </span>
+          <SmallButton
+            onClick={() => copyText(reviewToMarkdown(review), "Markdown")}
+            resolvedTheme={resolvedTheme}
+          >
+            Copy MD
+          </SmallButton>
+          <SmallButton
+            onClick={() => copyText(reviewToJson(review), "JSON")}
+            resolvedTheme={resolvedTheme}
+          >
+            Copy JSON
+          </SmallButton>
         </div>
       </div>
 
-      {provenanceLabel || provenanceDescription ? (
+      {lineageLabels.length > 0 || provenanceLabel || provenanceDescription ? (
         <div style={{ display: "grid", gap: 6 }}>
-          {provenanceLabel ? (
+          {lineageLabels.length > 0 ? (
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+              {lineageLabels.map((label) => (
+                <span
+                  key={label}
+                  style={{
+                    border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+                    borderRadius: 999,
+                    padding: "4px 8px",
+                    background: isDark ? "#302F2A" : "#FFFFFF",
+                    color: isDark ? "#A39F92" : "#6F6A5C",
+                    fontSize: 10.5,
+                    fontWeight: 800,
+                  }}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          ) : provenanceLabel ? (
             <ArtifactProvenanceLabel
               label={provenanceLabel}
               resolvedTheme={resolvedTheme}
@@ -517,9 +580,9 @@ export default function ReviewCard({
           {provenanceDescription ? (
             <div
               style={{
-                fontSize: 12,
+                fontSize: 11,
                 lineHeight: 1.45,
-                color: isDark ? "rgba(255,255,255,0.72)" : "#555",
+                color: isDark ? "#A39F92" : "#6F6A5C",
               }}
             >
               {provenanceDescription}
@@ -527,6 +590,39 @@ export default function ReviewCard({
           ) : null}
         </div>
       ) : null}
+
+      {lineageReasons.length > 0 ? (
+        <div
+          style={{
+            border: lineageTone.border,
+            borderRadius: 10,
+            padding: "8px 10px",
+            background: lineageTone.background,
+            color: lineageTone.color,
+            fontSize: 11,
+            lineHeight: 1.45,
+          }}
+        >
+          {lineageReasons.join(" ")}
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          border: isDark ? "1px solid #394957" : "1px solid #C6D4DE",
+          borderRadius: 10,
+          padding: "9px 11px",
+          background: isDark ? "#20282E" : "#EAF0F4",
+          color: isDark ? "#B7C7D3" : "#405766",
+          fontSize: 11,
+          lineHeight: 1.45,
+          fontWeight: 700,
+        }}
+      >
+        Review Score assesses the quality and coverage of the saved test suite.
+        It is not release approval. Release Readiness is calculated separately
+        from requirement, suite, review, and execution evidence.
+      </div>
 
       <ReviewToDesignActions
         gapCount={review.riskGaps.length}
@@ -540,95 +636,15 @@ export default function ReviewCard({
         isGeneratingFromGaps={isGeneratingFromGaps}
       />
 
-      <div>
-        <SectionLabel
-          title="Review actions"
-          description="Copy this review result in markdown or JSON format for external use."
-          resolvedTheme={resolvedTheme}
-        />
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <SmallButton
-            onClick={() => copyText(reviewToMarkdown(review), "Markdown")}
-            resolvedTheme={resolvedTheme}
-          >
-            Copy MD
-          </SmallButton>
-
-          <SmallButton
-            onClick={() => copyText(reviewToJson(review), "JSON")}
-            variant="dark"
-            resolvedTheme={resolvedTheme}
-          >
-            Copy JSON
-          </SmallButton>
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gap: 10,
-          border: isDark
-            ? "1px solid rgba(255,255,255,0.10)"
-            : "1px solid #f0f0f0",
-          borderRadius: 16,
-          padding: 14,
-          background: isDark ? "rgba(255,255,255,0.04)" : "#fafafa",
-        }}
-      >
-        <SectionLabel
-          title="Score summary"
-          description="Current persisted review score and grade."
-          resolvedTheme={resolvedTheme}
-        />
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <div
-            style={{
-              border: isDark ? "1px solid #fff" : "1px solid #111",
-              borderRadius: 999,
-              padding: "9px 12px",
-              background: isDark ? "#fff" : "#111",
-              color: isDark ? "#111" : "#fff",
-              fontWeight: 950,
-              fontSize: 14,
-            }}
-          >
-            {score}/100
-          </div>
-
-          <div
-            style={{
-              fontSize: 12,
-              color: isDark ? "rgba(255,255,255,0.66)" : "#666",
-              fontWeight: 800,
-            }}
-          >
-            {grade}
-          </div>
-        </div>
-      </div>
-
       {toast && (
         <div
           style={{
             display: "inline-block",
             padding: "6px 10px",
             borderRadius: 999,
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.14)"
-              : "1px solid #e6e6e6",
-            background: isDark ? "rgba(255,255,255,0.06)" : "#fff",
-            color: isDark ? "#fff" : "#111",
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            background: isDark ? "#302F2A" : "#FFFFFF",
+            color: isDark ? "#EDEAE3" : "#262521",
             fontSize: 12,
             fontWeight: 800,
             width: "fit-content",
@@ -640,121 +656,112 @@ export default function ReviewCard({
 
       <div
         style={{
-          border: isDark
-            ? "1px solid rgba(255,255,255,0.10)"
-            : "1px solid #f0f0f0",
-          borderRadius: 16,
-          padding: 14,
-          background: isDark ? "rgba(255,255,255,0.04)" : "#fafafa",
           display: "grid",
           gap: 12,
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))",
         }}
       >
+        <div
+          style={{
+            border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
+            borderRadius: 12,
+            padding: 14,
+            background: isDark ? "#21201C" : "#FFFFFF",
+            display: "grid",
+            gap: 10,
+            alignContent: "start",
+          }}
+        >
+          <SectionLabel
+            title="Score summary"
+            description="Current saved review score and derived grade."
+            resolvedTheme={resolvedTheme}
+          />
+          <div style={{ fontSize: 24, fontWeight: 950, lineHeight: 1 }}>
+            {score}<span style={{ fontSize: 12, color: isDark ? "#A39F92" : "#6F6A5C" }}>/100</span>
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 800 }}>{grade}</div>
+        </div>
+
+        <div
+          style={{
+            border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
+            borderRadius: 12,
+            padding: 14,
+            background: isDark ? "#21201C" : "#FFFFFF",
+            display: "grid",
+            gap: 11,
+          }}
+        >
+          <SectionLabel
+            title="Breakdown"
+            description="Category-by-category scoring for the current review."
+            resolvedTheme={resolvedTheme}
+          />
+          <BarRow label="Business relevance" value={review.breakdown.businessRelevance} max={25} resolvedTheme={resolvedTheme} />
+          <BarRow label="Risk coverage" value={review.breakdown.riskCoverage} max={25} resolvedTheme={resolvedTheme} />
+          <BarRow label="Design quality" value={review.breakdown.designQuality} max={20} resolvedTheme={resolvedTheme} />
+          <BarRow label="Level & scope" value={review.breakdown.levelAndScope} max={15} resolvedTheme={resolvedTheme} />
+          <BarRow label="Diagnostic value" value={review.breakdown.diagnosticValue} max={15} resolvedTheme={resolvedTheme} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
         <SectionLabel
-          title="Breakdown"
-          description="Category-by-category scoring for the current review."
+          title="Findings"
+          description="Coverage gaps, design issues, and prioritized improvement areas from this review."
           resolvedTheme={resolvedTheme}
         />
-
-        <BarRow
-          label="Business relevance"
-          value={review.breakdown.businessRelevance}
-          max={25}
-          resolvedTheme={resolvedTheme}
-        />
-        <BarRow
-          label="Risk coverage"
-          value={review.breakdown.riskCoverage}
-          max={25}
-          resolvedTheme={resolvedTheme}
-        />
-        <BarRow
-          label="Design quality"
-          value={review.breakdown.designQuality}
-          max={20}
-          resolvedTheme={resolvedTheme}
-        />
-        <BarRow
-          label="Level & scope"
-          value={review.breakdown.levelAndScope}
-          max={15}
-          resolvedTheme={resolvedTheme}
-        />
-        <BarRow
-          label="Diagnostic value"
-          value={review.breakdown.diagnosticValue}
-          max={15}
-          resolvedTheme={resolvedTheme}
-        />
-      </div>
-
-      <div style={{ display: "grid", gap: 14 }}>
-        <div
-          style={{
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.10)"
-              : "1px solid #f0f0f0",
-            borderRadius: 16,
-            padding: 14,
-            background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
-          }}
-        >
-          <SectionLabel
-            title="Top risk gaps"
-            description="Highest-priority coverage gaps identified in the review."
-            resolvedTheme={resolvedTheme}
-          />
-          <Section
-            title=""
-            items={review.riskGaps}
-            resolvedTheme={resolvedTheme}
-          />
-        </div>
-
-        <div
-          style={{
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.10)"
-              : "1px solid #f0f0f0",
-            borderRadius: 16,
-            padding: 14,
-            background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
-          }}
-        >
-          <SectionLabel
-            title="Anti-patterns"
-            description="Design or structure issues that reduce suite effectiveness."
-            resolvedTheme={resolvedTheme}
-          />
-          <Section
-            title=""
-            items={review.antiPatterns}
-            resolvedTheme={resolvedTheme}
-          />
-        </div>
-
-        <div
-          style={{
-            border: isDark
-              ? "1px solid rgba(255,255,255,0.10)"
-              : "1px solid #f0f0f0",
-            borderRadius: 16,
-            padding: 14,
-            background: isDark ? "rgba(255,255,255,0.03)" : "#fff",
-          }}
-        >
-          <SectionLabel
-            title="Prioritized improvements"
-            description="Recommended next improvements based on the current review."
-            resolvedTheme={resolvedTheme}
-          />
-          <Section
-            title=""
-            items={review.improvements}
-            resolvedTheme={resolvedTheme}
-          />
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+          {[
+            {
+              title: "Risk gaps",
+              description: "Highest-priority coverage gaps identified in the review.",
+              items: review.riskGaps,
+            },
+            {
+              title: "Anti-patterns",
+              description: "Test-design issues that reduce suite effectiveness.",
+              items: review.antiPatterns,
+            },
+            {
+              title: "Improvements",
+              description: "Prioritized improvements for the current test design.",
+              items: review.improvements,
+            },
+          ].map((finding) => (
+            <div
+              key={finding.title}
+              style={{
+                border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
+                borderRadius: 12,
+                padding: 12,
+                background: isDark ? "#21201C" : "#FFFFFF",
+              }}
+            >
+              <SectionLabel
+                title={`${finding.title} · ${finding.items.length}`}
+                description={finding.description}
+                resolvedTheme={resolvedTheme}
+              />
+              <Section title="" items={finding.items} resolvedTheme={resolvedTheme} />
+            </div>
+          ))}
         </div>
       </div>
-    </div>
+
+      <div
+        style={{
+          borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+          paddingTop: 10,
+          color: isDark ? "#A39F92" : "#6F6A5C",
+          fontSize: 11,
+          lineHeight: 1.45,
+        }}
+      >
+        AI-assisted review — inspect the structured findings and saved artifacts
+        before relying on them.
+      </div>
+    </section>
   );
 }

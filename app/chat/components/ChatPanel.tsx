@@ -82,19 +82,21 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { buildReleaseReadinessSummary } from "@/lib/release-readiness/releaseReadinessService";
+import { getArtifactConsistencyState } from "@/lib/chat/artifact";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
 import { isNearBottom } from "../hooks/useChatSession.helpers";
+import ReviewCard from "../cards/ReviewCard";
 
-import ChatInput from "./ChatInput";
 import ChatMessageList from "./ChatMessageList";
-import ChatWorkflowBanner from "./ChatWorkflowBanner";
 import FeatureWorkspaceSummary from "./FeatureWorkspaceSummary";
-import { ReleaseReadinessPanel, STATUS_LABELS } from "./ReleaseReadinessPanel";
+import { ReleaseReadinessPanel } from "./ReleaseReadinessPanel";
 import StrategyPanel from "./StrategyPanel";
 import { ActivityTimelinePanel } from "./workspace/ActivityTimelinePanel";
 import { ArtifactDocumentSurface } from "./workspace/ArtifactDocumentSurface";
-import { getLatestArtifactDocumentIndexesToHide } from "./workspace/artifactDocumentItems";
+import {
+  buildReviewProvenanceLabel,
+  getLatestArtifactDocumentIndexesToHide,
+} from "./workspace/artifactDocumentItems";
 
 type Props = {
   chat: UseChatSessionReturn;
@@ -292,300 +294,6 @@ function EmptyWorkspaceHint(args: { resolvedTheme: "light" | "dark" }) {
   );
 }
 
-const strategyWorkflowSteps = [
-  {
-    title: "Strategy",
-    tourAnchor: "workflow-preview-requirement",
-  },
-  {
-    title: "Test Design",
-    tourAnchor: "workflow-preview-test-design",
-  },
-  {
-    title: "Test Review",
-    tourAnchor: "workflow-preview-review",
-  },
-  {
-    title: "Execution",
-    tourAnchor: "workflow-preview-results",
-  },
-  {
-    title: "Release Readiness",
-    tourAnchor: "workflow-preview-readiness",
-  },
-];
-
-function WorkflowPreview(args: { resolvedTheme: "light" | "dark" }) {
-  const isDark = args.resolvedTheme === "dark";
-  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
-
-  return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 950,
-          textTransform: "uppercase",
-          color: mutedText,
-        }}
-      >
-        Workflow path
-      </div>
-
-      <div
-        aria-label="Workflow path"
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        {strategyWorkflowSteps.map((step, index) => (
-          <React.Fragment key={step.title}>
-            <span
-              data-tour-anchor={step.tourAnchor}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: 999,
-                border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-                background: isDark ? "#302F2A" : "#FFFFFF",
-                color: mutedText,
-                padding: "4px 8px",
-                fontSize: 11,
-                fontWeight: 900,
-                lineHeight: 1.2,
-              }}
-            >
-              {step.title}
-            </span>
-            {index < strategyWorkflowSteps.length - 1 ? (
-              <span
-                aria-hidden="true"
-                style={{
-                  color: mutedText,
-                  opacity: 0.55,
-                  fontSize: 13,
-                  fontWeight: 900,
-                }}
-              >
-                →
-              </span>
-            ) : null}
-          </React.Fragment>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function normalizeStageTitle(title: string | undefined): string {
-  return (
-    String(title ?? "").replace(/^Workspace stage:\s*/i, "").trim() || "Unknown"
-  );
-}
-
-function getStageIndex(args: {
-  requirementReady: boolean;
-  suiteReady: boolean;
-  reviewReady: boolean;
-  executionEvidenceReady: boolean;
-  readinessCalculated?: boolean;
-}): number {
-  if (args.readinessCalculated) return 5;
-  if (args.executionEvidenceReady) return 4;
-  if (args.reviewReady) return 3;
-  if (args.suiteReady) return 2;
-  return 1;
-}
-
-function isReadinessCalculated(status: keyof typeof STATUS_LABELS): boolean {
-  return status !== "insufficient_data";
-}
-
-function getReadinessStageLabel(status: keyof typeof STATUS_LABELS): string {
-  if (isReadinessCalculated(status)) return "Readiness signal calculated";
-  return "Review release readiness";
-}
-
-function getReadinessNextAction(status: keyof typeof STATUS_LABELS): string {
-  switch (status) {
-    case "ready":
-      return "Next: review the readiness signal, then make the final release decision.";
-    case "ready_with_risk":
-      return "Next: review remaining warnings and decide whether the residual risk is acceptable.";
-    case "not_ready":
-      return "Next: address failed or skipped execution results, then re-upload evidence and review readiness again.";
-    default:
-      return "Next: review the readiness signal and decide the next release action.";
-  }
-}
-
-function toReviewStrength(score: number | null | undefined): string | null {
-  if (typeof score !== "number") return null;
-  if (score >= 90) return "Strong";
-  if (score >= 75) return "Usable";
-  if (score >= 50) return "Mixed";
-  return "Weak";
-}
-
-function Pill(args: {
-  label: string;
-  tone?: "neutral" | "positive" | "info" | "warning";
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-  const tone = args.tone ?? "neutral";
-  const border =
-    tone === "positive"
-      ? isDark
-        ? "1px solid rgba(34,197,94,0.30)"
-        : "1px solid rgba(22,163,74,0.24)"
-      : tone === "info"
-        ? isDark
-          ? "1px solid rgba(96,165,250,0.30)"
-          : "1px solid rgba(37,99,235,0.22)"
-        : tone === "warning"
-          ? isDark
-            ? "1px solid rgba(245,158,11,0.34)"
-            : "1px solid rgba(217,119,6,0.26)"
-          : isDark
-            ? "1px solid rgba(255,255,255,0.12)"
-            : "1px solid rgba(15,23,42,0.12)";
-  const background =
-    tone === "positive"
-      ? isDark
-        ? "rgba(34,197,94,0.13)"
-        : "rgba(22,163,74,0.09)"
-      : tone === "info"
-        ? isDark
-          ? "rgba(96,165,250,0.13)"
-          : "rgba(37,99,235,0.08)"
-        : tone === "warning"
-          ? isDark
-            ? "rgba(245,158,11,0.13)"
-            : "rgba(245,158,11,0.10)"
-          : isDark
-            ? "rgba(255,255,255,0.05)"
-            : "rgba(15,23,42,0.04)";
-
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        width: "fit-content",
-        border,
-        background,
-        borderRadius: 999,
-        padding: "5px 9px",
-        fontSize: 11,
-        fontWeight: 900,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {args.label}
-    </span>
-  );
-}
-
-function PopulatedCommandBand(args: {
-  chat: UseChatSessionReturn;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-  const artifact = args.chat.sessionArtifact;
-  const reviewScore = artifact?.reviewResult?.score;
-  const reviewStrength = toReviewStrength(reviewScore);
-  const readiness = buildReleaseReadinessSummary(artifact ?? null);
-  const readinessCalculated = isReadinessCalculated(readiness.status);
-  const currentStage = normalizeStageTitle(args.chat.workflowStatus.title);
-  const stageLabel = readinessCalculated
-    ? getReadinessStageLabel(readiness.status)
-    : currentStage;
-  const stageIndex = getStageIndex({
-    requirementReady: args.chat.hasPinnedRequirement,
-    suiteReady: args.chat.hasPersistentTestSuite,
-    reviewReady: args.chat.hasReviewArtifact,
-    executionEvidenceReady: !!artifact?.executionIntelligence,
-    readinessCalculated,
-  });
-  const workspaceName =
-    args.chat.sessions.find((session) => session.id === args.chat.activeSessionId)
-      ?.title?.trim() || "Feature workspace";
-  const reviewLabel =
-    typeof reviewScore === "number"
-      ? `Review Score: ${reviewScore}/100${reviewStrength ? ` - ${reviewStrength}` : ""}`
-      : "Review Score: Not reviewed yet";
-  const readinessNeedsExecution = !readiness.factors.executionEvidencePresent;
-  const readinessLabel =
-    readiness.status === "insufficient_data" && readinessNeedsExecution
-      ? "Readiness: Not enough data yet - Needs execution"
-      : readinessCalculated
-        ? `Stage 5 readiness: ${STATUS_LABELS[readiness.status]}`
-        : `Readiness: ${STATUS_LABELS[readiness.status]}`;
-  const nextAction = readinessCalculated
-    ? getReadinessNextAction(readiness.status)
-    : readinessNeedsExecution
-    ? "Next: add execution results to generate your readiness signal."
-    : `Next: ${args.chat.workflowStatus.nextAction}`;
-
-  return (
-    <section
-      aria-label="Strategy command center"
-      style={{
-        border: isDark
-          ? "1px solid rgba(255,255,255,0.12)"
-          : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: 18,
-        padding: 14,
-        background: isDark ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.76)",
-        color: isDark ? "#ffffff" : "#0f172a",
-        display: "grid",
-        gap: 10,
-        boxShadow: isDark
-          ? "0 8px 30px rgba(0,0,0,0.12)"
-          : "0 8px 24px rgba(15,23,42,0.05)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ fontSize: 13, fontWeight: 950 }}>
-          Stage {stageIndex} of 5 - {stageLabel}
-        </div>
-        <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.35 }}>
-          {workspaceName}
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Pill
-            label={reviewLabel}
-            tone={typeof reviewScore === "number" ? "positive" : "neutral"}
-            resolvedTheme={args.resolvedTheme}
-          />
-          <Pill
-            label={readinessLabel}
-            tone={readiness.status === "insufficient_data" ? "warning" : "info"}
-            resolvedTheme={args.resolvedTheme}
-          />
-        </div>
-      </div>
-
-      <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.45 }}>
-        {nextAction}
-      </div>
-    </section>
-  );
-}
-
 function CompactRequirementBar(args: {
   chat: UseChatSessionReturn;
   inputRef: React.RefObject<HTMLInputElement | null>;
@@ -596,22 +304,12 @@ function CompactRequirementBar(args: {
 }) {
   const isDark = args.resolvedTheme === "dark";
   const [isExpandedEditorOpen, setIsExpandedEditorOpen] = React.useState(false);
+  const [isEditorFocused, setIsEditorFocused] = React.useState(false);
   const version = (
     args.chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
   )?.version;
   const textColor = isDark ? "#EDEAE3" : "#262521";
   const mutedText = isDark ? "#A39F92" : "#6F6A5C";
-  const editorInput = buildRefinedRequirementInput(args.chat.sessionArtifact);
-  const seedKey = editorInput
-    ? JSON.stringify([
-        args.chat.activeSessionId ?? "no-session",
-        version ?? "no-version",
-        editorInput,
-      ])
-    : null;
-  const seededRequirementSeedKeyRef = React.useRef<string | null>(null);
-  const [clearedRequirementSeedKey, setClearedRequirementSeedKey] =
-    React.useState<string | null>(null);
 
   const runBillableAction = (action: () => Promise<boolean>) => {
     void (async () => {
@@ -622,22 +320,6 @@ function CompactRequirementBar(args: {
       }
     })();
   };
-
-  React.useEffect(() => {
-    setClearedRequirementSeedKey(null);
-    seededRequirementSeedKeyRef.current = null;
-  }, [args.chat.activeSessionId]);
-
-  React.useEffect(() => {
-    if (!editorInput) return;
-    if (!seedKey) return;
-    if (clearedRequirementSeedKey === seedKey) return;
-    if (seededRequirementSeedKeyRef.current === seedKey) return;
-    if (args.chat.input.trim()) return;
-
-    args.chat.setInput(editorInput);
-    seededRequirementSeedKeyRef.current = seedKey;
-  }, [args.chat, clearedRequirementSeedKey, editorInput, seedKey]);
 
   const buttonStyle: React.CSSProperties = {
     borderRadius: 12,
@@ -753,8 +435,6 @@ function CompactRequirementBar(args: {
         <button
           type="button"
           onClick={() => {
-            setClearedRequirementSeedKey(seedKey);
-            seededRequirementSeedKeyRef.current = seedKey;
             args.chat.setInput("");
             args.onAfterUiAction?.();
           }}
@@ -803,15 +483,33 @@ function CompactRequirementBar(args: {
       </div>
 
       <div>
+        <label
+          htmlFor="strategy-next-input"
+          style={{
+            display: "block",
+            marginBottom: 7,
+            color: textColor,
+            fontSize: 12,
+            fontWeight: 900,
+          }}
+        >
+          Next Strategy input
+        </label>
         <div
           style={{
             border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
             borderRadius: 12,
             background: isDark ? "#1B1A17" : "#FFFFFF",
             padding: 12,
+            boxShadow: isEditorFocused
+              ? isDark
+                ? "0 0 0 2px rgba(217,119,87,0.28)"
+                : "0 0 0 2px rgba(193,95,60,0.20)"
+              : "none",
           }}
         >
           <textarea
+            id="strategy-next-input"
             ref={(node) => {
               (
                 args.inputRef as React.MutableRefObject<HTMLInputElement | null>
@@ -822,7 +520,9 @@ function CompactRequirementBar(args: {
             onChange={(event) => {
               args.chat.setInput(event.target.value);
             }}
-            placeholder="Refine the saved requirement or paste updated acceptance criteria."
+            onFocus={() => setIsEditorFocused(true)}
+            onBlur={() => setIsEditorFocused(false)}
+            placeholder="Enter the next refinement, acceptance-criteria change, or requirement update."
             style={{
               width: "100%",
               minHeight: 132,
@@ -852,7 +552,7 @@ function CompactRequirementBar(args: {
             }}
           >
             <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.4 }}>
-              Edit the requirement here, then save it as the next Strategy input.
+              The saved requirement remains unchanged until you submit this next Strategy input.
             </div>
             <button
               type="button"
@@ -905,6 +605,7 @@ function StrategyWorkspaceStart(args: {
   onCreditsMayHaveChanged?: () => void;
 }) {
   const isDark = args.resolvedTheme === "dark";
+  const [isEditorFocused, setIsEditorFocused] = React.useState(false);
   const textColor = isDark ? "#EDEAE3" : "#262521";
   const mutedText = isDark ? "#A39F92" : "#6F6A5C";
 
@@ -969,6 +670,23 @@ function StrategyWorkspaceStart(args: {
     fontWeight: 900,
     cursor: args.isBusy ? "not-allowed" : "pointer",
     opacity: args.isBusy ? 0.58 : 1,
+  };
+
+  const emptyPrimaryActionStyle: React.CSSProperties = {
+    ...emptyActionButtonStyle,
+    border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
+    background: isDark ? "#D97757" : "#C15F3C",
+    color: "#FFFFFF",
+  };
+
+  const submitRequirement = () => {
+    void (async () => {
+      const creditsMayHaveChanged = await args.chat.send();
+      args.onAfterUiAction?.();
+      if (creditsMayHaveChanged) {
+        args.onCreditsMayHaveChanged?.();
+      }
+    })();
   };
 
   if (args.hasWorkspaceArtifacts) {
@@ -1091,25 +809,85 @@ function StrategyWorkspaceStart(args: {
             </div>
           </div>
 
-          <ChatInput
-            ref={args.inputRef}
-            inputId="strategy-requirement-input"
-            visualVariant="strategy-editor"
-            mode={args.chat.mode}
-            value={args.chat.input}
-            disabled={args.isBusy}
-            resolvedTheme={args.resolvedTheme}
-            onChangeAction={(next: string) => args.chat.setInput(next)}
-            onSendAction={() => {
-              void (async () => {
-                const creditsMayHaveChanged = await args.chat.send();
-                args.onAfterUiAction?.();
-                if (creditsMayHaveChanged) {
-                  args.onCreditsMayHaveChanged?.();
-                }
-              })();
+          <div
+            style={{
+              border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+              borderRadius: 12,
+              background: isDark ? "#1B1A17" : "#FFFFFF",
+              padding: 12,
+              boxShadow: isEditorFocused
+                ? isDark
+                  ? "0 0 0 2px rgba(217,119,87,0.28)"
+                  : "0 0 0 2px rgba(193,95,60,0.20)"
+                : "none",
             }}
-          />
+          >
+            <textarea
+              id="strategy-requirement-input"
+              ref={(node) => {
+                (
+                  args.inputRef as React.MutableRefObject<HTMLInputElement | null>
+                ).current = node as unknown as HTMLInputElement | null;
+              }}
+              aria-label="Requirement input"
+              value={args.chat.input}
+              disabled={args.isBusy}
+              onChange={(event) => args.chat.setInput(event.target.value)}
+              onFocus={() => setIsEditorFocused(true)}
+              onBlur={() => setIsEditorFocused(false)}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  (event.ctrlKey || event.metaKey) &&
+                  !args.isBusy
+                ) {
+                  event.preventDefault();
+                  submitRequirement();
+                }
+              }}
+              placeholder="Refine a requirement or paste a Jira/API change description."
+              rows={5}
+              style={{
+                width: "100%",
+                minHeight: 132,
+                resize: "vertical",
+                boxSizing: "border-box",
+                border: "none",
+                background: "transparent",
+                color: textColor,
+                outline: "none",
+                fontSize: 13,
+                lineHeight: 1.55,
+                fontFamily: "inherit",
+                whiteSpace: "pre-wrap",
+              }}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+                marginTop: 10,
+                paddingTop: 10,
+                borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+              }}
+            >
+              <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.4 }}>
+                Enter adds a new line. Press Ctrl+Enter or Cmd+Enter to refine.
+              </div>
+              <button
+                type="button"
+                onClick={submitRequirement}
+                style={emptyPrimaryActionStyle}
+                disabled={args.isBusy}
+              >
+                {args.isBusy ? "Sending..." : "Refine Requirement"}
+              </button>
+            </div>
+          </div>
 
           <div
             aria-label="Requirement examples"
@@ -1131,60 +909,10 @@ function StrategyWorkspaceStart(args: {
             resolvedTheme={args.resolvedTheme}
           />
 
-          <WorkflowPreview resolvedTheme={args.resolvedTheme} />
         </div>
       </div>
     </section>
   );
-}
-
-function buildRefinedRequirementInput(
-  artifact: UseChatSessionReturn["sessionArtifact"]
-): string | null {
-  const rr = artifact?.refinedRequirement;
-  if (!rr) return null;
-
-  const lines: string[] = [];
-
-  if (rr.objective?.trim()) {
-    lines.push(`Objective: ${rr.objective.trim()}`);
-  }
-
-  if (rr.context?.trim()) {
-    lines.push(`Context / Constraints: ${rr.context.trim()}`);
-  }
-
-  if (rr.inScope?.length) {
-    lines.push(`In Scope: ${rr.inScope.join(", ")}`);
-  }
-
-  if (rr.outOfScope?.length) {
-    lines.push(`Out of Scope: ${rr.outOfScope.join(", ")}`);
-  }
-
-  if (rr.integrations?.length) {
-    lines.push(`Integrations: ${rr.integrations.join(", ")}`);
-  }
-
-  if (rr.riskFocus?.length) {
-    lines.push(`Risk Focus: ${rr.riskFocus.join(", ")}`);
-  }
-
-  if (rr.acceptanceCriteria?.length) {
-    lines.push("Acceptance Criteria:");
-    for (const item of rr.acceptanceCriteria) {
-      lines.push(`- ${item}`);
-    }
-  }
-
-  if (!lines.length) return null;
-
-  lines.push("");
-  lines.push(
-    "Generate structured test cases based on this Refined Requirement. Avoid duplicates with any existing tests in this session."
-  );
-
-  return lines.join("\n");
 }
 
 function getProcessingLabel(mode: UseChatSessionReturn["mode"]): string {
@@ -1366,6 +1094,466 @@ function PopulatedStrategyRecentActivity(args: {
   );
 }
 
+function TestDesignInputSurface(args: {
+  chat: UseChatSessionReturn;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  isBusy: boolean;
+  resolvedTheme: "light" | "dark";
+  runBillableAction: (action: () => Promise<boolean>) => void;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const [isEditorFocused, setIsEditorFocused] = React.useState(false);
+  const textColor = isDark ? "#EDEAE3" : "#262521";
+  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
+  const [isFocused, setIsFocused] = React.useState(false);
+
+  return (
+    <section
+      aria-label="Test Design input"
+      style={{
+        marginBottom: 12,
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        borderRadius: 14,
+        padding: 14,
+        background: isDark ? "#262521" : "#F6F4ED",
+        color: textColor,
+        display: "grid",
+        gap: 10,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "grid", gap: 3 }}>
+          <div style={{ fontSize: 13, fontWeight: 950 }}>Generate Tests</div>
+          <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.4 }}>
+            Describe the feature, requirement, or additional coverage you want
+            included.
+          </div>
+        </div>
+        <span
+          style={{
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            borderRadius: 999,
+            padding: "4px 8px",
+            background: isDark ? "#302F2A" : "#EDEAE0",
+            color: mutedText,
+            fontSize: 10.5,
+            fontWeight: 800,
+          }}
+        >
+          Additional input
+        </span>
+      </div>
+
+      <div
+        style={{
+          border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+          borderRadius: 12,
+          padding: 12,
+          background: isDark ? "#1B1A17" : "#FFFFFF",
+          boxShadow: isFocused
+            ? isDark
+              ? "0 0 0 2px rgba(217,119,87,0.28)"
+              : "0 0 0 2px rgba(193,95,60,0.20)"
+            : "none",
+        }}
+      >
+        <textarea
+          id="test-design-freeform-input"
+          aria-label="Additional Test Design input"
+          ref={(node) => {
+            (
+              args.inputRef as React.MutableRefObject<HTMLInputElement | null>
+            ).current = node as unknown as HTMLInputElement | null;
+          }}
+          value={args.chat.input}
+          disabled={args.isBusy}
+          onChange={(event) => args.chat.setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              (event.ctrlKey || event.metaKey) &&
+              !args.isBusy
+            ) {
+              event.preventDefault();
+              args.runBillableAction(() => args.chat.send());
+            }
+          }}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          placeholder="Describe the feature, requirement, Jira/API change, or additional coverage to generate."
+          rows={5}
+          style={{
+            width: "100%",
+            minHeight: 132,
+            resize: "vertical",
+            boxSizing: "border-box",
+            border: "none",
+            background: "transparent",
+            color: textColor,
+            outline: "none",
+            fontSize: 13,
+            lineHeight: 1.55,
+            fontFamily: "inherit",
+            whiteSpace: "pre-wrap",
+          }}
+        />
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+          }}
+        >
+          <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.4 }}>
+            Enter adds a new line. Press Ctrl+Enter or Cmd+Enter to submit.
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              args.runBillableAction(() => args.chat.send());
+            }}
+            disabled={args.isBusy}
+            style={{
+              borderRadius: 8,
+              border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
+              background: isDark ? "#D97757" : "#C15F3C",
+              color: "#FFFFFF",
+              padding: "8px 11px",
+              fontSize: 12,
+              fontWeight: 900,
+              cursor: args.isBusy ? "not-allowed" : "pointer",
+              opacity: args.isBusy ? 0.55 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate Tests
+          </button>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.45 }}>
+        Generate tests from the context entered here. To generate directly from
+        the saved requirement, use Generate Tests above.
+      </div>
+    </section>
+  );
+}
+
+function TestReviewGettingStarted(args: {
+  hasPersistentTestSuite: boolean;
+  resolvedTheme: "light" | "dark";
+}) {
+  const isDark = args.resolvedTheme === "dark";
+
+  return (
+    <section
+      aria-label="Test Review getting started"
+      style={{
+        marginBottom: 12,
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        borderRadius: 12,
+        padding: "12px 14px",
+        background: isDark ? "#2B2A26" : "#FCFBF6",
+        color: isDark ? "#EDEAE3" : "#262521",
+        display: "grid",
+        gap: 5,
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 950 }}>Getting started</div>
+      <div style={{ fontSize: 11, lineHeight: 1.5, opacity: 0.76 }}>
+        {args.hasPersistentTestSuite
+          ? "Review the saved suite for coverage gaps and improvement opportunities."
+          : "Generate and save a test suite in Test Design before running workspace review."}
+      </div>
+    </section>
+  );
+}
+
+function TestReviewEntrySurface(args: {
+  chat: UseChatSessionReturn;
+  lineageStatus: "current" | "stale" | "unknown";
+  resolvedTheme: "light" | "dark";
+  runBillableAction: (action: () => Promise<boolean>) => void;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const textColor = isDark ? "#EDEAE3" : "#262521";
+  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
+  const requirementVersion = (
+    args.chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
+  )?.version;
+  const suiteVersion = args.chat.sessionArtifact?.testSuite?.version;
+  const suiteCount = args.chat.sessionArtifact?.testSuite?.cases?.length ?? 0;
+  const reviewScore = args.chat.sessionArtifact?.reviewResult?.score;
+  const hasSuite = args.chat.hasPersistentTestSuite;
+
+  const prerequisiteChips = [
+    args.chat.hasPinnedRequirement
+      ? `Requirement · v${requirementVersion ?? 1}`
+      : "Requirement · not saved",
+    hasSuite
+      ? `Test suite · v${suiteVersion ?? "—"} · ${suiteCount} cases`
+      : "Test suite · none",
+    args.chat.hasReviewArtifact
+      ? `Review · ${args.lineageStatus} · ${reviewScore ?? "—"}/100`
+      : "Review · not run",
+  ];
+
+  return (
+    <section
+      aria-label="Test Review entry"
+      style={{
+        marginBottom: 12,
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        borderRadius: 14,
+        padding: 14,
+        background: isDark ? "#262521" : "#F6F4ED",
+        color: textColor,
+        display: "grid",
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "grid", gap: 3 }}>
+          <div style={{ fontSize: 13, fontWeight: 950 }}>Review Test Suite</div>
+          <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.4 }}>
+            Review the saved test suite for coverage gaps, risk areas, and
+            improvement opportunities.
+          </div>
+        </div>
+        <span
+          style={{
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            borderRadius: 999,
+            padding: "4px 8px",
+            background: isDark ? "#302F2A" : "#EDEAE0",
+            color: mutedText,
+            fontSize: 10.5,
+            fontWeight: 800,
+          }}
+        >
+          {hasSuite ? "Saved suite available" : "Needs a saved suite"}
+        </span>
+      </div>
+
+      <div
+        style={{
+          border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
+          borderRadius: 12,
+          padding: 12,
+          background: isDark ? "#21201C" : "#FFFFFF",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
+          {prerequisiteChips.map((label) => (
+            <span
+              key={label}
+              style={{
+                border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+                borderRadius: 999,
+                padding: "4px 8px",
+                background: isDark ? "#302F2A" : "#EDEAE0",
+                color: mutedText,
+                fontSize: 10.5,
+                fontWeight: 800,
+              }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            args.runBillableAction(() => args.chat.reviewTestSuite());
+          }}
+          disabled={!args.chat.canReviewTestSuite}
+          style={{
+            borderRadius: 8,
+            border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
+            background: isDark ? "#D97757" : "#C15F3C",
+            color: "#FFFFFF",
+            padding: "8px 11px",
+            fontSize: 12,
+            fontWeight: 900,
+            cursor: args.chat.canReviewTestSuite ? "pointer" : "not-allowed",
+            opacity: args.chat.canReviewTestSuite ? 1 : 0.55,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {args.chat.isRunningWorkflowAction ? "Reviewing..." : "Review Test Suite"}
+        </button>
+      </div>
+
+      {!hasSuite ? (
+        <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.45 }}>
+          Generate and save a test suite in Test Design before running workspace
+          review.
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function TestReviewSeparateSuiteDisclosure(args: {
+  chat: UseChatSessionReturn;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  isBusy: boolean;
+  resolvedTheme: "light" | "dark";
+  runBillableAction: (action: () => Promise<boolean>) => void;
+}) {
+  const isDark = args.resolvedTheme === "dark";
+  const textColor = isDark ? "#EDEAE3" : "#262521";
+  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
+
+  return (
+    <section
+      aria-label="Review a different suite or test plan"
+      style={{
+        marginBottom: 12,
+        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+        borderRadius: 12,
+        padding: "12px 14px",
+        background: isDark ? "#2B2A26" : "#FCFBF6",
+        color: textColor,
+      }}
+    >
+      <details>
+        <summary
+          style={{
+            cursor: "pointer",
+            color: textColor,
+            fontSize: 12,
+            fontWeight: 900,
+          }}
+        >
+          Review a different suite or test plan
+        </summary>
+        <div
+          style={{
+            marginTop: 6,
+            fontSize: 11,
+            color: mutedText,
+            lineHeight: 1.45,
+          }}
+        >
+          Paste a separate suite for an independent review without changing the
+          saved workspace suite.
+        </div>
+        <div
+          style={{
+            marginTop: 9,
+            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            borderRadius: 12,
+            padding: 12,
+            background: isDark ? "#1B1A17" : "#FFFFFF",
+            display: "grid",
+            gap: 7,
+          }}
+        >
+          <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.45 }}>
+            Use this option for a separate suite or plan. The saved workspace
+            review remains unchanged.
+          </div>
+          <textarea
+            id="test-review-freeform-input"
+            aria-label="Separate suite or test plan"
+            ref={(node) => {
+              (
+                args.inputRef as React.MutableRefObject<HTMLInputElement | null>
+              ).current = node as unknown as HTMLInputElement | null;
+            }}
+            value={args.chat.input}
+            disabled={args.isBusy}
+            onChange={(event) => args.chat.setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                (event.ctrlKey || event.metaKey) &&
+                !args.isBusy
+              ) {
+                event.preventDefault();
+                args.runBillableAction(() => args.chat.send());
+              }
+            }}
+            placeholder="Paste a separate test suite or test plan to review."
+            rows={5}
+            style={{
+              width: "100%",
+              minHeight: 132,
+              resize: "vertical",
+              boxSizing: "border-box",
+              border: "none",
+              background: "transparent",
+              color: textColor,
+              outline: "none",
+              fontSize: 13,
+              lineHeight: 1.55,
+              fontFamily: "inherit",
+              whiteSpace: "pre-wrap",
+            }}
+          />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              paddingTop: 10,
+              borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
+            }}
+          >
+            <button
+              type="button"
+              disabled={args.isBusy}
+              onClick={() => {
+                args.runBillableAction(() => args.chat.send());
+              }}
+              style={{
+                borderRadius: 8,
+                border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
+                background: isDark ? "#D97757" : "#C15F3C",
+                color: "#FFFFFF",
+                padding: "8px 11px",
+                fontSize: 12,
+                fontWeight: 900,
+                cursor: args.isBusy ? "not-allowed" : "pointer",
+                opacity: args.isBusy ? 0.55 : 1,
+              }}
+            >
+              Review
+            </button>
+          </div>
+        </div>
+      </details>
+    </section>
+  );
+}
+
 export default function ChatPanel({
   chat,
   onAfterUiAction,
@@ -1423,7 +1611,18 @@ export default function ChatPanel({
   // here causes Strategy/Test Design/Test Review shells to bleed across views.
   const isCoachSession = chat.mode === "coach";
   const isTestDesignSession = chat.mode === "cases";
+  const isTestReviewSession = chat.mode === "review";
+  const previousModeRef = useRef(chat.mode);
   const isDark = resolvedTheme === "dark";
+
+  useEffect(() => {
+    const previousMode = previousModeRef.current;
+    previousModeRef.current = chat.mode;
+
+    if (chat.mode === "coach" && previousMode !== "coach") {
+      chat.setInput("");
+    }
+  }, [chat.mode, chat.setInput]);
 
   const isBusy = chat.isSending || chat.isRunningWorkflowAction;
 
@@ -1467,9 +1666,55 @@ export default function ChatPanel({
   const isPopulatedStrategy = isCoachSession && hasWorkspaceArtifacts;
   const showReleaseReadiness =
     chat.hasPersistentTestSuite || chat.hasReviewArtifact || hasExecutionEvidence;
-  const showWorkspaceOverview = hasWorkspaceArtifacts || !isCoachSession;
   const showActivityTimeline =
     !isPopulatedStrategy && (!isCoachSession || chat.items.length > 0 || isBusy);
+  const artifactConsistency = getArtifactConsistencyState(chat.sessionArtifact);
+  const persistedReview = chat.sessionArtifact?.reviewResult ?? null;
+  const persistedReviewLineage = persistedReview as
+    | (typeof persistedReview & {
+        basedOnRequirementVersion?: number;
+        basedOnSuiteVersion?: number;
+      })
+    | null;
+  const reviewHasComparableLineage =
+    typeof persistedReviewLineage?.basedOnRequirementVersion === "number" &&
+    typeof persistedReviewLineage?.basedOnSuiteVersion === "number" &&
+    typeof artifactConsistency.requirementVersion === "number" &&
+    typeof artifactConsistency.suiteVersion === "number";
+  const reviewLineageStatus: "current" | "stale" | "unknown" =
+    artifactConsistency.reviewStale
+      ? "stale"
+      : reviewHasComparableLineage &&
+          persistedReviewLineage?.basedOnRequirementVersion ===
+            artifactConsistency.requirementVersion &&
+          persistedReviewLineage?.basedOnSuiteVersion === artifactConsistency.suiteVersion
+        ? "current"
+        : "unknown";
+  const reviewLineageLabels = persistedReview
+    ? [
+        typeof persistedReviewLineage?.basedOnSuiteVersion === "number"
+          ? `Based on Test Suite v${persistedReviewLineage.basedOnSuiteVersion}`
+          : "Test Suite lineage unknown",
+        typeof persistedReviewLineage?.basedOnRequirementVersion === "number"
+          ? `Based on Requirement v${persistedReviewLineage.basedOnRequirementVersion}`
+          : "Requirement lineage unknown",
+      ]
+    : [];
+  const reviewLineageReasons =
+    reviewLineageStatus === "stale"
+      ? artifactConsistency.reasons.filter((reason) =>
+          reason.toLowerCase().includes("review result")
+        )
+      : reviewLineageStatus === "unknown" && persistedReview
+        ? ["This review does not include enough lineage metadata to verify it against the current requirement and suite."]
+        : [];
+  const reviewFreeItems = isTestReviewSession
+    ? chat.items.filter((item) => item.kind !== "review")
+    : chat.items;
+  const reviewFreeSessionArtifact =
+    isTestReviewSession && chat.sessionArtifact
+      ? { ...chat.sessionArtifact, reviewResult: undefined }
+      : chat.sessionArtifact;
   const processingBanner = isBusy ? (
     <div style={processingBannerStyle}>
       {chat.isRunningWorkflowAction
@@ -1477,30 +1722,19 @@ export default function ChatPanel({
         : getProcessingLabel(chat.mode)}
     </div>
   ) : null;
-  const modeInput = isCoachSession ? null : (
-    <ChatInput
-      ref={inputRef}
-      mode={chat.mode}
-      value={chat.input}
-      disabled={isBusy}
-      hasReviewArtifactContext={
-        chat.mode === "review" &&
-        (chat.hasPersistentTestSuite || chat.hasReviewArtifact)
-      }
-      resolvedTheme={resolvedTheme}
-      onChangeAction={(next: string) => chat.setInput(next)}
-      onSendAction={() => {
-        runBillableAction(() => chat.send());
-      }}
-    />
-  );
-  const activityTimeline = showActivityTimeline && !isTestDesignSession ? (
+  const activityTimeline =
+    showActivityTimeline && !isTestDesignSession && !isTestReviewSession ? (
     <div>
       <ActivityTimelinePanel
         ref={chatBoxRef}
         resolvedTheme={resolvedTheme}
         isNarrow={isNarrow}
-        inputSlot={isTestDesignSession ? null : modeInput}
+        title={isTestReviewSession ? "Recent activity" : undefined}
+        description={
+          isTestReviewSession
+            ? "Supporting review requests and previous workspace activity. The latest persisted review stays in the primary surface above."
+            : undefined
+        }
       >
         {processingBanner}
 
@@ -1553,26 +1787,38 @@ export default function ChatPanel({
       }}
     >
       <div>
-        {isTestDesignSession && modeInput ? (
-          <div
-            style={{
-              marginBottom: 12,
-              border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-              borderRadius: 14,
-              padding: 12,
-              background: isDark ? "#262521" : "#F6F4ED",
-            }}
-          >
-            {modeInput}
-          </div>
+        {isTestDesignSession ? (
+          <TestDesignInputSurface
+            chat={chat}
+            inputRef={inputRef}
+            isBusy={isBusy}
+            resolvedTheme={resolvedTheme}
+            runBillableAction={runBillableAction}
+          />
         ) : null}
 
-        {showOnboardingHint ? (
+        {isTestReviewSession ? (
+          <TestReviewEntrySurface
+            chat={chat}
+            lineageStatus={reviewLineageStatus}
+            resolvedTheme={resolvedTheme}
+            runBillableAction={runBillableAction}
+          />
+        ) : null}
+
+        {showOnboardingHint && !isTestReviewSession ? (
           <OnboardingHint
             showStrategyHint={isCoachSession}
             testDesignVisual={isTestDesignSession}
             hasWorkspaceArtifacts={hasWorkspaceArtifacts}
             nextAction={chat.workflowStatus.nextAction}
+            resolvedTheme={resolvedTheme}
+          />
+        ) : null}
+
+        {showOnboardingHint && isTestReviewSession ? (
+          <TestReviewGettingStarted
+            hasPersistentTestSuite={chat.hasPersistentTestSuite}
             resolvedTheme={resolvedTheme}
           />
         ) : null}
@@ -1589,11 +1835,7 @@ export default function ChatPanel({
           />
         ) : null}
 
-        {isPopulatedStrategy ? (
-          <PopulatedCommandBand chat={chat} resolvedTheme={resolvedTheme} />
-        ) : null}
-
-        {showWorkspaceOverview ? (
+        {!isTestReviewSession ? (
         <div style={workspaceOverviewWrapStyle}>
           <div data-tour-anchor="artifact-summary">
             <WorkspaceSectionLabel
@@ -1614,15 +1856,7 @@ export default function ChatPanel({
               onCreditsMayHaveChanged={onCreditsMayHaveChanged}
             />
 
-            {showReleaseReadiness && !isTestDesignSession ? (
-              <ReleaseReadinessPanel
-                sessionArtifact={chat.sessionArtifact}
-                resolvedTheme={resolvedTheme}
-                commandCenter={isPopulatedStrategy}
-              />
-            ) : null}
-
-            {showReleaseReadiness && isTestDesignSession ? (
+            {showReleaseReadiness ? (
               <ReleaseReadinessPanel
                 sessionArtifact={chat.sessionArtifact}
                 resolvedTheme={resolvedTheme}
@@ -1631,12 +1865,14 @@ export default function ChatPanel({
             ) : null}
 
             <ArtifactDocumentSurface
+              key={`artifact-documents-${chat.mode}-${chat.activeSessionId ?? "no-session"}`}
               items={chat.items}
               sessionArtifact={chat.sessionArtifact}
               sessionId={chat.activeSessionId}
               resolvedTheme={resolvedTheme}
               commandCenter={isPopulatedStrategy}
               testDesignVisual={isTestDesignSession}
+              initiallyOpenSuite={isTestDesignSession ? false : undefined}
               onUpdateTestSuiteAction={(cases) => {
                 void chat.updateTestSuite(cases);
               }}
@@ -1677,28 +1913,105 @@ export default function ChatPanel({
               />
             ) : null}
 
-            {!hasWorkspaceArtifacts && !isBusy && !isTestDesignSession ? (
+            {!hasWorkspaceArtifacts &&
+            !isBusy &&
+            !isTestDesignSession &&
+            !isCoachSession ? (
               <EmptyWorkspaceHint resolvedTheme={resolvedTheme} />
             ) : null}
           </div>
 
-          {!isPopulatedStrategy ? (
-          <div>
-            <WorkspaceSectionLabel
-              title="Workflow guidance"
-              description="Current stage and the next recommended workspace move."
-              resolvedTheme={resolvedTheme}
-              testDesignVisual={isTestDesignSession}
-            />
-            <div data-tour-anchor="workflow-guidance">
-              <ChatWorkflowBanner
-                status={chat.workflowStatus}
-                resolvedTheme={resolvedTheme}
-              />
-            </div>
-          </div>
-          ) : null}
         </div>
+        ) : null}
+
+        {isTestReviewSession ? (
+          <div style={workspaceOverviewWrapStyle}>
+            <div data-tour-anchor="artifact-summary">
+              <WorkspaceSectionLabel
+                title="Workflow status"
+                description={
+                  hasWorkspaceArtifacts
+                    ? "Saved requirement, generated suite, review result, and execution evidence for this workspace."
+                    : "No saved workspace artifacts yet. Start with the review prerequisite above."
+                }
+                resolvedTheme={resolvedTheme}
+                testDesignVisual
+              />
+
+              <FeatureWorkspaceSummary
+                chat={chat}
+                resolvedTheme={resolvedTheme}
+                commandCenter={false}
+                onCreditsMayHaveChanged={onCreditsMayHaveChanged}
+              />
+
+              {persistedReview ? (
+                <div data-tour-anchor="review-actions">
+                  <ReviewCard
+                    review={persistedReview}
+                    resolvedTheme={resolvedTheme}
+                    provenanceLabel={buildReviewProvenanceLabel(chat.sessionArtifact)}
+                    provenanceDescription="Saved review result for the current test design."
+                    lineageStatus={reviewLineageStatus}
+                    lineageLabels={reviewLineageLabels}
+                    lineageReasons={reviewLineageReasons}
+                    onImproveTestPlanAction={() => {
+                      runBillableAction(() => chat.regenerateSuite());
+                    }}
+                    canImproveTestPlan={chat.canRegenerateSuite}
+                    isImprovingTestPlan={chat.isRunningWorkflowAction}
+                    onGenerateFromGapsAction={() => {
+                      runBillableAction(() => chat.generateNextBatchOfTests());
+                    }}
+                    canGenerateFromGaps={canGenerateNextBatch}
+                    isGeneratingFromGaps={chat.isRunningWorkflowAction}
+                  />
+                </div>
+              ) : null}
+
+              {showReleaseReadiness ? (
+                <ReleaseReadinessPanel
+                  sessionArtifact={chat.sessionArtifact}
+                  resolvedTheme={resolvedTheme}
+                  commandCenter={false}
+                />
+              ) : null}
+
+              <ArtifactDocumentSurface
+                key={`artifact-documents-${chat.mode}-${chat.activeSessionId ?? "no-session"}`}
+                items={reviewFreeItems}
+                sessionArtifact={reviewFreeSessionArtifact}
+                sessionId={chat.activeSessionId}
+                resolvedTheme={resolvedTheme}
+                testDesignVisual
+                initiallyOpenSuite={false}
+                onUpdateTestSuiteAction={(cases) => {
+                  void chat.updateTestSuite(cases);
+                }}
+                onExecutionUploadSuccess={chat.applyExecutionEvidenceUpload}
+              />
+
+              <TestReviewSeparateSuiteDisclosure
+                chat={chat}
+                inputRef={inputRef}
+                isBusy={isBusy}
+                resolvedTheme={resolvedTheme}
+                runBillableAction={runBillableAction}
+              />
+
+              {!hasWorkspaceArtifacts && !isBusy ? (
+                <EmptyWorkspaceHint resolvedTheme={resolvedTheme} />
+              ) : null}
+            </div>
+
+            <PopulatedStrategyRecentActivity
+              chat={chat}
+              processingBanner={processingBanner}
+              resolvedTheme={resolvedTheme}
+              hiddenItemIndexes={hiddenTimelineDocumentIndexes}
+            />
+
+          </div>
         ) : null}
 
         {isPopulatedStrategy ? (
@@ -1711,7 +2024,7 @@ export default function ChatPanel({
           </div>
         ) : null}
 
-        {activityTimeline}
+        {isTestReviewSession ? null : activityTimeline}
       </div>
     </div>
   );
