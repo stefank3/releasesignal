@@ -47,6 +47,7 @@
 "use client";
 
 import React from "react";
+import { getArtifactConsistencyState } from "@/lib/chat/artifact";
 import { buildReleaseReadinessSummary } from "@/lib/release-readiness/releaseReadinessService";
 import type { ReleaseReadinessStatus } from "@/lib/release-readiness/releaseReadinessTypes";
 import type { UseChatSessionReturn } from "../hooks/useChatSession";
@@ -1014,6 +1015,9 @@ export default function FeatureWorkspaceSummary({
 }: Props) {
   const isDark = resolvedTheme === "dark";
   const testDesignVisual = chat.mode === "cases" && !commandCenter;
+  const testReviewVisual = chat.mode === "review" && !commandCenter;
+  const workspaceVisual =
+    chat.mode === "coach" || testDesignVisual || testReviewVisual;
 
   const requirementReady = chat.hasPinnedRequirement;
   const suiteReady = chat.hasPersistentTestSuite;
@@ -1026,6 +1030,28 @@ export default function FeatureWorkspaceSummary({
       .length ?? 0;
   const reviewScore = chat.sessionArtifact?.reviewResult?.score;
   const reviewGapCount = chat.sessionArtifact?.reviewResult?.riskGaps?.length ?? 0;
+  const artifactConsistency = getArtifactConsistencyState(chat.sessionArtifact);
+  const reviewWithLineage = chat.sessionArtifact?.reviewResult as
+    | (NonNullable<typeof chat.sessionArtifact>["reviewResult"] & {
+        basedOnRequirementVersion?: number;
+        basedOnSuiteVersion?: number;
+      })
+    | undefined;
+  const reviewLineageCurrent =
+    typeof reviewWithLineage?.basedOnRequirementVersion === "number" &&
+    typeof reviewWithLineage?.basedOnSuiteVersion === "number" &&
+    typeof artifactConsistency.requirementVersion === "number" &&
+    typeof artifactConsistency.suiteVersion === "number" &&
+    reviewWithLineage.basedOnRequirementVersion ===
+      artifactConsistency.requirementVersion &&
+    reviewWithLineage.basedOnSuiteVersion === artifactConsistency.suiteVersion;
+  const reviewVisualStatus = !reviewReady
+    ? null
+    : artifactConsistency.reviewStale
+      ? "Stale"
+      : reviewLineageCurrent
+        ? "Current"
+        : "Lineage unknown";
   const requirementVersion = (
     chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
   )?.version;
@@ -1079,8 +1105,14 @@ export default function FeatureWorkspaceSummary({
 
   const reviewStrength = toRelativeStrength(reviewScore);
   const reviewEmphasis = reviewReady
-    ? reviewStrength
-      ? `${reviewStrength} review result${
+    ? testReviewVisual && reviewVisualStatus !== "Current"
+      ? reviewVisualStatus === "Stale"
+        ? "Saved review is stale"
+        : "Saved review lineage is unknown"
+      : reviewStrength
+      ? `${testReviewVisual ? "Review strength: " : ""}${reviewStrength}${
+          testReviewVisual ? "" : " review result"
+        }${
           typeof reviewScore === "number" ? ` (${reviewScore}/100)` : ""
         }`
       : "Latest review result is available"
@@ -1098,10 +1130,10 @@ export default function FeatureWorkspaceSummary({
 
   const requirementTiles = [
     {
-      label: testDesignVisual ? "Artifact state" : "State",
+      label: workspaceVisual ? "Artifact state" : "State",
       value: requirementReady
         ? "Saved"
-        : testDesignVisual
+        : workspaceVisual
           ? "No saved requirement"
           : "Not started yet",
       tone: requirementReady ? "positive" : "neutral",
@@ -1193,7 +1225,7 @@ export default function FeatureWorkspaceSummary({
           : "neutral",
     },
     {
-      label: commandCenter ? "Grade" : "Strength",
+      label: "Review strength",
       value: reviewReady ? reviewStrength ?? "Available" : "—",
       tone: reviewReady
         ? reviewStrength === "Strong"
@@ -1264,23 +1296,23 @@ export default function FeatureWorkspaceSummary({
     <div
       style={{
         marginBottom: 12,
-        border: testDesignVisual
+        border: workspaceVisual
           ? isDark
             ? "1px solid #3A382F"
             : "1px solid #D9D3C2"
           : isDark
             ? "1px solid rgba(255,255,255,0.10)"
             : "1px solid rgba(15,23,42,0.10)",
-        borderRadius: testDesignVisual ? 14 : 18,
+        borderRadius: workspaceVisual ? 14 : 18,
         padding: 14,
-        background: testDesignVisual
+        background: workspaceVisual
           ? isDark
             ? "#262521"
             : "#F6F4ED"
           : isDark
             ? "rgba(255,255,255,0.04)"
             : "rgba(15,23,42,0.03)",
-        color: testDesignVisual
+        color: workspaceVisual
           ? isDark
             ? "#EDEAE3"
             : "#262521"
@@ -1297,7 +1329,7 @@ export default function FeatureWorkspaceSummary({
 
       <div
         style={
-          testDesignVisual
+          workspaceVisual
             ? {
                 display: "grid",
                 gap: 8,
@@ -1314,36 +1346,34 @@ export default function FeatureWorkspaceSummary({
         <StageBadge
           text={`Stage ${stageIndex} of 5 - ${displayedStage}`}
           resolvedTheme={resolvedTheme}
-          testDesign={testDesignVisual}
+          testDesign={workspaceVisual}
         />
 
-        {commandCenter ? null : (
-          <div style={{ display: "grid", gap: 4 }}>
-            <div
-              style={{
-                fontSize: testDesignVisual ? 18 : 13,
-                fontWeight: 950,
-                lineHeight: 1.25,
-              }}
-            >
-              Feature Workspace
-            </div>
-
-            <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
-              {testDesignVisual
-                ? displayedStage
-                : "This session is tracked as a QA workspace backed by persisted artifacts, not free-form AI text."}
-            </div>
-
-            <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
-              {hasAnyArtifacts
-                ? testDesignVisual
-                  ? nextAction
-                  : "The cards below show the latest saved requirement, suite, review, and execution evidence."
-                : "No saved workspace artifacts exist yet. Start by refining a requirement or pasting a Jira/API change description."}
-            </div>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div
+            style={{
+              fontSize: workspaceVisual ? 18 : 13,
+              fontWeight: 950,
+              lineHeight: 1.25,
+            }}
+          >
+            Feature Workspace
           </div>
-        )}
+
+          <div style={{ fontSize: 12, opacity: 0.76, lineHeight: 1.45 }}>
+            {workspaceVisual
+              ? displayedStage
+              : "This workspace tracks saved requirements, test suites, reviews, and execution evidence."}
+          </div>
+
+          <div style={{ fontSize: 11, opacity: 0.68, lineHeight: 1.45 }}>
+            {hasAnyArtifacts
+              ? workspaceVisual
+                ? nextAction
+                : "The cards below show the latest saved requirement, suite, review, and execution evidence."
+              : "No saved workspace artifacts exist yet. Start by refining a requirement or pasting a Jira/API change description."}
+          </div>
+        </div>
       </div>
 
       <div
@@ -1352,7 +1382,7 @@ export default function FeatureWorkspaceSummary({
           gap: 10,
           gridTemplateColumns: commandCenter
             ? "repeat(auto-fit, minmax(210px, 1fr))"
-            : testDesignVisual
+            : workspaceVisual
               ? "repeat(auto-fit, minmax(210px, 1fr))"
               : "repeat(auto-fit, minmax(220px, 1fr))",
         }}
@@ -1365,7 +1395,7 @@ export default function FeatureWorkspaceSummary({
           stepLabel={
             commandCenter
               ? "STEP 1"
-              : testDesignVisual
+              : workspaceVisual
                 ? stageIndex === 1
                   ? "STEP 1 · NOW"
                   : "STEP 1"
@@ -1409,7 +1439,7 @@ export default function FeatureWorkspaceSummary({
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
-          testDesign={testDesignVisual}
+          testDesign={workspaceVisual}
         />
 
         <DashboardSummaryCard
@@ -1420,7 +1450,7 @@ export default function FeatureWorkspaceSummary({
           stepLabel={
             commandCenter
               ? "STEP 2"
-              : testDesignVisual
+              : workspaceVisual
                 ? stageIndex === 2
                   ? "STEP 2 · NOW"
                   : "STEP 2"
@@ -1460,7 +1490,7 @@ export default function FeatureWorkspaceSummary({
                 kind="suite"
                 resolvedTheme={resolvedTheme}
               />
-            ) : suiteReady && !testDesignVisual ? (
+            ) : suiteReady && !workspaceVisual ? (
               <TestSuiteExportMenu
                 sessionId={exportSessionId}
                 disabled={!suiteReady}
@@ -1469,18 +1499,18 @@ export default function FeatureWorkspaceSummary({
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
-          testDesign={testDesignVisual}
+          testDesign={workspaceVisual}
         />
 
         <DashboardSummaryCard
           title="Review"
           tourAnchor="review-card"
-          ready={reviewReady}
+          ready={testReviewVisual ? reviewLineageCurrent : reviewReady}
           active={stageIndex === 3}
           stepLabel={
             commandCenter
               ? "STEP 3"
-              : testDesignVisual
+              : workspaceVisual
                 ? stageIndex === 3
                   ? "STEP 3 · NOW"
                   : "STEP 3"
@@ -1489,7 +1519,7 @@ export default function FeatureWorkspaceSummary({
                 : "Step 3"
           }
           emphasis={
-            commandCenter && reviewReady ? "Suite quality result" : reviewEmphasis
+            commandCenter && reviewReady ? "Review strength result" : reviewEmphasis
           }
           description={
             commandCenter
@@ -1497,7 +1527,13 @@ export default function FeatureWorkspaceSummary({
                 ? "Review Score is suite quality, not readiness"
                 : "No review artifact yet"
               : reviewReady
-                ? "A persisted review result is available for the current suite."
+                ? testReviewVisual
+                  ? reviewVisualStatus === "Current"
+                    ? "This review matches the current requirement and test suite."
+                    : reviewVisualStatus === "Stale"
+                      ? "This review was created from earlier requirement or test-suite versions."
+                      : "This review does not include enough version information to confirm whether it matches the current workspace."
+                  : "A saved review result is available for the current suite."
                 : "Coverage review has not yet been completed for this suite."
           }
           tiles={[...reviewTiles]}
@@ -1545,12 +1581,22 @@ export default function FeatureWorkspaceSummary({
           }
           resolvedTheme={resolvedTheme}
           commandCenter={commandCenter}
-          testDesign={testDesignVisual}
+          testDesign={workspaceVisual}
+          statusLabel={testReviewVisual && reviewVisualStatus ? reviewVisualStatus : undefined}
+          statusTone={
+            testReviewVisual && reviewVisualStatus
+              ? reviewVisualStatus === "Current"
+                ? "positive"
+                : reviewVisualStatus === "Stale"
+                  ? "warning"
+                  : "neutral"
+              : undefined
+          }
         />
 
         <div
           data-tour-anchor="execution-evidence-card"
-          style={testDesignVisual ? { display: "grid" } : undefined}
+          style={workspaceVisual ? { display: "grid" } : undefined}
         >
           {commandCenter ? (
             <DashboardSummaryCard
@@ -1583,8 +1629,9 @@ export default function FeatureWorkspaceSummary({
               }
               resolvedTheme={resolvedTheme}
               commandCenter={commandCenter}
+              testDesign={workspaceVisual}
             />
-          ) : testDesignVisual ? (
+          ) : workspaceVisual ? (
             <DashboardSummaryCard
               title="Execution Evidence"
               ready={executionEvidenceReady}
@@ -1635,7 +1682,7 @@ export default function FeatureWorkspaceSummary({
         </div>
       </div>
 
-      {commandCenter || testDesignVisual ? null : (
+      {commandCenter || workspaceVisual ? null : (
         <div
         style={{
           display: "grid",
@@ -1643,7 +1690,7 @@ export default function FeatureWorkspaceSummary({
           fontSize: 11,
           opacity: 0.78,
           lineHeight: 1.45,
-          borderTop: testDesignVisual
+          borderTop: workspaceVisual
             ? isDark
               ? "1px solid #3A382F"
               : "1px solid #D9D3C2"

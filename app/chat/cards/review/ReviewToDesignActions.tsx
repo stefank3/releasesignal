@@ -30,32 +30,34 @@ function ActionButton(args: {
       disabled={args.disabled || !args.onClick}
       style={{
         padding: "8px 11px",
-        borderRadius: 10,
+        borderRadius: 8,
         border: args.primary
           ? isDark
-            ? "1px solid rgba(125,211,252,0.35)"
-            : "1px solid rgba(37,99,235,0.28)"
+            ? "1px solid #D97757"
+            : "1px solid #C15F3C"
           : isDark
-            ? "1px solid rgba(255,255,255,0.18)"
-            : "1px solid rgba(15,23,42,0.14)",
+            ? "1px solid #4A4739"
+            : "1px solid #C4BCA7",
         background: args.disabled
           ? isDark
-            ? "rgba(255,255,255,0.04)"
-            : "rgba(15,23,42,0.03)"
+            ? "#302F2A"
+            : "#EDEAE0"
           : args.primary
             ? isDark
-              ? "rgba(125,211,252,0.14)"
-              : "rgba(37,99,235,0.08)"
+              ? "#D97757"
+              : "#C15F3C"
             : isDark
-              ? "rgba(255,255,255,0.07)"
-              : "#ffffff",
+              ? "#35332C"
+              : "#F1EDE2",
         color: args.disabled
           ? isDark
-            ? "rgba(255,255,255,0.46)"
-            : "rgba(15,23,42,0.46)"
-          : isDark
-            ? "#ffffff"
-            : "#0f172a",
+            ? "#7D796C"
+            : "#8B8577"
+          : args.primary
+            ? "#FFFFFF"
+            : isDark
+              ? "#EDEAE3"
+              : "#262521",
         cursor: args.disabled || !args.onClick ? "not-allowed" : "pointer",
         fontSize: 12,
         fontWeight: 900,
@@ -108,19 +110,19 @@ export function ReviewToDesignActions({
   const hasVisibleActions = showGenerateFromGaps || showImproveTestPlan;
 
   const targetText = hasVisibleActions
-    ? `${gapCount} gap${gapCount === 1 ? "" : "s"} and ${improvementCount} improvement${improvementCount === 1 ? "" : "s"} available as targeting context.`
+    ? `${gapCount} gap${gapCount === 1 ? "" : "s"} and ${improvementCount} improvement${improvementCount === 1 ? "" : "s"} identified for the next test-plan update.`
     : "This review does not currently have prioritized gaps to turn into new tests.";
 
   return (
     <section
       aria-label="Review to test design actions"
       style={{
-        border: isDark
-          ? "1px solid rgba(125,211,252,0.20)"
-          : "1px solid rgba(37,99,235,0.16)",
-        borderRadius: 16,
+        border: isDark ? "1px solid #55452F" : "1px solid #DFC9AE",
+        borderRadius: 12,
         padding: 14,
-        background: isDark ? "rgba(125,211,252,0.07)" : "rgba(37,99,235,0.045)",
+        background: isDark
+          ? "linear-gradient(135deg,#33291F 0%,#262521 72%)"
+          : "linear-gradient(135deg,#F0E2CE 0%,#F6F4ED 72%)",
         display: "grid",
         gap: 10,
       }}
@@ -131,12 +133,12 @@ export function ReviewToDesignActions({
         </div>
         <div style={{ fontSize: 12, lineHeight: 1.45, opacity: 0.76 }}>
           Create targeted coverage for uncovered or partially covered areas.
-          These actions use the latest persisted review and suite context.
+          These actions use the latest saved review and test suite.
         </div>
         {hasVisibleActions ? (
           <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.7 }}>
-            This may take a little longer because Release Signal uses the
-            persisted suite and review context.
+            This may take a little longer while Release Signal evaluates the
+            saved suite and review findings.
           </div>
         ) : null}
         <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.68 }}>
@@ -146,9 +148,19 @@ export function ReviewToDesignActions({
 
       {hasVisibleActions ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {showGenerateFromGaps ? (
+          {showImproveTestPlan ? (
             <ActionButton
               primary
+              onClick={onImproveTestPlanAction}
+              disabled={!canImproveTestPlan || isImprovingTestPlan}
+              resolvedTheme={resolvedTheme}
+            >
+              {isImprovingTestPlan ? "Improving..." : "Improve Test Plan"}
+            </ActionButton>
+          ) : null}
+
+          {showGenerateFromGaps ? (
+            <ActionButton
               onClick={onGenerateFromGapsAction}
               disabled={!canGenerateFromGaps || isGeneratingFromGaps}
               resolvedTheme={resolvedTheme}
@@ -156,16 +168,6 @@ export function ReviewToDesignActions({
               {isGeneratingFromGaps
                 ? "Generating..."
                 : "Generate Tests from Review Gaps"}
-            </ActionButton>
-          ) : null}
-
-          {showImproveTestPlan ? (
-            <ActionButton
-              onClick={onImproveTestPlanAction}
-              disabled={!canImproveTestPlan || isImprovingTestPlan}
-              resolvedTheme={resolvedTheme}
-            >
-              {isImprovingTestPlan ? "Improving..." : "Improve Test Plan"}
             </ActionButton>
           ) : null}
         </div>
