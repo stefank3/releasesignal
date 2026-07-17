@@ -32,7 +32,6 @@ const TOUR_STEPS: TourStep[] = [
     missingBody:
       "The Test Design step remains reachable through the top tabs and artifact-driven workflow state.",
     anchorSelectors: [
-      '[data-tour-anchor="workflow-preview-test-design"]',
       '[data-tour-anchor="test-suite-card"]',
     ],
   },
@@ -43,7 +42,6 @@ const TOUR_STEPS: TourStep[] = [
     missingBody:
       "The Test Review step remains reachable through the top tabs and artifact-driven workflow state.",
     anchorSelectors: [
-      '[data-tour-anchor="workflow-preview-review"]',
       '[data-tour-anchor="review-card"]',
     ],
   },
@@ -54,7 +52,6 @@ const TOUR_STEPS: TourStep[] = [
     missingBody:
       "Execution evidence becomes useful after a persisted test suite exists.",
     anchorSelectors: [
-      '[data-tour-anchor="workflow-preview-results"]',
       '[data-tour-anchor="execution-evidence-card"]',
     ],
   },
@@ -65,7 +62,6 @@ const TOUR_STEPS: TourStep[] = [
     missingBody:
       "Release Readiness stays available as a decision-support signal from structured artifacts and deterministic checks.",
     anchorSelectors: [
-      '[data-tour-anchor="workflow-preview-readiness"]',
       '[data-tour-anchor="release-readiness-panel"]',
     ],
   },

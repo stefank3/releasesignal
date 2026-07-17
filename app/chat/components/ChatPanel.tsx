@@ -1681,6 +1681,8 @@ export default function ChatPanel({
     typeof persistedReviewLineage?.basedOnSuiteVersion === "number" &&
     typeof artifactConsistency.requirementVersion === "number" &&
     typeof artifactConsistency.suiteVersion === "number";
+  // "unknown" is a distinct terminal state, not a fallback for "current" — a review
+  // with missing lineage metadata must never be treated as matching the live suite.
   const reviewLineageStatus: "current" | "stale" | "unknown" =
     artifactConsistency.reviewStale
       ? "stale"
@@ -1722,6 +1724,13 @@ export default function ChatPanel({
         : getProcessingLabel(chat.mode)}
     </div>
   ) : null;
+  const releaseReadinessPanel = showReleaseReadiness ? (
+    <ReleaseReadinessPanel
+      sessionArtifact={chat.sessionArtifact}
+      resolvedTheme={resolvedTheme}
+      commandCenter={false}
+    />
+  ) : null;
   const activityTimeline =
     showActivityTimeline && !isTestDesignSession && !isTestReviewSession ? (
     <div>
@@ -1729,12 +1738,6 @@ export default function ChatPanel({
         ref={chatBoxRef}
         resolvedTheme={resolvedTheme}
         isNarrow={isNarrow}
-        title={isTestReviewSession ? "Recent activity" : undefined}
-        description={
-          isTestReviewSession
-            ? "Supporting review requests and previous workspace activity. The latest persisted review stays in the primary surface above."
-            : undefined
-        }
       >
         {processingBanner}
 
@@ -1856,13 +1859,7 @@ export default function ChatPanel({
               onCreditsMayHaveChanged={onCreditsMayHaveChanged}
             />
 
-            {showReleaseReadiness ? (
-              <ReleaseReadinessPanel
-                sessionArtifact={chat.sessionArtifact}
-                resolvedTheme={resolvedTheme}
-                commandCenter={false}
-              />
-            ) : null}
+            {releaseReadinessPanel}
 
             <ArtifactDocumentSurface
               key={`artifact-documents-${chat.mode}-${chat.activeSessionId ?? "no-session"}`}
@@ -1969,13 +1966,7 @@ export default function ChatPanel({
                 </div>
               ) : null}
 
-              {showReleaseReadiness ? (
-                <ReleaseReadinessPanel
-                  sessionArtifact={chat.sessionArtifact}
-                  resolvedTheme={resolvedTheme}
-                  commandCenter={false}
-                />
-              ) : null}
+              {releaseReadinessPanel}
 
               <ArtifactDocumentSurface
                 key={`artifact-documents-${chat.mode}-${chat.activeSessionId ?? "no-session"}`}
