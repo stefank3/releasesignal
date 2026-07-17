@@ -251,6 +251,8 @@ High-risk changes require at minimum:
 - architecture review
 - explicit human approval before merge
 
+Before proposing structural changes to a high-risk file, read `docs/m18-refactor-inventory.md` and `docs/m18-server-service-boundary-review.md`.
+
 ---
 
 ## Failure Mode
@@ -392,6 +394,11 @@ I will stop and raise a blocker if the scope is insufficient.
 I will report changed files, validation, risks, and follow-up recommendations.
 ```
 
+Before implementation or review involving frontend structure or coding standards, agents must also read:
+
+- `docs/architecture/frontend-structure.md`
+- `docs/architecture/coding-standards.md`
+
 ---
 
 ## Full Governance Reference
@@ -410,6 +417,8 @@ Recommended files:
 - `docs/ai/MILESTONE_WORKFLOW.md`
 - `docs/ai/V1_ROADMAP_EXECUTION_RULES.md`
 - `docs/ai/PROMPT_TEMPLATES.md`
+- `docs/architecture/frontend-structure.md`
+- `docs/architecture/coding-standards.md`
 
 Milestone artifacts may live under:
 
