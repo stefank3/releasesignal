@@ -6,7 +6,6 @@ type Props = {
   resolvedTheme?: "light" | "dark";
   isNarrow?: boolean;
   children: React.ReactNode;
-  inputSlot?: React.ReactNode;
   title?: string;
   description?: string;
 };
@@ -17,7 +16,6 @@ export const ActivityTimelinePanel = React.forwardRef<HTMLDivElement, Props>(
       resolvedTheme = "dark",
       isNarrow = false,
       children,
-      inputSlot,
       title = "Activity Timeline",
       description = "Supporting conversation and previous workspace activity. Latest artifact documents stay in the workspace surface above.",
     },
@@ -78,21 +76,6 @@ export const ActivityTimelinePanel = React.forwardRef<HTMLDivElement, Props>(
           {children}
         </div>
 
-        {inputSlot ? (
-          <div
-            style={{
-              borderTop: isDark
-                ? "1px solid rgba(255,255,255,0.10)"
-                : "1px solid rgba(15,23,42,0.10)",
-              padding: 12,
-              background: isDark
-                ? "rgba(0,0,0,0.16)"
-                : "rgba(255,255,255,0.55)",
-            }}
-          >
-            {inputSlot}
-          </div>
-        ) : null}
       </section>
     );
   }

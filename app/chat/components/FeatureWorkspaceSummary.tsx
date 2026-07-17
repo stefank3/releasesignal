@@ -1045,6 +1045,10 @@ export default function FeatureWorkspaceSummary({
     reviewWithLineage.basedOnRequirementVersion ===
       artifactConsistency.requirementVersion &&
     reviewWithLineage.basedOnSuiteVersion === artifactConsistency.suiteVersion;
+  // Test Review's card "ready" state reflects lineage-current, not just artifact
+  // presence — this is intentional (a stale review should not render as ready) and
+  // must not be simplified back to plain `reviewReady`.
+  const reviewCardReady = testReviewVisual ? reviewLineageCurrent : reviewReady;
   const reviewVisualStatus = !reviewReady
     ? null
     : artifactConsistency.reviewStale
@@ -1505,7 +1509,7 @@ export default function FeatureWorkspaceSummary({
         <DashboardSummaryCard
           title="Review"
           tourAnchor="review-card"
-          ready={testReviewVisual ? reviewLineageCurrent : reviewReady}
+          ready={reviewCardReady}
           active={stageIndex === 3}
           stepLabel={
             commandCenter
