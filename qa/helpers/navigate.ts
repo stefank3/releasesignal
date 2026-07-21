@@ -1,5 +1,8 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
+const busyStateLabelPattern =
+  /^(?:loading|thinking|generating|reviewing|saving|sending|improving|uploading|analyzing|refining)(?: [^.\n]+)?(?:\.\.\.|…)$/i;
+
 export async function goToWorkspace(page: Page, sessionId?: string): Promise<void> {
   await page.goto(sessionId ? `/chat?sessionId=${encodeURIComponent(sessionId)}` : '/chat');
   await waitForWorkspaceReady(page);
@@ -7,7 +10,7 @@ export async function goToWorkspace(page: Page, sessionId?: string): Promise<voi
 
 export async function waitForWorkspaceReady(page: Page): Promise<void> {
   await expect(page.getByText(/Feature Workspace/i).first()).toBeVisible({ timeout: 20000 });
-  await expect(page.getByText(/loading|thinking|generating|reviewing|saving/i)).toHaveCount(0, {
+  await expect(page.getByText(busyStateLabelPattern)).toHaveCount(0, {
     timeout: 20000
   });
 }
@@ -52,5 +55,5 @@ export async function submitTextInput(page: Page, text: string): Promise<void> {
   }
 
   await responsePromise;
-  await expect(page.getByText(/loading|thinking|generating|reviewing/i)).toHaveCount(0, { timeout: 60000 });
+  await expect(page.getByText(busyStateLabelPattern)).toHaveCount(0, { timeout: 60000 });
 }
