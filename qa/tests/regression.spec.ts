@@ -359,7 +359,8 @@ test.describe('Execution evidence', () => {
 
 test.describe('Release Readiness', () => {
   test('Report panel is present in the workspace', async ({ page }) => {
-    await goToWorkspace(page, sessions.fullArtifacts || undefined);
+    requireSession(sessions.fullArtifacts, 'workspace with suite/review/execution evidence for release readiness');
+    await goToWorkspace(page, sessions.fullArtifacts);
     await expect(page.getByText(/Release Readiness Report/i).first()).toBeVisible();
   });
 
@@ -383,7 +384,8 @@ test.describe('Release Readiness', () => {
   });
 
   test('Workspace Status is hidden from Feature Workspace summary', async ({ page }) => {
-    await goToWorkspace(page, sessions.fullArtifacts || undefined);
+    requireSession(sessions.fullArtifacts, 'workspace with suite/review/execution evidence for release readiness');
+    await goToWorkspace(page, sessions.fullArtifacts);
     await expect(page.getByText(/Workspace Health|Workspace Status/i)).toHaveCount(0);
     await expect(page.getByText(/Release Readiness Report/i).first()).toBeVisible();
   });
