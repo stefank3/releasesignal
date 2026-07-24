@@ -95,6 +95,9 @@ import { ActivityTimelinePanel } from "./workspace/ActivityTimelinePanel";
 import { ArtifactDocumentSurface } from "./workspace/ArtifactDocumentSurface";
 import { StrategyWorkspaceStart } from "./workspace/strategy/StrategyWorkspaceStart";
 import { TestDesignInputSurface } from "./workspace/testDesign/TestDesignInputSurface";
+import { TestReviewEntrySurface } from "./workspace/testReview/TestReviewEntrySurface";
+import { TestReviewGettingStarted } from "./workspace/testReview/TestReviewGettingStarted";
+import { TestReviewSeparateSuiteDisclosure } from "./workspace/testReview/TestReviewSeparateSuiteDisclosure";
 import {
   buildReviewProvenanceLabel,
   getLatestArtifactDocumentIndexesToHide,
@@ -475,307 +478,6 @@ function PopulatedStrategyRecentActivity(args: {
   );
 }
 
-function TestReviewGettingStarted(args: {
-  hasPersistentTestSuite: boolean;
-  resolvedTheme: "light" | "dark";
-}) {
-  const isDark = args.resolvedTheme === "dark";
-
-  return (
-    <section
-      aria-label="Test Review getting started"
-      style={{
-        marginBottom: 12,
-        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-        borderRadius: 12,
-        padding: "12px 14px",
-        background: isDark ? "#2B2A26" : "#FCFBF6",
-        color: isDark ? "#EDEAE3" : "#262521",
-        display: "grid",
-        gap: 5,
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 950 }}>Getting started</div>
-      <div style={{ fontSize: 11, lineHeight: 1.5, opacity: 0.76 }}>
-        {args.hasPersistentTestSuite
-          ? "Review the saved suite for coverage gaps and improvement opportunities."
-          : "Generate and save a test suite in Test Design before running workspace review."}
-      </div>
-    </section>
-  );
-}
-
-function TestReviewEntrySurface(args: {
-  chat: UseChatSessionReturn;
-  lineageStatus: "current" | "stale" | "unknown";
-  resolvedTheme: "light" | "dark";
-  runBillableAction: (action: () => Promise<boolean>) => void;
-}) {
-  const isDark = args.resolvedTheme === "dark";
-  const textColor = isDark ? "#EDEAE3" : "#262521";
-  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
-  const requirementVersion = (
-    args.chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
-  )?.version;
-  const suiteVersion = args.chat.sessionArtifact?.testSuite?.version;
-  const suiteCount = args.chat.sessionArtifact?.testSuite?.cases?.length ?? 0;
-  const reviewScore = args.chat.sessionArtifact?.reviewResult?.score;
-  const hasSuite = args.chat.hasPersistentTestSuite;
-
-  const prerequisiteChips = [
-    args.chat.hasPinnedRequirement
-      ? `Requirement · v${requirementVersion ?? 1}`
-      : "Requirement · not saved",
-    hasSuite
-      ? `Test suite · v${suiteVersion ?? "—"} · ${suiteCount} cases`
-      : "Test suite · none",
-    args.chat.hasReviewArtifact
-      ? `Review · ${args.lineageStatus} · ${reviewScore ?? "—"}/100`
-      : "Review · not run",
-  ];
-
-  return (
-    <section
-      aria-label="Test Review entry"
-      style={{
-        marginBottom: 12,
-        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-        borderRadius: 14,
-        padding: 14,
-        background: isDark ? "#262521" : "#F6F4ED",
-        color: textColor,
-        display: "grid",
-        gap: 12,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ display: "grid", gap: 3 }}>
-          <div style={{ fontSize: 13, fontWeight: 950 }}>Review Test Suite</div>
-          <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.4 }}>
-            Review the saved test suite for coverage gaps, risk areas, and
-            improvement opportunities.
-          </div>
-        </div>
-        <span
-          style={{
-            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-            borderRadius: 999,
-            padding: "4px 8px",
-            background: isDark ? "#302F2A" : "#EDEAE0",
-            color: mutedText,
-            fontSize: 10.5,
-            fontWeight: 800,
-          }}
-        >
-          {hasSuite ? "Saved suite available" : "Needs a saved suite"}
-        </span>
-      </div>
-
-      <div
-        style={{
-          border: isDark ? "1px solid #38362D" : "1px solid #DFD9C8",
-          borderRadius: 12,
-          padding: 12,
-          background: isDark ? "#21201C" : "#FFFFFF",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
-          {prerequisiteChips.map((label) => (
-            <span
-              key={label}
-              style={{
-                border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-                borderRadius: 999,
-                padding: "4px 8px",
-                background: isDark ? "#302F2A" : "#EDEAE0",
-                color: mutedText,
-                fontSize: 10.5,
-                fontWeight: 800,
-              }}
-            >
-              {label}
-            </span>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            args.runBillableAction(() => args.chat.reviewTestSuite());
-          }}
-          disabled={!args.chat.canReviewTestSuite}
-          style={{
-            borderRadius: 8,
-            border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
-            background: isDark ? "#D97757" : "#C15F3C",
-            color: "#FFFFFF",
-            padding: "8px 11px",
-            fontSize: 12,
-            fontWeight: 900,
-            cursor: args.chat.canReviewTestSuite ? "pointer" : "not-allowed",
-            opacity: args.chat.canReviewTestSuite ? 1 : 0.55,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {args.chat.isRunningWorkflowAction ? "Reviewing..." : "Review Test Suite"}
-        </button>
-      </div>
-
-      {!hasSuite ? (
-        <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.45 }}>
-          Generate and save a test suite in Test Design before running workspace
-          review.
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function TestReviewSeparateSuiteDisclosure(args: {
-  chat: UseChatSessionReturn;
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  isBusy: boolean;
-  resolvedTheme: "light" | "dark";
-  runBillableAction: (action: () => Promise<boolean>) => void;
-}) {
-  const isDark = args.resolvedTheme === "dark";
-  const textColor = isDark ? "#EDEAE3" : "#262521";
-  const mutedText = isDark ? "#A39F92" : "#6F6A5C";
-
-  return (
-    <section
-      aria-label="Review a different suite or test plan"
-      style={{
-        marginBottom: 12,
-        border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-        borderRadius: 12,
-        padding: "12px 14px",
-        background: isDark ? "#2B2A26" : "#FCFBF6",
-        color: textColor,
-      }}
-    >
-      <details>
-        <summary
-          style={{
-            cursor: "pointer",
-            color: textColor,
-            fontSize: 12,
-            fontWeight: 900,
-          }}
-        >
-          Review a different suite or test plan
-        </summary>
-        <div
-          style={{
-            marginTop: 6,
-            fontSize: 11,
-            color: mutedText,
-            lineHeight: 1.45,
-          }}
-        >
-          Paste a separate suite for an independent review without changing the
-          saved workspace suite.
-        </div>
-        <div
-          style={{
-            marginTop: 9,
-            border: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-            borderRadius: 12,
-            padding: 12,
-            background: isDark ? "#1B1A17" : "#FFFFFF",
-            display: "grid",
-            gap: 7,
-          }}
-        >
-          <div style={{ fontSize: 11, color: mutedText, lineHeight: 1.45 }}>
-            Use this option for a separate suite or plan. The saved workspace
-            review remains unchanged.
-          </div>
-          <textarea
-            id="test-review-freeform-input"
-            aria-label="Separate suite or test plan"
-            ref={(node) => {
-              (
-                args.inputRef as React.MutableRefObject<HTMLInputElement | null>
-              ).current = node as unknown as HTMLInputElement | null;
-            }}
-            value={args.chat.input}
-            disabled={args.isBusy}
-            onChange={(event) => args.chat.setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                (event.ctrlKey || event.metaKey) &&
-                !args.isBusy
-              ) {
-                event.preventDefault();
-                args.runBillableAction(() => args.chat.send());
-              }
-            }}
-            placeholder="Paste a separate test suite or test plan to review."
-            rows={5}
-            style={{
-              width: "100%",
-              minHeight: 132,
-              resize: "vertical",
-              boxSizing: "border-box",
-              border: "none",
-              background: "transparent",
-              color: textColor,
-              outline: "none",
-              fontSize: 13,
-              lineHeight: 1.55,
-              fontFamily: "inherit",
-              whiteSpace: "pre-wrap",
-            }}
-          />
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              paddingTop: 10,
-              borderTop: isDark ? "1px solid #3A382F" : "1px solid #D9D3C2",
-            }}
-          >
-            <button
-              type="button"
-              disabled={args.isBusy}
-              onClick={() => {
-                args.runBillableAction(() => args.chat.send());
-              }}
-              style={{
-                borderRadius: 8,
-                border: isDark ? "1px solid #D97757" : "1px solid #C15F3C",
-                background: isDark ? "#D97757" : "#C15F3C",
-                color: "#FFFFFF",
-                padding: "8px 11px",
-                fontSize: 12,
-                fontWeight: 900,
-                cursor: args.isBusy ? "not-allowed" : "pointer",
-                opacity: args.isBusy ? 0.55 : 1,
-              }}
-            >
-              Review
-            </button>
-          </div>
-        </div>
-      </details>
-    </section>
-  );
-}
-
 export default function ChatPanel({
   chat,
   onAfterUiAction,
@@ -932,6 +634,24 @@ export default function ChatPanel({
       : reviewLineageStatus === "unknown" && persistedReview
         ? ["This review does not include enough lineage metadata to verify it against the current requirement and suite."]
         : [];
+  const testReviewRequirementVersion = (
+    chat.sessionArtifact?.refinedRequirement as { version?: number } | undefined
+  )?.version;
+  const testReviewSuiteVersion = chat.sessionArtifact?.testSuite?.version;
+  const testReviewSuiteCount =
+    chat.sessionArtifact?.testSuite?.cases?.length ?? 0;
+  const testReviewScore = chat.sessionArtifact?.reviewResult?.score;
+  const testReviewPrerequisiteChips = [
+    chat.hasPinnedRequirement
+      ? `Requirement · v${testReviewRequirementVersion ?? 1}`
+      : "Requirement · not saved",
+    chat.hasPersistentTestSuite
+      ? `Test suite · v${testReviewSuiteVersion ?? "—"} · ${testReviewSuiteCount} cases`
+      : "Test suite · none",
+    chat.hasReviewArtifact
+      ? `Review · ${reviewLineageStatus} · ${testReviewScore ?? "—"}/100`
+      : "Review · not run",
+  ];
   const reviewFreeItems = isTestReviewSession
     ? chat.items.filter((item) => item.kind !== "review")
     : chat.items;
@@ -1029,8 +749,11 @@ export default function ChatPanel({
 
         {isTestReviewSession ? (
           <TestReviewEntrySurface
-            chat={chat}
-            lineageStatus={reviewLineageStatus}
+            prerequisiteChips={testReviewPrerequisiteChips}
+            hasPersistentTestSuite={chat.hasPersistentTestSuite}
+            canReviewTestSuite={chat.canReviewTestSuite}
+            isRunningWorkflowAction={chat.isRunningWorkflowAction}
+            reviewTestSuite={chat.reviewTestSuite}
             resolvedTheme={resolvedTheme}
             runBillableAction={runBillableAction}
           />
@@ -1227,8 +950,13 @@ export default function ChatPanel({
               />
 
               <TestReviewSeparateSuiteDisclosure
-                chat={chat}
-                inputRef={inputRef}
+                input={chat.input}
+                setInput={chat.setInput}
+                send={chat.send}
+                setInputElement={(node) => {
+                  inputRef.current =
+                    node as unknown as HTMLInputElement | null;
+                }}
                 isBusy={isBusy}
                 resolvedTheme={resolvedTheme}
                 runBillableAction={runBillableAction}
