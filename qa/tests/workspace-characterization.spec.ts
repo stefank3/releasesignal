@@ -310,6 +310,105 @@ test.describe("workspace characterization", () => {
     await expect(page.getByRole("textbox", { name: "Next Strategy input" })).toHaveValue("");
   });
 
+  test("Recent activity renders at most five events newest-first and preserves its empty state", async ({
+    page,
+  }) => {
+    await mockWorkspace(page, {
+      artifact: buildArtifact("review"),
+      messages: [
+        {
+          id: "activity-1",
+          role: "user",
+          content: "Dropped oldest activity detail",
+          createdAt: NOW,
+        },
+        {
+          id: "activity-2",
+          role: "assistant",
+          content: "Second activity detail",
+          createdAt: NOW,
+        },
+        {
+          id: "activity-3",
+          role: "user",
+          content: "Third activity detail",
+          createdAt: NOW,
+        },
+        {
+          id: "activity-4",
+          role: "assistant",
+          content: "Fourth activity detail",
+          createdAt: NOW,
+        },
+        {
+          id: "activity-5",
+          role: "user",
+          content: "Fifth activity detail",
+          createdAt: NOW,
+        },
+        {
+          id: "activity-6",
+          role: "assistant",
+          content: "Readiness newest activity detail",
+          createdAt: NOW,
+        },
+      ],
+    });
+    await openFixtureSession(page);
+
+    const recentActivity = page.getByLabel("Recent activity");
+    const eventRows = recentActivity.locator("details");
+    const newestEvent = eventRows.first();
+    const nextEvent = eventRows.nth(1);
+    const olderEvent = eventRows.nth(2);
+
+    await expect(recentActivity).toBeVisible();
+    await expect(eventRows).toHaveCount(5);
+    await expect(newestEvent.locator("summary")).toContainText(
+      "Test suite generated"
+    );
+    await expect(newestEvent.locator("summary")).toContainText("latest");
+    await expect(nextEvent.locator("summary")).toContainText(
+      "Readiness recalculated"
+    );
+    await expect(nextEvent.locator("summary")).toContainText("recent");
+    await expect(olderEvent.locator("summary")).toContainText(
+      "Workspace input added"
+    );
+    await expect(olderEvent.locator("summary")).toContainText("earlier");
+    await expect(recentActivity).not.toContainText("Dropped oldest activity detail");
+
+    await newestEvent.locator("summary").click();
+    await nextEvent.locator("summary").click();
+    await olderEvent.locator("summary").click();
+    const newestDetail = newestEvent.getByText("Generated test suite artifact", {
+      exact: true,
+    });
+    const nextDetail = nextEvent.getByText(
+      "Readiness newest activity detail",
+      { exact: true }
+    );
+    const olderDetail = olderEvent.getByText("Fifth activity detail", {
+      exact: true,
+    });
+    await expect(newestDetail).toBeVisible();
+    await expect(nextDetail).toBeVisible();
+    await expect(olderDetail).toBeVisible();
+    await expectBefore(newestDetail, nextDetail);
+    await expectBefore(nextDetail, olderDetail);
+
+    await page.unroute("**/api/chat/history**");
+    await mockWorkspace(page, {
+      artifact: buildArtifact("requirement"),
+      messages: [],
+    });
+    await openFixtureSession(page);
+
+    const emptyRecentActivity = page.getByLabel("Recent activity");
+    await expect(emptyRecentActivity.locator("details")).toHaveCount(0);
+    await expect(emptyRecentActivity).toContainText("No recent activity yet.");
+  });
+
   test("Test Design renders one saved suite disclosure closed by default and expands it", async ({
     page,
   }) => {
