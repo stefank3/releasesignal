@@ -119,9 +119,13 @@ function buildMessages(level: ArtifactLevel): WorkspaceFixture["messages"] {
 async function mockWorkspace(
   page: Page,
   fixture: WorkspaceFixture,
-  args: { includeSession?: boolean } = {}
+  args: {
+    includeSession?: boolean;
+    tourState?: "dismissed" | "completed" | null;
+  } = {}
 ) {
   const includeSession = args.includeSession ?? true;
+  const tourState = args.tourState === undefined ? "completed" : args.tourState;
   const artifact = fixture.artifact;
   const refinedRequirement = artifact?.refinedRequirement;
   const testSuite = artifact?.testSuite as
@@ -129,13 +133,15 @@ async function mockWorkspace(
     | undefined;
   const reviewResult = artifact?.reviewResult as { score: number } | undefined;
 
-  await page.addInitScript(() => {
+  await page.addInitScript((storedTourState) => {
     window.localStorage.clear();
-    window.localStorage.setItem(
-      "release-signal-v1-2-guided-tour",
-      "completed"
-    );
-  });
+    if (storedTourState) {
+      window.localStorage.setItem(
+        "release-signal-v1-2-guided-tour",
+        storedTourState
+      );
+    }
+  }, tourState);
 
   await page.route("**/api/me", async (route) => {
     await route.fulfill({
@@ -570,37 +576,172 @@ test.describe("workspace characterization", () => {
     await expect(page.getByRole("textbox", { name: "Next Strategy input" })).toHaveValue("");
   });
 
-  test("guided onboarding resolves every current target in its existing order", async ({ page }) => {
+  test("guided onboarding opens automatically and explains all nine steps without changing workflow state", async ({
+    page,
+  }) => {
+    const workflowPosts: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (request.method() === "POST" && url.pathname === "/api/chat") {
+        workflowPosts.push(request.url());
+      }
+    });
+
     await mockWorkspace(page, {
       artifact: buildArtifact("review"),
       messages: buildMessages("review"),
-    });
+    }, { tourState: null });
     await openFixtureSession(page);
-    await page.getByRole("button", { name: "Help / Tour" }).click();
 
     const tour = page.getByLabel("Guided onboarding tour");
-    const foundBodies = [
-      "Paste a requirement, user story, API specification, bug fix, or workflow change into the Strategy input.",
-      "Move into Test Design when the refined requirement is ready",
-      "Review the generated suite for gaps, weak checks, and risk areas",
-      "After execution, add pass/fail results and evidence",
-      "Release Signal supports your release decision; it does not approve releases.",
+    const steps = [
+      {
+        title: "Start with a requirement",
+        copy: "Start by pasting a requirement, Jira story, API change, bug fix, or feature description into Strategy.",
+      },
+      {
+        title: "Refine the requirement",
+        copy: "Release Signal turns your input into a structured requirement artifact.",
+      },
+      {
+        title: "Open Test Design",
+        copy: "use the workspace navigation to open Test Design",
+      },
+      {
+        title: "Generate and inspect the suite",
+        copy: "Inspect and review every generated test before using it.",
+      },
+      {
+        title: "Open Test Review",
+        copy: "run Review Test Suite to evaluate its quality",
+      },
+      {
+        title: "Understand Review Score",
+        copy: "It is not release approval and remains separate from Release Readiness.",
+      },
+      {
+        title: "Act on review findings",
+        copy: "Generate Tests from Review Gaps appends new tests for uncovered areas.",
+      },
+      {
+        title: "Add execution evidence",
+        copy: "Execution evidence remains separate from Review Score and contributes to Release Readiness.",
+      },
+      {
+        title: "Read Release Readiness",
+        copy: "Your QA or release owner makes the final decision.",
+      },
     ];
 
-    for (let index = 0; index < foundBodies.length; index += 1) {
-      await expect(tour).toContainText(`Step ${index + 1} of 5`);
-      await expect(tour).toContainText(foundBodies[index]);
+    await expect(tour).toBeVisible();
+    await expect(page.locator('[data-tour-anchor="workflow-navigation"]')).toHaveCount(1);
+    await expect(page.locator('[data-tour-anchor="requirement-card"]')).toHaveCount(1);
+    await expect(page.locator('[data-tour-anchor="test-suite-card"]')).toHaveCount(1);
+    await expect(page.locator('[data-tour-anchor="review-card"]')).toHaveCount(1);
+    await expect(page.locator('[data-tour-anchor="execution-evidence-card"]')).toHaveCount(1);
+    await expect(page.locator('[data-tour-anchor="review-actions"]')).toHaveCount(1);
+    await expect(page.locator('[data-tour-anchor="release-readiness-panel"]')).toHaveCount(1);
 
-      if (index < foundBodies.length - 1) {
+    for (let index = 0; index < steps.length; index += 1) {
+      await expect(tour).toContainText(`Step ${index + 1} of 9`);
+      await expect(tour.getByRole("heading")).toHaveText(steps[index].title);
+      await expect(tour).toContainText(steps[index].copy);
+
+      if (index < steps.length - 1) {
         await tour.getByRole("button", { name: "Next" }).click();
       }
     }
 
-    await expect(tour).not.toContainText("remains reachable through the top tabs");
+    await tour.getByRole("button", { name: "Finish" }).click();
+    await expect(tour).toHaveCount(0);
+
+    expect(workflowPosts).toEqual([]);
+    await expect(page.getByRole("button", { name: "Strategy", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    await expect(page.locator('[data-tour-anchor="review-card"]')).toContainText("88/100");
+    await expect(
+      page
+        .locator('[data-tour-anchor="test-suite-card"]')
+        .getByRole("button", { name: "Open test suite (1)" })
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.localStorage.getItem("release-signal-v1-2-guided-tour")
+        )
+      )
+      .toBe("completed");
+  });
+
+  test("guided onboarding keeps conditional fallbacks visible and scrollable in an empty narrow workspace", async ({
+    page,
+  }) => {
+    const workflowPosts: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (request.method() === "POST" && url.pathname === "/api/chat") {
+        workflowPosts.push(request.url());
+      }
+    });
+
+    await page.setViewportSize({ width: 320, height: 320 });
+    await page.emulateMedia({ colorScheme: "light" });
+    await mockWorkspace(
+      page,
+      { artifact: null, messages: [] },
+      { includeSession: false, tourState: null }
+    );
+
+    const tour = page.getByLabel("Guided onboarding tour");
+    await expect(tour).toBeVisible();
+    await expect(tour).toContainText(
+      "Start by pasting a requirement, Jira story, API change, bug fix, or feature description into Strategy."
+    );
     await expect(page.locator('[data-tour-anchor="start-here-input"]')).toHaveCount(1);
-    await expect(page.locator('[data-tour-anchor="test-suite-card"]')).toHaveCount(1);
-    await expect(page.locator('[data-tour-anchor="review-card"]')).toHaveCount(1);
-    await expect(page.locator('[data-tour-anchor="execution-evidence-card"]')).toHaveCount(1);
-    await expect(page.locator('[data-tour-anchor="release-readiness-panel"]')).toHaveCount(1);
+
+    const overflowState = await tour.evaluate((element) => {
+      const styles = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        overflowY: styles.overflowY,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        top: rect.top,
+        bottom: rect.bottom,
+        viewportHeight: window.innerHeight,
+      };
+    });
+    expect(overflowState.overflowY).toBe("auto");
+    expect(overflowState.scrollHeight).toBeGreaterThan(overflowState.clientHeight);
+    expect(overflowState.top).toBeGreaterThanOrEqual(0);
+    expect(overflowState.bottom).toBeLessThanOrEqual(overflowState.viewportHeight);
+
+    for (let index = 0; index < 6; index += 1) {
+      await tour.getByRole("button", { name: "Next" }).click();
+    }
+    await expect(tour.getByRole("heading")).toHaveText("Act on review findings");
+    await expect(tour).toContainText(
+      "Review-driven actions appear when the saved review contains actionable gaps or improvements."
+    );
+    await expect(page.locator('[data-tour-anchor="review-actions"]')).toHaveCount(0);
+
+    await tour.getByRole("button", { name: "Next" }).click();
+    await tour.getByRole("button", { name: "Next" }).click();
+    await expect(tour.getByRole("heading")).toHaveText("Read Release Readiness");
+    await expect(tour).toContainText(
+      "Release Readiness appears when enough structured artifacts or evidence exist."
+    );
+    await expect(page.locator('[data-tour-anchor="release-readiness-panel"]')).toHaveCount(0);
+
+    expect(workflowPosts).toEqual([]);
+    await expect(page.getByRole("button", { name: "Strategy", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    await expect(page.locator('[data-tour-anchor="requirement-card"]')).toContainText(
+      "No refined requirement saved yet"
+    );
   });
 });

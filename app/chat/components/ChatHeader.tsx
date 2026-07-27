@@ -166,6 +166,7 @@ export default function ChatHeader({
       >
         {/* Workflow selector */}
         <div
+          data-tour-anchor="workflow-navigation"
           style={{
             display: "flex",
             flexWrap: "wrap",
