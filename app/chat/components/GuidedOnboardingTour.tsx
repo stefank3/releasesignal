@@ -17,50 +17,90 @@ const TOUR_STEPS: TourStep[] = [
   {
     title: "Start with a requirement",
     body:
-      "Paste a requirement, user story, API specification, bug fix, or workflow change into the Strategy input. AI-assisted - review before you rely on it.",
+      "Start by pasting a requirement, Jira story, API change, bug fix, or feature description into Strategy. AI assists with structuring the input, but you should review the result before relying on it.",
     missingBody:
-      "Start with the main workspace input. Paste a Jira-style story, API change, acceptance criteria, or rough requirement.",
+      "Open Strategy and use the main workspace input to begin with a requirement, story, API change, or feature description.",
     anchorSelectors: [
       '[data-tour-anchor="start-here-input"]',
       '[data-tour-anchor="workflow-start"]',
     ],
   },
   {
-    title: "Generate your test suite",
+    title: "Refine the requirement",
     body:
-      "Move into Test Design when the refined requirement is ready, then generate structured QA coverage from that requirement.",
+      "Release Signal turns your input into a structured requirement artifact. Review the saved requirement before using it to generate tests.",
     missingBody:
-      "The Test Design step remains reachable through the top tabs and artifact-driven workflow state.",
+      "A structured requirement artifact appears after refinement and becomes the source for Test Design.",
+    anchorSelectors: [
+      '[data-tour-anchor="requirement-card"]',
+    ],
+  },
+  {
+    title: "Open Test Design",
+    body:
+      "When the refined requirement is ready, use the workspace navigation to open Test Design.",
+    missingBody:
+      "Use the top workspace navigation to move from Strategy into Test Design.",
+    anchorSelectors: [
+      '[data-tour-anchor="workflow-navigation"]',
+    ],
+  },
+  {
+    title: "Generate and inspect the suite",
+    body:
+      "Test Design generates a structured test suite from the refined requirement. Inspect and review every generated test before using it.",
+    missingBody:
+      "The saved test-suite summary and detailed test cases appear after generation.",
     anchorSelectors: [
       '[data-tour-anchor="test-suite-card"]',
     ],
   },
   {
-    title: "Review coverage",
+    title: "Open Test Review",
     body:
-      "Review the generated suite for gaps, weak checks, and risk areas before relying on it.",
+      "Open Test Review after a suite has been saved, then run Review Test Suite to evaluate its quality.",
     missingBody:
-      "The Test Review step remains reachable through the top tabs and artifact-driven workflow state.",
+      "A saved test suite is required before Test Review can evaluate coverage and quality.",
+    anchorSelectors: [
+      '[data-tour-anchor="workflow-navigation"]',
+    ],
+  },
+  {
+    title: "Understand Review Score",
+    body:
+      "Review Score reflects the quality of the saved test suite. It is not release approval and remains separate from Release Readiness.",
+    missingBody:
+      "Review Score appears after Test Review evaluates the saved suite. It measures suite quality, not release approval.",
     anchorSelectors: [
       '[data-tour-anchor="review-card"]',
     ],
   },
   {
-    title: "Add results",
+    title: "Act on review findings",
     body:
-      "After execution, add pass/fail results and evidence so readiness can use structured artifacts.",
+      "Generate Tests from Review Gaps appends new tests for uncovered areas. Improve Test Plan regenerates a guarded replacement suite using the review findings.",
     missingBody:
-      "Execution evidence becomes useful after a persisted test suite exists.",
+      "Review-driven actions appear when the saved review contains actionable gaps or improvements. Gap generation appends tests; Improve Test Plan replaces the suite.",
+    anchorSelectors: [
+      '[data-tour-anchor="review-actions"]',
+    ],
+  },
+  {
+    title: "Add execution evidence",
+    body:
+      "After executing the suite, add structured results and evidence. Execution evidence remains separate from Review Score and contributes to Release Readiness.",
+    missingBody:
+      "Execution evidence can be added after a saved test suite exists.",
     anchorSelectors: [
       '[data-tour-anchor="execution-evidence-card"]',
     ],
   },
   {
-    title: "Get your readiness signal",
+    title: "Read Release Readiness",
     body:
-      "Release Signal supports your release decision; it does not approve releases. The QA/release owner has the final call.",
+      "Release Readiness is a deterministic decision-support signal derived from saved artifacts and execution evidence. It does not approve releases. Your QA or release owner makes the final decision.",
     missingBody:
-      "Release Readiness stays available as a decision-support signal from structured artifacts and deterministic checks.",
+      "Release Readiness appears when enough structured artifacts or evidence exist. It supports the decision; your QA or release owner remains responsible for final approval.",
     anchorSelectors: [
       '[data-tour-anchor="release-readiness-panel"]',
     ],
@@ -180,7 +220,7 @@ export default function GuidedOnboardingTour({
   };
 
   const popoverWidth = Math.min(340, Math.max(280, viewport.width - 32));
-  const popoverHeightEstimate = stepIndex === 0 ? 282 : 238;
+  const popoverHeightEstimate = stepIndex === 0 ? 282 : 260;
   const hasRoomRight = anchorRect
     ? anchorRect.right + 12 + popoverWidth <= viewport.width - 16
     : false;
@@ -236,7 +276,7 @@ export default function GuidedOnboardingTour({
           position: "fixed",
           right: 18,
           bottom: "calc(18px + env(safe-area-inset-bottom, 0px))",
-          zIndex: 60,
+          zIndex: isOpen ? 50 : 60,
         }}
       >
         Help / Tour
@@ -271,6 +311,8 @@ export default function GuidedOnboardingTour({
               top: popoverTop,
               width: popoverWidth,
               maxWidth: "calc(100vw - 32px)",
+              maxHeight: "calc(100vh - 32px)",
+              overflowY: "auto",
               zIndex: 51,
               borderRadius: 16,
               border: isDark
@@ -323,9 +365,7 @@ export default function GuidedOnboardingTour({
             {stepIndex === 0 ? (
               <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.68 }}>
                 This tour is guidance only. It does not change workflow state,
-                artifacts, review scoring, execution evidence, or Release
-                Readiness. Release Signal supports your release decision; it does
-                not approve releases. Reopen it from Help / Tour.
+                or artifacts. Reopen it from Help / Tour.
               </div>
             ) : null}
 
