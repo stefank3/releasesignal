@@ -105,6 +105,12 @@ An organization `admin`:
 - must not gain application-wide or commercial authority through the database
   role alone.
 
+Every newly provisioned normal user currently becomes
+`OrgMember.role = "admin"` of their own organization. Any future inheritance
+from organization-admin status to commercial-owner authority would therefore
+grant owner authority far too broadly. This separation is load-bearing and must
+remain explicit. PR #78 does not change provisioning.
+
 ## 3. Current application-admin authority
 
 ### 3.1 Source and enforcement
@@ -160,8 +166,17 @@ commercial-owner authority.
 
 ### 3.4 Separate authorization finding
 
-`app/admin/telemetry/page.tsx` directly queries internal telemetry without an
-explicit application-admin check.
+Symptom:
+
+- `app/admin/telemetry/page.tsx` directly queries internal telemetry without an
+  explicit application-admin check.
+
+Structural cause:
+
+- the `app/admin` route segment has no segment-level application-admin
+  authorization guard; and
+- middleware authenticates the user but does not authorize the user as an
+  application admin.
 
 Classification:
 
@@ -169,9 +184,11 @@ Classification:
 Separate bounded high-risk authorization fix required
 ```
 
-This finding is outside PR #78 Phase A. The telemetry page must not be modified
-or bundled into commercial-owner work without separate approval, scope,
-validation, and high-risk review.
+This finding is outside PR #78 Phase A. The separate bounded fix should
+evaluate a segment-level server-side admin guard rather than only patching the
+telemetry page. The implementation remains undecided. No admin page may be
+modified or bundled into commercial-owner work without separate approval,
+scope, validation, and high-risk review.
 
 ## 4. Token-verification boundary decision
 
@@ -182,11 +199,20 @@ silently reinterpreted as a newly approved owner-verification design.
 
 Phase B requires one explicit human-approved decision:
 
-1. Treat Auth0 SDK session and token provenance as the accepted verification
-   boundary.
-2. Use a stronger Auth0 SDK-supported verified-claims path.
+1. Treat Auth0 SDK session and access-token provenance as the accepted
+   verification boundary. Under this option, staging-versus-production
+   separation is enforced by Auth0 tenant/application credentials and
+   deployment configuration. The current RBAC helper performs no independent
+   in-code issuer or audience assertion. The "staging identity in production"
+   validation is therefore configuration-verified, not code-verified.
+2. Use a stronger Auth0 SDK-supported verified-claims path. The selected SDK
+   contract must document which layer validates issuer, audience, token type,
+   and environment separation. Explicit issuer and audience validation may
+   become part of the implementation contract if the SDK path supports it.
 3. Introduce a dedicated verified-token/JWKS path through a separately approved
-   dependency and implementation change.
+   dependency and implementation change. That implementation contract must
+   explicitly validate issuer and audience and define how environment-specific
+   issuers, audiences, keys, caching, and verification failures are handled.
 
 Phase A does not select or implement one of these options.
 
@@ -213,6 +239,25 @@ JSON type:      boolean
 The namespace is an identifier. It does not require the URL to resolve to a
 public endpoint.
 
+The commercial-owner claim must be present in the Auth0 access token. The
+application must retrieve that token server-side through:
+
+```ts
+auth0.getAccessToken()
+```
+
+The future owner helper must read the claim from the access-token payload. The
+Auth0 Post Login Action must emit it through:
+
+```ts
+api.accessToken.setCustomClaim(...)
+```
+
+The helper must not rely on `session.user`, an ID-token-only claim,
+browser-provided claims, or an application-admin fallback. This mirrors the
+existing application-admin access-token pattern without selecting the still
+unresolved verification-boundary option.
+
 The server must require strict boolean equality:
 
 ```text
@@ -230,7 +275,9 @@ The following values and conditions must deny owner authority:
 - a malformed token;
 - an unavailable or expired token;
 - a token retrieval or refresh error;
-- a claim under the wrong namespace; and
+- a claim under the wrong namespace;
+- a claim present only in the ID token;
+- a claim present only in `session.user`; and
 - a staging identity or assignment presented to production.
 
 ### 5.2 Authority separation
@@ -261,7 +308,10 @@ approved and validated.
 
 Future owner routes must:
 
-- retrieve the current Auth0 session server-side;
+- retrieve the Auth0 access token server-side through
+  `auth0.getAccessToken()`;
+- read the owner claim from the access-token payload;
+- reject an ID-token-only or `session.user`-only owner claim;
 - enforce the dedicated owner claim independently;
 - fail closed for all invalid or unavailable claim states;
 - obtain commercial data from deterministic server/database sources;
@@ -283,13 +333,20 @@ The approved target assignment process is:
 1. Create an Auth0 role named `commercial_owner`.
 2. Assign it only to explicitly approved owner identities.
 3. Use a reviewed Auth0 Post Login Action to emit the strict namespaced boolean
-   claim when the role is present.
+   claim through `api.accessToken.setCustomClaim(...)` when the role is
+   present.
 4. Keep staging and production roles, identities, and assignments separate.
 5. Require reauthentication and new token issuance after assignment.
 6. Prohibit automatic assignment based on email, email domain, organization
    membership, database role, or application-admin status.
 7. Keep the number of production owners to the smallest practical number.
 8. Record the assignment in an approved private operational record.
+
+Routine assignment must be performed by a named, approved non-break-glass
+Auth0 operator or tenant role with only the minimum Auth0 management authority
+required. The break-glass tenant administrator account must not be used for
+routine assignment. Assignment and revocation owners must be recorded before
+Phase B begins.
 
 The private assignment record must include:
 
@@ -306,25 +363,43 @@ not be stored in Git.
 
 ## 7. Owner revocation and session handling
 
-### 7.1 Planned or emergency revocation
+### 7.1 Planned revocation
 
-Revocation must:
+Planned, non-compromise revocation must:
 
 1. Remove the `commercial_owner` role.
-2. Revoke active sessions and refresh tokens where practical.
-3. Block the Auth0 identity when compromise is suspected.
-4. Require fresh authentication before any later access.
-5. Verify future owner endpoints return forbidden.
-6. Confirm subscriptions, wallets, ledger history, and organization membership
+2. Revoke sessions and refresh tokens according to the approved operational
+   window.
+3. Require fresh authentication.
+4. Verify future owner endpoints return forbidden.
+5. Confirm subscriptions, wallets, ledger history, and organization membership
    remain unchanged.
-7. Record the revocation privately.
-8. Rotate affected credentials or Action secrets when compromise is suspected.
+6. Record the revocation privately.
 
-Removing a role alone may not invalidate an already issued access token
-immediately. Urgent revocation therefore requires session and refresh-token
-handling in addition to role removal.
+### 7.2 Emergency or compromise revocation
 
-### 7.2 Assignment refresh validation
+Emergency revocation must:
+
+1. Remove the `commercial_owner` role immediately.
+2. Block the Auth0 identity immediately where appropriate.
+3. Revoke active sessions.
+4. Revoke refresh tokens.
+5. Rotate affected credentials or Post Login Action secrets.
+6. Verify owner-only routes deny access.
+7. Confirm subscriptions, wallets, ledger history, and organization membership
+   remain unchanged.
+8. Record the incident privately.
+
+For emergency revocation, session and refresh-token revocation are mandatory.
+Waiting for an access token to expire is not an acceptable emergency control.
+
+Removing a role alone may leave an already issued access token valid until its
+expiration unless sessions or tokens are revoked. The configured access-token
+TTL determines the worst-case residual-authority window. Production and staging
+TTLs must be recorded before Phase B approval, and emergency revocation must
+not rely only on waiting for TTL expiry.
+
+### 7.3 Assignment refresh validation
 
 After assignment:
 
@@ -335,7 +410,7 @@ After assignment:
 - verify the expected owner-positive route result when such a route exists; and
 - verify existing admin status independently.
 
-### 7.3 Revocation validation
+### 7.4 Revocation validation
 
 After revocation:
 
@@ -357,7 +432,7 @@ The recovery account must:
 - keep recovery codes outside Git in an approved private offline location;
 - have no normal application commercial-owner authority;
 - be used only for tenant recovery, Post Login Action rollback,
-  compromised-owner revocation, or replacement-owner assignment; and
+  emergency compromised-owner revocation, or replacement-owner recovery; and
 - have clearly assigned human custody and review responsibility.
 
 When claim emission breaks, recovery restores the last reviewed Auth0 Post Login
@@ -411,6 +486,14 @@ owner authority.
 `VERCEL_ENV` alone does not prove that a deployment is trusted staging. Trusted
 staging requires explicitly separated resources, credentials, URLs, access
 controls, and evidence.
+
+Release Signal does not currently have a distinct runtime staging identity in
+`lib/env.ts`. Current runtime stages resolve to production, preview, or
+development. A deployment described operationally as "staging" may therefore
+currently run under preview treatment. Establishing a first-class staging
+runtime identity is outside the four-file Phase B scope unless separately
+approved. See `docs/beta/environment-and-deployment-safety.md` for the broader
+environment-isolation baseline.
 
 Broad wildcard preview callback URLs must not be used without explicit risk
 approval and a documented reason.
@@ -546,6 +629,7 @@ Required evidence categories:
 - logout URLs;
 - allowed origins;
 - API audience;
+- access-token lifetime or TTL for each environment;
 - Auth0 role configuration;
 - Post Login Action version;
 - normal-user token behavior;
@@ -584,6 +668,7 @@ The following work is manual and external to Phase A:
 - [ ] Configure exact logout URLs.
 - [ ] Configure exact allowed origins.
 - [ ] Create or confirm environment-specific APIs and audiences.
+- [ ] Record the access-token lifetime or TTL for staging and production.
 - [ ] Confirm existing RBAC settings and admin claim behavior.
 - [ ] Create the `commercial_owner` role.
 - [ ] Deploy a reviewed and versioned Post Login Action.
@@ -624,7 +709,63 @@ Planned changes:
 8. Do not change billing, credits, Prisma schema, or organization roles.
 9. Do not add a dependency without a separately approved scope amendment.
 
-### 14.1 Phase B prerequisites
+### 14.1 Required audience rollout order
+
+`lib/env.ts` evaluates required variables at module load, and `lib/auth0.ts` is
+imported by middleware. Adding a required `AUTH0_AUDIENCE` without
+preconfiguring it can therefore cause an application-wide startup or runtime
+failure, not merely an admin-feature failure.
+
+Required rollout order:
+
+1. Configure `AUTH0_AUDIENCE` in all applicable environments.
+2. Verify the configured values and deployment access.
+3. Merge and deploy the bounded runtime change.
+4. Validate login, callback, token issuance, the existing admin claim, and the
+   commercial-owner claim.
+5. Roll back if any authentication or authority regression occurs.
+
+Applicable environments:
+
+- local development;
+- Preview;
+- dedicated staging when it exists;
+- production; and
+- CI or build environments that evaluate required configuration.
+
+One lower-risk compatibility option for Phase B review is temporarily
+defaulting to the current audience:
+
+```text
+https://stefans-mvp-api
+```
+
+This is an option to evaluate, not an approved implementation decision.
+
+### 14.2 Audience-to-admin-claim regression risk
+
+Changing the Auth0 audience may silently suppress the existing
+application-admin claim if that claim is tied to the currently configured
+Auth0 API, RBAC settings, permissions configuration, or Post Login Action
+behavior.
+
+Potential impact:
+
+- `isAdminFromAccessToken()` fails closed;
+- all application-admin capabilities disappear;
+- admin provisioning may follow the non-admin path; and
+- operational and billing administration becomes unavailable.
+
+Before promotion, validation must:
+
+- confirm the existing roles claim is emitted for the new audience;
+- verify an Auth0 application admin remains an application admin;
+- verify a normal user remains a non-admin;
+- verify normal and admin provisioning behavior remain unchanged; and
+- verify metrics, billing overview, positive credit top-up, review-mode access,
+  and admin presentation remain available to the intended admin identity.
+
+### 14.3 Phase B prerequisites
 
 Phase B cannot start until:
 
@@ -639,7 +780,10 @@ Phase B cannot start until:
 - the owner assignment and revocation owners are identified; and
 - break-glass custody is established.
 
-### 14.2 Rollback baseline
+Production and staging access-token TTLs must also be recorded so the
+worst-case residual-authority window is known before approval.
+
+### 14.4 Rollback baseline
 
 The Phase B rollback plan must:
 
