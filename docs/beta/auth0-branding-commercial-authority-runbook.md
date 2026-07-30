@@ -111,6 +111,25 @@ from organization-admin status to commercial-owner authority would therefore
 grant owner authority far too broadly. This separation is load-bearing and must
 remain explicit. PR #78 does not change provisioning.
 
+### 2.5 Repository audit classification
+
+The inspection findings are classified as follows:
+
+| Finding | Classification | PR #78 disposition |
+|---|---|---|
+| SDK middleware owns login, callback, logout, and session retrieval | No change required | Preserve the current Auth0 SDK flow |
+| Normal and application-admin provisioning is deterministic and coupled to the existing admin claim | No change required | Preserve provisioning, organization, trial, wallet, and ledger behavior |
+| Existing application-admin authority uses `https://stefans-mvp/claims/roles` with `admin` | No change required | Preserve the namespace, role, and current server checks |
+| The current roles helper locally decodes a session-derived access token without independent signature, issuer, or audience verification | Future owner-route implementation requirement | Do not copy the pattern for owner authority until the verification boundary is approved |
+| `app/admin/telemetry/page.tsx` reads telemetry without an application-admin guard | Repository change required in a separate authorization fix | Do not bundle the high-risk admin fix into Phase A |
+| The Auth0 API audience is hardcoded in `lib/auth0.ts` | Repository change required only in approved Phase B | External audience values and rollout order must be approved first |
+| Production and staging client credentials, tenants/applications, APIs, assignments, and URLs | Auth0 dashboard change required | Configure separately and preserve redacted evidence |
+| Universal Login name, logo, colors, support links, legal links, and visible tenant wording | Auth0 dashboard change required | Inspect and correct externally; repository evidence cannot prove completion |
+| Enabled database, social, enterprise, and passwordless connections | Auth0 dashboard change required | Inventory before changing any working connection |
+| Login, callback, logout, provider, claim, assignment, revocation, and isolation behavior | Manual operational verification required | Record results without tokens, secrets, or personal identity data |
+| Dedicated strict owner helper and future owner-route enforcement | Future owner-route implementation requirement | Phase B may add the helper; PR #84 may consume it only after approval and validation |
+| Former `stefans-mvp` audience, claim namespace, storage keys, and Redis prefixes | No change required in PR #78 | Preserve compatibility; do not treat internal identifiers as proven user-visible branding |
+
 ## 3. Current application-admin authority
 
 ### 3.1 Source and enforcement
@@ -342,6 +361,13 @@ The approved target assignment process is:
 7. Keep the number of production owners to the smallest practical number.
 8. Record the assignment in an approved private operational record.
 
+The Post Login Action may emit `true` only when `commercial_owner` is explicitly
+present in `event.authorization.roles`. Missing, malformed, unavailable, or
+role-absent authorization data must emit no owner claim and fail closed; the
+Action must never default owner authority to `true`. Before relying on this
+field, Phase B must confirm that RBAC and role visibility are enabled for the
+requested Auth0 API audience.
+
 Routine assignment must be performed by a named, approved non-break-glass
 Auth0 operator or tenant role with only the minimum Auth0 management authority
 required. The break-glass tenant administrator account must not be used for
@@ -523,6 +549,17 @@ state. No item in this section is complete until evidence is recorded.
 
 ### 10.1 Branding checklist
 
+Repository evidence shows no application-rendered social-provider button,
+custom password form, or repository-owned Auth0 tenant/application name in the
+login entry points. The application links to `/auth/login`, and Universal Login
+owns the provider selection and hosted authentication copy.
+
+The former name remains in the package name, API audience, roles namespace,
+browser-storage keys, and Redis prefixes. Those values are internal or
+externally coupled compatibility identifiers; repository inspection does not
+show that they are rendered on Universal Login. Auth0 dashboard evidence is
+still required to determine what external users actually see.
+
 - [ ] Auth0 application name reviewed.
 - [ ] Universal Login logo reviewed.
 - [ ] Brand colors reviewed.
@@ -535,6 +572,17 @@ state. No item in this section is complete until evidence is recorded.
 - [ ] Production branding consistently uses Release Signal.
 
 ### 10.2 Connection and provider checklist
+
+Current repository evidence does not prove which Auth0 connections are enabled.
+It establishes only the following inventory:
+
+| Provider or connection | Intended production use | Intended staging use | Current evidence | Decision status | External action | Regression risk |
+|---|---|---|---|---|---|---|
+| Auth0 database connection (email/password) | Preserve the working beta login unless explicitly changed | Preserve for synthetic staging users | `docs/v1-beta-auth0-admin-db-checklist.md` identifies it as the intended beta connection; demo requirements reference Auth0 username/password login | Keep, subject to dashboard confirmation | Record the exact connection and application assignment in each environment | Disabling or moving it can lock out existing users |
+| Google social connection | Not intended by the earlier beta checklist | Not intended unless separately approved for staging tests | No application-rendered Google button exists; current dashboard state is unknown | Requires current confirmation before any change; earlier checklist targets disabled | Record current state and disable only with explicit approval and login evidence | An active user may depend on a social identity even when no app button exists |
+| Other social connections | No approved production use is represented in the repository | No approved staging use is represented in the repository | No application-rendered social-provider button or connection parameter exists; dashboard state is unknown | Requires decision | Inventory each connection, its users, and application assignment before disabling | Blind removal can strand users or alter account identity |
+| Enterprise connections | No approved production use is represented in the repository | No approved staging use is represented in the repository | No repository configuration reference; dashboard state is unknown | Requires decision | Inventory and justify each enabled connection | Connection removal can break organization login or upstream identity behavior |
+| Passwordless connections | No approved production use is represented in the repository | No approved staging use is represented in the repository | No repository configuration reference; dashboard state is unknown | Requires decision | Inventory and justify each enabled connection | Connection changes can alter the working Universal Login path |
 
 - [ ] Enabled database connections recorded.
 - [ ] Enabled social connections recorded.
@@ -556,9 +604,9 @@ The production Auth0 application must use exact approved production URLs.
 Expected primary entries are:
 
 ```text
-Callback:       https://releasesignal.io/auth/callback
-Logout:         https://releasesignal.io
-Allowed origin: https://releasesignal.io
+Callback:           https://releasesignal.io/auth/callback
+Logout:             https://releasesignal.io
+Allowed web origin: https://releasesignal.io
 ```
 
 Any additional production hostname, such as an approved `www` redirect or
@@ -567,14 +615,19 @@ assumed by this runbook.
 
 Production must not use a broad preview wildcard.
 
+Auth0 distinguishes Allowed Web Origins from Allowed Origins (CORS). Record and
+review both dashboard fields. Configure CORS origins only when a reviewed
+browser-to-Auth0 request requires them; do not copy entries broadly between the
+two fields.
+
 ### 11.2 Staging
 
 Staging must use exact URLs for the selected stable staging deployment:
 
 ```text
-Callback:       https://<approved-staging-domain>/auth/callback
-Logout:         https://<approved-staging-domain>
-Allowed origin: https://<approved-staging-domain>
+Callback:           https://<approved-staging-domain>/auth/callback
+Logout:             https://<approved-staging-domain>
+Allowed web origin: https://<approved-staging-domain>
 ```
 
 The exact staging domain remains an external decision and must be recorded
@@ -585,9 +638,9 @@ before Phase B.
 Only explicitly approved localhost entries may be used:
 
 ```text
-Callback:       http://localhost:3000/auth/callback
-Logout:         http://localhost:3000
-Allowed origin: http://localhost:3000
+Callback:           http://localhost:3000/auth/callback
+Logout:             http://localhost:3000
+Allowed web origin: http://localhost:3000
 ```
 
 Localhost entries should belong to the approved development or staging
