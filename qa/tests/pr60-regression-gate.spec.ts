@@ -164,6 +164,76 @@ test.describe('PR60 admin no-trial/normal-credit-billing behavior', () => {
   });
 });
 
+test.describe('Admin page authorization', () => {
+  const adminPages = [
+    { route: '/admin', heading: 'Admin Console' },
+    { route: '/admin/metrics', heading: 'Admin Metrics' },
+    { route: '/admin/telemetry', heading: 'Internal Telemetry' }
+  ] as const;
+
+  test('Application admin can access every admin page', async ({ browser }) => {
+    const live = await newLivePage(browser, adminStateEnv);
+    test.skip(!live.ok, live.ok ? '' : live.message);
+    if (!live.ok) return;
+
+    const me = await expectAuthenticatedMe(live.page);
+    expect(me.isAdmin, 'Admin-page validation requires the Auth0 admin role').toBe(true);
+
+    for (const pageTarget of adminPages) {
+      const response = await live.page.goto(liveUrl(pageTarget.route), {
+        waitUntil: 'domcontentloaded'
+      });
+
+      expect(response?.status(), `${pageTarget.route} should be available to an application admin`).toBe(200);
+      await expect(
+        live.page.getByRole('heading', { name: pageTarget.heading, exact: false })
+      ).toBeVisible();
+    }
+  });
+
+  test('Authenticated non-admin cannot access any admin page', async ({ browser }) => {
+    const live = await newLivePage(browser, trialStateEnv);
+    test.skip(!live.ok, live.ok ? '' : live.message);
+    if (!live.ok) return;
+
+    const me = await expectAuthenticatedMe(live.page);
+    expect(me.isAdmin, 'Non-admin validation must use a normal trial account').toBe(false);
+
+    for (const pageTarget of adminPages) {
+      const response = await live.page.goto(liveUrl(pageTarget.route), {
+        waitUntil: 'domcontentloaded'
+      });
+
+      expect(response?.status(), `${pageTarget.route} must fail closed for a non-admin`).toBe(404);
+      await expect(
+        live.page.getByRole('heading', { name: pageTarget.heading, exact: false })
+      ).toHaveCount(0);
+    }
+  });
+
+  test('Existing admin APIs preserve their application-admin boundary', async ({ browser }) => {
+    const admin = await newLivePage(browser, adminStateEnv);
+    const normal = await newLivePage(browser, trialStateEnv);
+    test.skip(!admin.ok || !normal.ok, !admin.ok ? admin.message : !normal.ok ? normal.message : '');
+    if (!admin.ok || !normal.ok) return;
+
+    const adminMe = await expectAuthenticatedMe(admin.page);
+    const normalMe = await expectAuthenticatedMe(normal.page);
+    expect(adminMe.isAdmin).toBe(true);
+    expect(normalMe.isAdmin).toBe(false);
+
+    for (const route of ['/api/admin/metrics', '/api/admin/billing/overview']) {
+      const [adminResponse, normalResponse] = await Promise.all([
+        admin.page.request.get(liveUrl(route)),
+        normal.page.request.get(liveUrl(route))
+      ]);
+
+      expect(adminResponse.status(), `${route} should remain available to an application admin`).toBe(200);
+      expect(normalResponse.status(), `${route} should remain forbidden to a non-admin`).toBe(403);
+    }
+  });
+});
+
 test.describe('PR60 user-switch/session state isolation', () => {
   test('Second user cannot load the first user seeded workspace by sessionId', async ({ browser }) => {
     const missing = [

@@ -20,6 +20,9 @@
 // - reads from telemetryQueryService
 // - internal/admin-facing page only
 
+import { notFound } from "next/navigation";
+
+import { isAdminFromAccessToken } from "@/lib/auth/rbac";
 import { fetchTelemetryOverview } from "@/lib/server/telemetry/telemetryQueryService";
 
 function formatNumber(value: number | null | undefined): string {
@@ -63,6 +66,13 @@ function getCountForEventType(
 }
 
 export default async function AdminTelemetryPage() {
+  // Layout checks protect the route segment, while this leaf check remains
+  // next to the sensitive query because layouts may be reused during navigation.
+  const isAdmin = await isAdminFromAccessToken();
+  if (!isAdmin) {
+    notFound();
+  }
+
   const overview = await fetchTelemetryOverview({ recentLimit: 25 });
 
   const totalEvents = overview.eventCounts.reduce((sum, row) => sum + row.count, 0);
