@@ -79,6 +79,13 @@ export const env = Object.freeze({
   AUTH0_SECRET: requireEnv("AUTH0_SECRET"),
   APP_BASE_URL: requireEnv("APP_BASE_URL"),
 
+  // Lemon Squeezy checkout (server-only; disabled unless explicitly enabled)
+  LEMON_SQUEEZY_ENABLED: optionalEnv("LEMON_SQUEEZY_ENABLED") ?? "false",
+  LEMON_SQUEEZY_MODE: optionalEnv("LEMON_SQUEEZY_MODE"),
+  LEMON_SQUEEZY_STORE_ID: optionalEnv("LEMON_SQUEEZY_STORE_ID"),
+  LEMON_SQUEEZY_VARIANT_ID: optionalEnv("LEMON_SQUEEZY_VARIANT_ID"),
+  LEMON_SQUEEZY_API_KEY: optionalEnv("LEMON_SQUEEZY_API_KEY"),
+
   // Upstash
   UPSTASH_REDIS_REST_URL: requireEnv("UPSTASH_REDIS_REST_URL"),
   UPSTASH_REDIS_REST_TOKEN: requireEnv("UPSTASH_REDIS_REST_TOKEN"),
