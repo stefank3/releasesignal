@@ -7,7 +7,7 @@ import CheckoutSuccessPage from "../../app/billing/checkout/success/page";
 const SUCCESS_MESSAGE =
   "Your payment was submitted to the payment provider. Your Release Signal subscription will update after payment verification.";
 const CANCEL_MESSAGE =
-  "No Release Signal subscription change has been made. You can return to the application and try again later.";
+  "Your checkout was not completed through this flow. You can return to Release Signal and try again later.";
 
 type TestElement = {
   type?: unknown;
@@ -79,10 +79,14 @@ test("cancel copy makes no authoritative commercial claim", () => {
   const markup = render(CheckoutCancelPage).toLowerCase();
 
   for (const prohibitedClaim of [
-    "payment verified",
-    "subscription activated",
-    "credits added",
+    "subscription change has been made",
+    "subscription unchanged",
+    "subscription canceled",
+    "subscription active",
     "payment failed",
+    "payment verified",
+    "credits",
+    "entitlement",
   ]) {
     expect(markup).not.toContain(prohibitedClaim);
   }

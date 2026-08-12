@@ -5,7 +5,7 @@ export default function CheckoutCancelPage() {
     <CheckoutReturnPage
       eyebrow="Checkout return"
       title="Checkout not completed"
-      message="No Release Signal subscription change has been made. You can return to the application and try again later."
+      message="Your checkout was not completed through this flow. You can return to Release Signal and try again later."
     />
   );
 }
