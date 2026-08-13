@@ -105,7 +105,7 @@ function normalizeStatus(value: unknown):
       normalizedProviderState: NormalizedLemonSqueezyProviderState;
     }
   | null {
-  if (typeof value !== "string" || !(value in PROVIDER_STATE_BY_STATUS)) return null;
+  if (typeof value !== "string" || !Object.hasOwn(PROVIDER_STATE_BY_STATUS, value)) return null;
   const providerStatus = value as LemonSqueezySubscriptionStatus;
   return {
     providerStatus,

@@ -367,6 +367,13 @@ test("fails closed for an unknown provider status", () => {
   expectFailure(verify(rawBody), "unsupported_status");
 });
 
+test("fails closed for prototype-chain provider status keys", () => {
+  for (const status of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+    const rawBody = JSON.stringify(payload({ attributes: { status } }));
+    expectFailure(verify(rawBody), "unsupported_status");
+  }
+});
+
 test("fingerprints exact raw bytes deterministically with SHA-256", () => {
   const first = JSON.stringify(payload());
   const second = `${first} `;
