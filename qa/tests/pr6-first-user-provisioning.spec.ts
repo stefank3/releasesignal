@@ -182,7 +182,20 @@ test.describe("PR6 live authorization", () => {
         secure: baseURL.startsWith("https://"),
       },
     ]);
-    expect((await getMe(context)).status).toBe(403);
+    const replay = await getMe(context);
+    expect(replay.status).toBe(403);
+    expect(replay.body).toMatchObject({
+      authenticated: true,
+      error: "account_not_provisioned",
+    });
+
+    await context.clearCookies({ name: "rs_beta_signup" });
+    const withoutReplayCookie = await getMe(context);
+    expect(withoutReplayCookie.status).toBe(403);
+    expect(withoutReplayCookie.body).toMatchObject({
+      authenticated: true,
+      error: "account_not_provisioned",
+    });
     await context.close();
   });
 
@@ -243,12 +256,46 @@ test.describe("PR6 live authorization", () => {
 
   test("concurrent account resolution yields one organization", async ({ browser }) => {
     const context = await authenticatedContext(browser, "PR6_CONCURRENT_SIGNUP_AUTH_STATE");
-    const [first, second] = await Promise.all([getMe(context), getMe(context)]);
-    expect(first.status).toBe(200);
-    expect(second.status).toBe(200);
-    expect(second.body.organizationId).toBe(first.body.organizationId);
-    expect(second.body.creditsRemaining).toBe(100);
-    await context.close();
+    try {
+      const [first, second] = await Promise.all([getMe(context), getMe(context)]);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(first.body.organizationId).toEqual(expect.any(String));
+      expect(first.body.organizationId).not.toBe("");
+      expect(second.body.organizationId).toBe(first.body.organizationId);
+      expect(first.body.auth0Sub).toEqual(expect.any(String));
+      expect(first.body.auth0Sub).not.toBe("");
+      expect(second.body.auth0Sub).toBe(first.body.auth0Sub);
+      expect(first.body.creditsRemaining).toBe(100);
+      expect(second.body.creditsRemaining).toBe(100);
+
+      const databaseUrl = process.env.PR6_DATABASE_URL?.trim();
+      expect(databaseUrl, "PR6_DATABASE_URL is required for concurrency cardinality").toBeTruthy();
+      const client = new Client({ connectionString: databaseUrl! });
+      await client.connect();
+      try {
+        const result = await client.query(
+          `SELECT
+            (SELECT COUNT(DISTINCT o.id)::int FROM "Organization" o JOIN "OrgMember" m ON m."organizationId" = o.id WHERE m."auth0Sub" = $1) AS organizations,
+            (SELECT COUNT(*)::int FROM "OrgMember" WHERE "auth0Sub" = $1) AS members,
+            (SELECT COUNT(*)::int FROM "Subscription" WHERE "organizationId" = $2 AND "planCode" = 'trial_v1' AND status = 'trialing') AS trials,
+            (SELECT COUNT(*)::int FROM "CreditWallet" WHERE "organizationId" = $2 AND currency = 'credits') AS wallets,
+            (SELECT COUNT(*)::int FROM "CreditLedger" l JOIN "CreditWallet" w ON w.id = l."walletId" WHERE w."organizationId" = $2 AND l.reason = 'trial_grant' AND l.delta = 100) AS grants`,
+          [first.body.auth0Sub, first.body.organizationId]
+        );
+        expect(result.rows[0]).toEqual({
+          organizations: 1,
+          members: 1,
+          trials: 1,
+          wallets: 1,
+          grants: 1,
+        });
+      } finally {
+        await client.end();
+      }
+    } finally {
+      await context.close();
+    }
   });
 
   test("/api/me and /api/chat race still resolves one account", async ({ browser }) => {
@@ -257,30 +304,110 @@ test.describe("PR6 live authorization", () => {
       "PR6_ENABLE_CHAT_RACE=true is required because this check invokes the AI provider"
     );
     const context = await authenticatedContext(browser, "PR6_CHAT_RACE_SIGNUP_AUTH_STATE");
-    const [me, chat] = await Promise.all([
-      getMe(context),
-      context.request.post(new URL("/api/chat", baseURL).toString(), {
-        data: { mode: "coach", message: "PR6 provisioning concurrency check" },
-      }),
-    ]);
-    expect(me.status).toBe(200);
-    expect(chat.status()).toBe(200);
-    expect((await chat.json()).ok).toBe(true);
+    try {
+      const [me, chat] = await Promise.all([
+        getMe(context),
+        context.request.post(new URL("/api/chat", baseURL).toString(), {
+          data: { mode: "coach", message: "PR6 provisioning concurrency check" },
+          timeout: 45_000,
+        }),
+      ]);
+      expect(me.status).toBe(200);
+      expect(chat.status()).toBe(200);
+      expect((await chat.json()).ok).toBe(true);
+      expect(me.body.auth0Sub).toEqual(expect.any(String));
+      expect(me.body.auth0Sub).not.toBe("");
+      expect(me.body.organizationId).toEqual(expect.any(String));
+      expect(me.body.organizationId).not.toBe("");
 
-    const after = await getMe(context);
-    expect(after.body.organizationId).toBe(me.body.organizationId);
-    await context.close();
+      const after = await getMe(context);
+      expect(after.status).toBe(200);
+      expect(after.body.auth0Sub).toBe(me.body.auth0Sub);
+      expect(after.body.organizationId).toBe(me.body.organizationId);
+
+      const databaseUrl = process.env.PR6_DATABASE_URL?.trim();
+      expect(databaseUrl, "PR6_DATABASE_URL is required for chat-race cardinality").toBeTruthy();
+      const client = new Client({ connectionString: databaseUrl! });
+      await client.connect();
+      try {
+        const result = await client.query(
+          `SELECT
+            (SELECT COUNT(DISTINCT o.id)::int FROM "Organization" o JOIN "OrgMember" m ON m."organizationId" = o.id WHERE m."auth0Sub" = $1) AS organizations,
+            (SELECT COUNT(*)::int FROM "OrgMember" WHERE "auth0Sub" = $1) AS members,
+            (SELECT COUNT(*)::int FROM "Subscription" WHERE "organizationId" = $2 AND "planCode" = 'trial_v1' AND status = 'trialing') AS trials,
+            (SELECT COUNT(*)::int FROM "CreditWallet" WHERE "organizationId" = $2 AND currency = 'credits') AS wallets,
+            (SELECT COUNT(*)::int FROM "CreditLedger" l JOIN "CreditWallet" w ON w.id = l."walletId" WHERE w."organizationId" = $2 AND l.reason = 'trial_grant' AND l.delta = 100) AS grants`,
+          [me.body.auth0Sub, me.body.organizationId]
+        );
+        expect(result.rows[0]).toEqual({
+          organizations: 1,
+          members: 1,
+          trials: 1,
+          wallets: 1,
+          grants: 1,
+        });
+      } finally {
+        await client.end();
+      }
+    } finally {
+      await context.close();
+    }
   });
 
   test("existing user Start Trial callback reuses account and clears intent", async ({ browser }) => {
     const context = await authenticatedContext(browser, "PR6_EXISTING_START_TRIAL_AUTH_STATE");
-    const first = await getMe(context);
-    const second = await getMe(context);
-    expect(first.status).toBe(200);
-    expect(second.body.organizationId).toBe(first.body.organizationId);
-    expect(second.body.creditsRemaining).toBe(first.body.creditsRemaining);
-    expect((await context.cookies()).some((cookie) => cookie.name === "rs_beta_signup")).toBe(false);
-    await context.close();
+    try {
+      const first = await getMe(context);
+      const second = await getMe(context);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(first.body).toMatchObject({
+        authenticated: true,
+        isAdmin: false,
+        planCode: "trial_v1",
+        planStatus: "trialing",
+        creditsRemaining: 100,
+      });
+      expect(first.body.auth0Sub).toEqual(expect.any(String));
+      expect(first.body.auth0Sub).not.toBe("");
+      expect(second.body.auth0Sub).toBe(first.body.auth0Sub);
+      expect(first.body.organizationId).toEqual(expect.any(String));
+      expect(first.body.organizationId).not.toBe("");
+      expect(second.body.organizationId).toBe(first.body.organizationId);
+      expect(second.body.planCode).toBe(first.body.planCode);
+      expect(second.body.planStatus).toBe(first.body.planStatus);
+      expect(second.body.currentPeriodStart).toBe(first.body.currentPeriodStart);
+      expect(second.body.currentPeriodEnd).toBe(first.body.currentPeriodEnd);
+      expect(second.body.creditsRemaining).toBe(first.body.creditsRemaining);
+      expect((await context.cookies()).some((cookie) => cookie.name === "rs_beta_signup")).toBe(false);
+
+      const databaseUrl = process.env.PR6_DATABASE_URL?.trim();
+      expect(databaseUrl, "PR6_DATABASE_URL is required for existing-user cardinality").toBeTruthy();
+      const client = new Client({ connectionString: databaseUrl! });
+      await client.connect();
+      try {
+        const result = await client.query(
+          `SELECT
+            (SELECT COUNT(DISTINCT o.id)::int FROM "Organization" o JOIN "OrgMember" m ON m."organizationId" = o.id WHERE m."auth0Sub" = $1) AS organizations,
+            (SELECT COUNT(*)::int FROM "OrgMember" WHERE "auth0Sub" = $1) AS members,
+            (SELECT COUNT(*)::int FROM "Subscription" WHERE "organizationId" = $2 AND "planCode" = 'trial_v1' AND status = 'trialing') AS trials,
+            (SELECT COUNT(*)::int FROM "CreditWallet" WHERE "organizationId" = $2 AND currency = 'credits') AS wallets,
+            (SELECT COUNT(*)::int FROM "CreditLedger" l JOIN "CreditWallet" w ON w.id = l."walletId" WHERE w."organizationId" = $2 AND l.reason = 'trial_grant' AND l.delta = 100) AS grants`,
+          [first.body.auth0Sub, first.body.organizationId]
+        );
+        expect(result.rows[0]).toEqual({
+          organizations: 1,
+          members: 1,
+          trials: 1,
+          wallets: 1,
+          grants: 1,
+        });
+      } finally {
+        await client.end();
+      }
+    } finally {
+      await context.close();
+    }
   });
 
   test("bound intent remains usable after a rolled-back provisioning attempt", async ({ browser }) => {
