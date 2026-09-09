@@ -16,6 +16,7 @@ type RateLimitResult =
     };
 
 const routeLimiters = {
+  startTrial: createSlidingWindowRatelimit(ROUTE_RATE_LIMITS.startTrial),
   accountStatus: createSlidingWindowRatelimit(ROUTE_RATE_LIMITS.accountStatus),
   testSuiteExport: createSlidingWindowRatelimit(
     ROUTE_RATE_LIMITS.testSuiteExport

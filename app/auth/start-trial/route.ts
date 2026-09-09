@@ -8,11 +8,29 @@ import {
   createPendingSignupIntent,
   deletePendingSignupIntent,
 } from "@/lib/auth/signupIntent";
+import { getRequestId } from "@/lib/server/apiErrorResponse";
+import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
-export async function GET() {
+function getClientRateLimitIdentifier(req: Request): string {
+  const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const clientIp = forwardedFor || req.headers.get("x-real-ip")?.trim() || "unknown";
+  return `ip:${clientIp}`;
+}
+
+export async function GET(req: Request) {
   let nonce: string | null = null;
 
   try {
+    const rateLimit = await enforceRouteRateLimit({
+      policy: "startTrial",
+      identifier: getClientRateLimitIdentifier(req),
+      requestId: getRequestId(req),
+    });
+
+    if (!rateLimit.ok) {
+      return rateLimit.response;
+    }
+
     nonce = await createPendingSignupIntent();
 
     return await auth0.startInteractiveLogin({

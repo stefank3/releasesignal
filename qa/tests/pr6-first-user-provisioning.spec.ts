@@ -58,6 +58,28 @@ test.describe("PR6 static security contract", () => {
     expect(route).toContain('error: "account_provisioning_unavailable"');
   });
 
+  test("Start Trial enforces the shared route rate limit before creating an intent", () => {
+    const route = source("app/auth/start-trial/route.ts");
+    const policies = source("lib/ratelimit.ts");
+    const enforcement = source("lib/server/rateLimit.ts");
+
+    expect(route).toContain("enforceRouteRateLimit({");
+    expect(route).toContain('policy: "startTrial"');
+    expect(route).toContain("if (!rateLimit.ok)");
+    expect(route).toContain("return rateLimit.response");
+    expect(route.indexOf("enforceRouteRateLimit({")).toBeLessThan(
+      route.indexOf("createPendingSignupIntent()")
+    );
+    expect(route.indexOf("return rateLimit.response")).toBeLessThan(
+      route.indexOf("createPendingSignupIntent()")
+    );
+    expect(policies).toContain("startTrial: {");
+    expect(policies).toContain('prefix: `${env.REDIS_PREFIX}ratelimit:start-trial`');
+    expect(enforcement).toContain(
+      "startTrial: createSlidingWindowRatelimit(ROUTE_RATE_LIMITS.startTrial)"
+    );
+  });
+
   test("intent state is short-lived, purpose-bound, random, and product-truth free", () => {
     const intent = source("lib/auth/signupIntent.ts");
     expect(intent).toContain("crypto.getRandomValues(new Uint8Array(32))");
@@ -80,6 +102,17 @@ test.describe("PR6 static security contract", () => {
     expect(auth0).toContain('NextResponse.redirect(new URL("/chat", env.APP_BASE_URL))');
     expect(auth0).toContain("SIGNUP_INTENT_COOKIE_NAME");
     expect(auth0).not.toContain("ensureOrgForUser");
+  });
+
+  test("Auth0 callback explicitly guards returnTo to the application origin", () => {
+    const auth0 = source("lib/auth0.ts");
+
+    expect(auth0).toContain("function resolveSameOriginReturnTo(returnTo?: string): URL");
+    expect(auth0).toContain("const resolved = new URL(returnTo, appBaseUrl)");
+    expect(auth0).toContain("resolved.origin === appBaseUrl.origin ? resolved : fallback");
+    expect(auth0).toContain(
+      "NextResponse.redirect(resolveSameOriginReturnTo(ctx.returnTo))"
+    );
   });
 
   test("all production provisioning callers use the shared resolver", () => {
@@ -452,6 +485,10 @@ test.describe("PR6 live authorization", () => {
   });
 
   test("Redis unavailability fails closed for a new identity", async ({ browser }) => {
+    test.fixme(
+      true,
+      "Deferred: an isolated Redis-failure harness is required to induce and verify an actual outage"
+    );
     const context = await authenticatedContext(browser, "PR6_REDIS_UNAVAILABLE_AUTH_STATE");
     const me = await getMe(context);
     expect(me.status).toBe(503);

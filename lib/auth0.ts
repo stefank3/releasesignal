@@ -13,6 +13,20 @@ import {
   signupIntentCookieOptions,
 } from "@/lib/auth/signupIntent";
 
+function resolveSameOriginReturnTo(returnTo?: string): URL {
+  const appBaseUrl = new URL(env.APP_BASE_URL);
+  const fallback = new URL("/", appBaseUrl);
+
+  if (!returnTo) return fallback;
+
+  try {
+    const resolved = new URL(returnTo, appBaseUrl);
+    return resolved.origin === appBaseUrl.origin ? resolved : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * Central Auth0 client.
  * - Server-only
@@ -43,7 +57,7 @@ export const auth0 = new Auth0Client({
     }
 
     if (!isSignupCallback) {
-      return NextResponse.redirect(new URL(ctx.returnTo || "/", env.APP_BASE_URL));
+      return NextResponse.redirect(resolveSameOriginReturnTo(ctx.returnTo));
     }
 
     if (!signupIntentNonce) {

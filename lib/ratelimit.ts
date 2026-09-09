@@ -24,6 +24,11 @@ export const CHAT_RATE_LIMIT = Object.freeze({
 });
 
 export const ROUTE_RATE_LIMITS = Object.freeze({
+  startTrial: {
+    limit: 10,
+    window: "60 s" as RateLimitWindow,
+    prefix: `${env.REDIS_PREFIX}ratelimit:start-trial`,
+  },
   accountStatus: {
     limit: 60,
     window: "60 s" as RateLimitWindow,
