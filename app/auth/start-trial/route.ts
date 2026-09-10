@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
+import { isIP } from "node:net";
 import { auth0 } from "@/lib/auth0";
 import {
   buildSignupIntentCallbackMarker,
@@ -12,8 +13,10 @@ import { getRequestId } from "@/lib/server/apiErrorResponse";
 import { enforceRouteRateLimit } from "@/lib/server/rateLimit";
 
 function getClientRateLimitIdentifier(req: Request): string {
-  const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const clientIp = forwardedFor || req.headers.get("x-real-ip")?.trim() || "unknown";
+  // Vercel supplies this separately from proxy-overridable x-forwarded-for.
+  // Missing or malformed platform metadata shares a fail-closed fallback bucket.
+  const vercelClientIp = req.headers.get("x-vercel-forwarded-for")?.trim();
+  const clientIp = vercelClientIp && isIP(vercelClientIp) ? vercelClientIp : "unknown";
   return `ip:${clientIp}`;
 }
 

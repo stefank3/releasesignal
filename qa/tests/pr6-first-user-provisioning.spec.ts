@@ -80,6 +80,17 @@ test.describe("PR6 static security contract", () => {
     );
   });
 
+  test("Start Trial rate limit uses only a validated Vercel client IP", () => {
+    const route = source("app/auth/start-trial/route.ts");
+
+    expect(route).toContain('import { isIP } from "node:net"');
+    expect(route).toContain('req.headers.get("x-vercel-forwarded-for")');
+    expect(route).toContain("vercelClientIp && isIP(vercelClientIp)");
+    expect(route).toContain('vercelClientIp : "unknown"');
+    expect(route).not.toContain('req.headers.get("x-forwarded-for")');
+    expect(route).not.toContain('req.headers.get("x-real-ip")');
+  });
+
   test("intent state is short-lived, purpose-bound, random, and product-truth free", () => {
     const intent = source("lib/auth/signupIntent.ts");
     expect(intent).toContain("crypto.getRandomValues(new Uint8Array(32))");
