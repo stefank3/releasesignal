@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { PRODUCT_PACKAGE_LABELS, PRODUCT_PLAN_CODES } from "@/lib/product/packageLabels";
-import { CREDIT_BALANCE_EVENT } from "./hooks/useChatSession.net";
+import { CREDIT_REFRESH_EVENT } from "./hooks/useChatSession.net";
 
 type MeResponse =
   | {
@@ -31,10 +31,6 @@ type MeResponse =
 
 type Props = {
   creditRefreshKey?: number;
-};
-
-type CreditBalanceEventDetail = {
-  creditsRemaining?: unknown;
 };
 
 function formatAccountStatus(me: Extract<MeResponse, { authenticated: true }>) {
@@ -104,6 +100,7 @@ function ZeroCreditGuidance({
 
 export default function UserBar({ creditRefreshKey = 0 }: Props) {
   const [me, setMe] = useState<MeResponse | null>(null);
+  const [responseRefreshKey, setResponseRefreshKey] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -140,26 +137,15 @@ export default function UserBar({ creditRefreshKey = 0 }: Props) {
     return () => {
       controller.abort();
     };
-  }, [creditRefreshKey]);
+  }, [creditRefreshKey, responseRefreshKey]);
 
   useEffect(() => {
-    const handleCreditBalance = (event: Event) => {
-      const creditsRemaining = (event as CustomEvent<CreditBalanceEventDetail>)
-        .detail?.creditsRemaining;
-
-      if (typeof creditsRemaining !== "number" || !Number.isFinite(creditsRemaining)) {
-        return;
-      }
-
-      setMe((current) =>
-        current?.authenticated
-          ? { ...current, creditsRemaining: Math.max(0, creditsRemaining) }
-          : current
-      );
+    const handleCreditRefresh = () => {
+      setResponseRefreshKey((current) => current + 1);
     };
 
-    window.addEventListener(CREDIT_BALANCE_EVENT, handleCreditBalance);
-    return () => window.removeEventListener(CREDIT_BALANCE_EVENT, handleCreditBalance);
+    window.addEventListener(CREDIT_REFRESH_EVENT, handleCreditRefresh);
+    return () => window.removeEventListener(CREDIT_REFRESH_EVENT, handleCreditRefresh);
   }, []);
 
   if (!me) {
