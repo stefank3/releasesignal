@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { PRODUCT_PACKAGE_LABELS, PRODUCT_PLAN_CODES } from "@/lib/product/packageLabels";
+import { CREDIT_BALANCE_EVENT } from "./hooks/useChatSession.net";
 
 type MeResponse =
   | {
@@ -30,6 +31,10 @@ type MeResponse =
 
 type Props = {
   creditRefreshKey?: number;
+};
+
+type CreditBalanceEventDetail = {
+  creditsRemaining?: unknown;
 };
 
 function formatAccountStatus(me: Extract<MeResponse, { authenticated: true }>) {
@@ -64,6 +69,37 @@ function formatTrialTitle(me: Extract<MeResponse, { authenticated: true }>) {
     day: "numeric",
     year: "numeric",
   })}`;
+}
+
+function ZeroCreditGuidance({
+  me,
+}: {
+  me: Extract<MeResponse, { authenticated: true }>;
+}) {
+  if (me.creditsRemaining !== 0) return null;
+
+  const isTrialUser = !me.isAdmin && me.planStatus === "trialing";
+
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className="max-w-72 text-right text-[11px] leading-4 opacity-80"
+    >
+      {isTrialUser ? (
+        <>
+          Beta credits are exhausted. AI-assisted actions are unavailable. For
+          beta access questions, contact{" "}
+          <a className="underline" href="mailto:contact@releasesignal.io">
+            contact@releasesignal.io
+          </a>
+          .
+        </>
+      ) : (
+        <>AI-assisted actions are unavailable while the credit balance is 0.</>
+      )}
+    </span>
+  );
 }
 
 export default function UserBar({ creditRefreshKey = 0 }: Props) {
@@ -106,6 +142,26 @@ export default function UserBar({ creditRefreshKey = 0 }: Props) {
     };
   }, [creditRefreshKey]);
 
+  useEffect(() => {
+    const handleCreditBalance = (event: Event) => {
+      const creditsRemaining = (event as CustomEvent<CreditBalanceEventDetail>)
+        .detail?.creditsRemaining;
+
+      if (typeof creditsRemaining !== "number" || !Number.isFinite(creditsRemaining)) {
+        return;
+      }
+
+      setMe((current) =>
+        current?.authenticated
+          ? { ...current, creditsRemaining: Math.max(0, creditsRemaining) }
+          : current
+      );
+    };
+
+    window.addEventListener(CREDIT_BALANCE_EVENT, handleCreditBalance);
+    return () => window.removeEventListener(CREDIT_BALANCE_EVENT, handleCreditBalance);
+  }, []);
+
   if (!me) {
     return <div className="text-sm opacity-70">Loading…</div>;
   }
@@ -133,8 +189,10 @@ export default function UserBar({ creditRefreshKey = 0 }: Props) {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-3 text-sm">
-      <span className="opacity-80">{me.email}</span>
+    <div className="flex max-w-full flex-wrap items-center justify-end gap-3 text-sm">
+      <span className="max-w-56 truncate opacity-80" title={me.email}>
+        {me.email}
+      </span>
 
       <span
         title={formatTrialTitle(me)}
@@ -152,6 +210,8 @@ export default function UserBar({ creditRefreshKey = 0 }: Props) {
       >
         {formatAccountStatus(me)}
       </span>
+
+      <ZeroCreditGuidance me={me} />
 
       {me.isAdmin && (
         <>
