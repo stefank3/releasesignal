@@ -48,7 +48,7 @@ test.describe('PR7 credits visibility and exhaustion UX', () => {
     }
   });
 
-  test('server-returned post-action balance updates and reconciles without client arithmetic', async ({ browser }) => {
+  test('server-returned post-action balance updates and reconciles through api me', async ({ browser }) => {
     const live = await newLivePage(browser, trialStateEnv);
     test.skip(!live.ok, live.ok ? '' : live.message);
     if (!live.ok) return;
@@ -89,7 +89,7 @@ test.describe('PR7 credits visibility and exhaustion UX', () => {
     await expectVisibleBalance(live.page, serverBalance);
   });
 
-  test('credit-specific 402 immediately exposes zero-credit state and beta recovery guidance', async ({ browser }) => {
+  test('credit-specific 402 refreshes zero-credit state and beta recovery guidance', async ({ browser }) => {
     const live = await newLivePage(browser, trialStateEnv);
     test.skip(!live.ok, live.ok ? '' : live.message);
     if (!live.ok) return;
@@ -146,16 +146,11 @@ test.describe('PR7 credits visibility and exhaustion UX', () => {
     test.skip(!live.ok, live.ok ? '' : live.message);
     if (!live.ok) return;
 
+    const me = await expectAuthenticatedMe(live.page);
+    await routeAccountSnapshot(live.page, me, () => 0);
+
     await live.page.setViewportSize({ width: 375, height: 812 });
     await openWorkspace(live.page);
-
-    await live.page.evaluate(() => {
-      window.dispatchEvent(
-        new CustomEvent('release-signal:credit-balance', {
-          detail: { creditsRemaining: 0 }
-        })
-      );
-    });
 
     await expectVisibleBalance(live.page, 0);
     await expect(
