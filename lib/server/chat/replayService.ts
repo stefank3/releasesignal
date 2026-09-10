@@ -29,6 +29,7 @@ type ReplayArgs = {
   rateMeta: RateMeta | null;
   sessionArtifact: SessionArtifact | null;
   artifactUpdatedAtIso: string | null;
+  creditsRemaining: number;
 };
 
 type ReplayResult =
@@ -98,6 +99,7 @@ export async function tryReplayExistingAssistant(
   const sessionArtifact = refreshed.artifact ?? args.sessionArtifact ?? null;
   const artifactUpdatedAtIso =
     refreshed.artifactUpdatedAtIso ?? args.artifactUpdatedAtIso ?? null;
+  const creditsRemaining = Math.max(0, args.creditsRemaining);
 
   const usage = {
     promptTokens: existingAssistant.tokensIn ?? 0,
@@ -127,6 +129,7 @@ export async function tryReplayExistingAssistant(
             usage,
             rate: args.rateMeta,
             replay: true,
+            creditsRemaining,
             artifact: sessionArtifact,
             artifactUpdatedAt: artifactUpdatedAtIso,
           },
@@ -154,6 +157,7 @@ export async function tryReplayExistingAssistant(
             usage,
             rate: args.rateMeta,
             replay: true,
+            creditsRemaining,
             artifact: sessionArtifact,
             artifactUpdatedAt: artifactUpdatedAtIso,
           },
@@ -185,6 +189,7 @@ export async function tryReplayExistingAssistant(
         usage,
         rate: args.rateMeta,
         replay: true,
+        creditsRemaining,
         artifact: sessionArtifact,
         artifactUpdatedAt: artifactUpdatedAtIso,
       },
