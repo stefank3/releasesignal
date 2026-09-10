@@ -1,15 +1,32 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import {
   expectAuthenticatedMe,
-  liveUrl,
   newLivePage,
-  openWorkspace
+  openWorkspace,
+  type MeResponse
 } from '../helpers/pr60Live';
 
 const trialStateEnv = 'PR60_TRIAL_AUTH_STATE';
 
-async function expectVisibleBalance(page: Parameters<typeof expectAuthenticatedMe>[0], credits: number) {
+async function expectVisibleBalance(page: Page, credits: number) {
   await expect(page.getByText(`${credits.toLocaleString()} credits left`, { exact: false })).toBeVisible();
+}
+
+async function routeAccountSnapshot(
+  page: Page,
+  initial: Extract<MeResponse, { authenticated: true }>,
+  getCreditsRemaining: () => number
+) {
+  await page.route('**/api/me', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...initial,
+        creditsRemaining: getCreditsRemaining()
+      })
+    });
+  });
 }
 
 test.describe('PR7 credits visibility and exhaustion UX', () => {
@@ -31,7 +48,7 @@ test.describe('PR7 credits visibility and exhaustion UX', () => {
     }
   });
 
-  test('server-returned post-action balance updates without client arithmetic', async ({ browser }) => {
+  test('server-returned post-action balance updates and reconciles without client arithmetic', async ({ browser }) => {
     const live = await newLivePage(browser, trialStateEnv);
     test.skip(!live.ok, live.ok ? '' : live.message);
     if (!live.ok) return;
@@ -40,8 +57,11 @@ test.describe('PR7 credits visibility and exhaustion UX', () => {
     test.skip(me.creditsRemaining <= 0, 'Requires an account with a positive starting balance');
 
     const serverBalance = Math.max(0, me.creditsRemaining - 1);
+    let accountBalance = me.creditsRemaining;
 
+    await routeAccountSnapshot(live.page, me, () => accountBalance);
     await live.page.route('**/api/chat', async (route) => {
+      accountBalance = serverBalance;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -76,8 +96,11 @@ test.describe('PR7 credits visibility and exhaustion UX', () => {
 
     const me = await expectAuthenticatedMe(live.page);
     expect(me.isAdmin).toBe(false);
+    let accountBalance = me.creditsRemaining;
 
+    await routeAccountSnapshot(live.page, me, () => accountBalance);
     await live.page.route('**/api/chat', async (route) => {
+      accountBalance = 0;
       await route.fulfill({
         status: 402,
         contentType: 'application/json',
