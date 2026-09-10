@@ -3,8 +3,29 @@
 
 import type { SessionArtifact } from "../chat.types";
 
+export const CREDIT_BALANCE_EVENT = "release-signal:credit-balance";
+
+type CreditBalanceEventDetail = {
+  creditsRemaining: number;
+};
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
+}
+
+function publishAuthoritativeCreditBalance(data: unknown) {
+  if (typeof window === "undefined" || !isRecord(data)) return;
+
+  const creditsRemaining = data["creditsRemaining"];
+  if (typeof creditsRemaining !== "number" || !Number.isFinite(creditsRemaining)) {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<CreditBalanceEventDetail>(CREDIT_BALANCE_EVENT, {
+      detail: { creditsRemaining: Math.max(0, creditsRemaining) },
+    })
+  );
 }
 
 export function readArtifactFromResponse(
@@ -71,6 +92,14 @@ export async function fetchJSONWithMeta<T>(
   }
 
   const data = text ? (JSON.parse(text) as unknown) : ({} as unknown);
+
+  // PR7:
+  // Any chat response that carries a server-owned credit snapshot can refresh
+  // the visible account balance immediately. This covers successful charges,
+  // insufficient-credit 402 responses from stale tabs, and replay responses.
+  // The client never calculates the balance; it only propagates server truth.
+  publishAuthoritativeCreditBalance(data);
+
   return { status: res.status, headers: res.headers, data: data as T };
 }
 
