@@ -12,6 +12,7 @@ export async function middleware(request: NextRequest) {
   // Allow public paths (tweak as you want)
   const isPublic =
     pathname === "/" ||
+    pathname === "/reviews" ||
     pathname === "/contact" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||

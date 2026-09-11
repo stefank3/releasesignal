@@ -16,14 +16,15 @@ export const guardrailCopy =
   "Release Signal provides QA assistance and release-readiness support, but it does not replace human QA judgment or final release approval.";
 
 export const navLinks = [
-  { href: "#how-it-works", label: "How it works" },
-  { href: "#features", label: "Features" },
-  { href: "#pricing", label: "Pricing" },
-  { href: "#faq", label: "FAQ" },
+  { href: "/#how-it-works", label: "How it works" },
+  { href: "/#features", label: "Features" },
+  { href: "/#pricing", label: "Pricing" },
+  { href: "/#faq", label: "FAQ" },
   { href: `mailto:${contactEmail}`, label: "Contact" },
 ];
 
 export const trustLinks = [
+  { href: "/reviews", label: "Reviews" },
   { href: "/contact", label: "Contact" },
   { href: "/privacy", label: "Privacy" },
   { href: "/terms", label: "Terms" },
