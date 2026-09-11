@@ -64,6 +64,28 @@ function tryParseStoredReview(raw: string): ReviewResult | null {
   }
 }
 
+async function getCurrentCreditsRemaining(auth0Sub: string): Promise<number | null> {
+  const member = await prisma.orgMember.findFirst({
+    where: { auth0Sub },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { organizationId: true },
+  });
+
+  if (!member) return null;
+
+  const wallet = await prisma.creditWallet.findUnique({
+    where: {
+      organizationId_currency: {
+        organizationId: member.organizationId,
+        currency: "credits",
+      },
+    },
+    select: { balance: true },
+  });
+
+  return wallet ? Math.max(0, wallet.balance) : null;
+}
+
 export async function tryReplayExistingAssistant(
   args: ReplayArgs
 ): Promise<ReplayResult> {
@@ -98,6 +120,7 @@ export async function tryReplayExistingAssistant(
   const sessionArtifact = refreshed.artifact ?? args.sessionArtifact ?? null;
   const artifactUpdatedAtIso =
     refreshed.artifactUpdatedAtIso ?? args.artifactUpdatedAtIso ?? null;
+  const creditsRemaining = await getCurrentCreditsRemaining(args.auth0Sub);
 
   const usage = {
     promptTokens: existingAssistant.tokensIn ?? 0,
@@ -127,6 +150,7 @@ export async function tryReplayExistingAssistant(
             usage,
             rate: args.rateMeta,
             replay: true,
+            ...(creditsRemaining !== null ? { creditsRemaining } : {}),
             artifact: sessionArtifact,
             artifactUpdatedAt: artifactUpdatedAtIso,
           },
@@ -154,6 +178,7 @@ export async function tryReplayExistingAssistant(
             usage,
             rate: args.rateMeta,
             replay: true,
+            ...(creditsRemaining !== null ? { creditsRemaining } : {}),
             artifact: sessionArtifact,
             artifactUpdatedAt: artifactUpdatedAtIso,
           },
@@ -185,6 +210,7 @@ export async function tryReplayExistingAssistant(
         usage,
         rate: args.rateMeta,
         replay: true,
+        ...(creditsRemaining !== null ? { creditsRemaining } : {}),
         artifact: sessionArtifact,
         artifactUpdatedAt: artifactUpdatedAtIso,
       },

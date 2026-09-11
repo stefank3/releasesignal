@@ -3,8 +3,25 @@
 
 import type { SessionArtifact } from "../chat.types";
 
+export const CREDIT_REFRESH_EVENT = "release-signal:credit-refresh";
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
+}
+
+function requestAuthoritativeCreditRefresh(data: unknown) {
+  if (typeof window === "undefined" || !isRecord(data)) return;
+
+  const creditsRemaining = data["creditsRemaining"];
+  if (typeof creditsRemaining !== "number" || !Number.isFinite(creditsRemaining)) {
+    return;
+  }
+
+  // PR7:
+  // The response only signals that server-owned credit state changed or was
+  // authoritatively reported. UserBar then re-reads /api/me; no balance value
+  // is transported or calculated through this client event.
+  window.dispatchEvent(new Event(CREDIT_REFRESH_EVENT));
 }
 
 export function readArtifactFromResponse(
@@ -71,6 +88,13 @@ export async function fetchJSONWithMeta<T>(
   }
 
   const data = text ? (JSON.parse(text) as unknown) : ({} as unknown);
+
+  // PR7:
+  // Successful charges, insufficient-credit 402s, and replay responses all
+  // carry server-owned creditsRemaining. Use that only as a refresh trigger;
+  // /api/me remains the visible persisted account-state source.
+  requestAuthoritativeCreditRefresh(data);
+
   return { status: res.status, headers: res.headers, data: data as T };
 }
 

@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { PRODUCT_PACKAGE_LABELS, PRODUCT_PLAN_CODES } from "@/lib/product/packageLabels";
+import { CREDIT_REFRESH_EVENT } from "./hooks/useChatSession.net";
 
 type MeResponse =
   | {
@@ -66,8 +67,40 @@ function formatTrialTitle(me: Extract<MeResponse, { authenticated: true }>) {
   })}`;
 }
 
+function ZeroCreditGuidance({
+  me,
+}: {
+  me: Extract<MeResponse, { authenticated: true }>;
+}) {
+  if (me.creditsRemaining !== 0) return null;
+
+  const isTrialUser = !me.isAdmin && me.planStatus === "trialing";
+
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className="max-w-72 text-right text-[11px] leading-4 opacity-80"
+    >
+      {isTrialUser ? (
+        <>
+          Beta credits are exhausted. AI-assisted actions are unavailable. For
+          beta access questions, contact{" "}
+          <a className="underline" href="mailto:contact@releasesignal.io">
+            contact@releasesignal.io
+          </a>
+          .
+        </>
+      ) : (
+        <>AI-assisted actions are unavailable while the credit balance is 0.</>
+      )}
+    </span>
+  );
+}
+
 export default function UserBar({ creditRefreshKey = 0 }: Props) {
   const [me, setMe] = useState<MeResponse | null>(null);
+  const [responseRefreshKey, setResponseRefreshKey] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -104,7 +137,16 @@ export default function UserBar({ creditRefreshKey = 0 }: Props) {
     return () => {
       controller.abort();
     };
-  }, [creditRefreshKey]);
+  }, [creditRefreshKey, responseRefreshKey]);
+
+  useEffect(() => {
+    const handleCreditRefresh = () => {
+      setResponseRefreshKey((current) => current + 1);
+    };
+
+    window.addEventListener(CREDIT_REFRESH_EVENT, handleCreditRefresh);
+    return () => window.removeEventListener(CREDIT_REFRESH_EVENT, handleCreditRefresh);
+  }, []);
 
   if (!me) {
     return <div className="text-sm opacity-70">Loading…</div>;
@@ -133,8 +175,10 @@ export default function UserBar({ creditRefreshKey = 0 }: Props) {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-3 text-sm">
-      <span className="opacity-80">{me.email}</span>
+    <div className="flex max-w-full flex-wrap items-center justify-end gap-3 text-sm">
+      <span className="max-w-56 truncate opacity-80" title={me.email}>
+        {me.email}
+      </span>
 
       <span
         title={formatTrialTitle(me)}
@@ -152,6 +196,8 @@ export default function UserBar({ creditRefreshKey = 0 }: Props) {
       >
         {formatAccountStatus(me)}
       </span>
+
+      <ZeroCreditGuidance me={me} />
 
       {me.isAdmin && (
         <>
