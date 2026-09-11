@@ -149,20 +149,57 @@ test.describe('PR7 credits visibility and exhaustion UX', () => {
     const me = await expectAuthenticatedMe(live.page);
     await routeAccountSnapshot(live.page, me, () => 0);
 
-    await live.page.setViewportSize({ width: 375, height: 812 });
+    await live.page.addInitScript(() => {
+      window.localStorage.setItem('release-signal-v1-2-guided-tour', 'dismissed');
+    });
     await openWorkspace(live.page);
+
+    await live.page.getByRole('button', { name: 'Collapse sidebar' }).click();
+    await expect(live.page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible();
+    await live.page.setViewportSize({ width: 375, height: 812 });
 
     await expectVisibleBalance(live.page, 0);
     await expect(
       live.page.getByText('AI-assisted actions are unavailable', { exact: false })
     ).toBeVisible();
 
-    const viewport = await live.page.evaluate(() => ({
-      clientWidth: document.documentElement.clientWidth,
-      scrollWidth: document.documentElement.scrollWidth
-    }));
-    expect(viewport.scrollWidth, 'PR7 credit state should not introduce horizontal page overflow').toBeLessThanOrEqual(
-      viewport.clientWidth
+    const bounds = await live.page.evaluate(() => {
+      const workspace = document.querySelector('main');
+      const header = document.querySelector<HTMLElement>('[data-testid="chat-header"]');
+      const userBar = document.querySelector<HTMLElement>('[data-testid="chat-header-user-bar"]');
+
+      if (!(workspace instanceof HTMLElement) || !header || !userBar) {
+        throw new Error('PR7 responsive bounds require the workspace, header, and UserBar');
+      }
+
+      const workspaceRect = workspace.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const userBarRect = userBar.getBoundingClientRect();
+
+      return {
+        workspaceClientWidth: workspace.clientWidth,
+        workspaceScrollWidth: workspace.scrollWidth,
+        headerClientWidth: header.clientWidth,
+        headerScrollWidth: header.scrollWidth,
+        workspaceLeft: workspaceRect.left,
+        workspaceRight: workspaceRect.right,
+        headerLeft: headerRect.left,
+        headerRight: headerRect.right,
+        userBarLeft: userBarRect.left,
+        userBarRight: userBarRect.right
+      };
+    });
+
+    expect(
+      bounds.workspaceScrollWidth,
+      'PR7 credit state should not introduce horizontal workspace overflow'
+    ).toBeLessThanOrEqual(bounds.workspaceClientWidth);
+    expect(bounds.headerScrollWidth, 'The chat header should fit its visible width').toBeLessThanOrEqual(
+      bounds.headerClientWidth
     );
+    expect(bounds.headerLeft).toBeGreaterThanOrEqual(bounds.workspaceLeft - 1);
+    expect(bounds.headerRight).toBeLessThanOrEqual(bounds.workspaceRight + 1);
+    expect(bounds.userBarLeft).toBeGreaterThanOrEqual(bounds.headerLeft - 1);
+    expect(bounds.userBarRight).toBeLessThanOrEqual(bounds.headerRight + 1);
   });
 });

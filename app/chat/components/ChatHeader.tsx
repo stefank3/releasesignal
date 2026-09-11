@@ -88,6 +88,7 @@ export default function ChatHeader({
 
   return (
     <div
+      data-testid="chat-header"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -144,7 +145,10 @@ export default function ChatHeader({
           </div>
         </div>
 
-        <div style={{ flex: "0 0 auto" }}>
+        <div
+          data-testid="chat-header-user-bar"
+          style={{ flex: "0 1 auto", minWidth: 0, maxWidth: "100%" }}
+        >
           <UserBar creditRefreshKey={creditRefreshKey} />
         </div>
       </div>
