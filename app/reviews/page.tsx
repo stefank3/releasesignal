@@ -7,7 +7,7 @@ import { getApprovedPublicReviews } from "./publicReviews";
 export const metadata: Metadata = {
   title: "Reviews | Release Signal",
   description:
-    "Feedback from Release Signal users and beta participants that has been approved for publication.",
+    "Release Signal publishes user feedback only with explicit approval.",
 };
 
 export default function ReviewsPage() {
