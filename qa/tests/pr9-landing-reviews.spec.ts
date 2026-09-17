@@ -7,12 +7,21 @@ const previous = (page: Page) => section(page).getByRole("button", { name: "Prev
 const next = (page: Page) => section(page).getByRole("button", { name: "Next review" });
 
 async function openFixture(page: Page, scenario: string) {
+  const health = await page.request.get(`${fixtureUrl}/health`);
+  expect(health.status()).toBe(200);
+  expect(await health.text()).toBe("PR9 fixture rendered");
   await page.goto(`${fixtureUrl}/?scenario=${scenario}`);
   await expect(page.getByTestId("after")).toBeVisible();
 }
 
 async function expectPosition(page: Page, position: number, count: number) {
-  await expect(section(page).getByRole("status")).toHaveText(`Review ${position} of ${count}`);
+  const live = section(page).locator('[aria-live="polite"]');
+  await expect(live).toHaveCount(1);
+  await expect(live).toHaveAttribute("aria-atomic", "true");
+  await expect(live.getByText(`Review ${position} of ${count}`, { exact: true })).toBeVisible();
+  await expect(live.locator("blockquote")).toContainText(`Fixture quote ${position}.`);
+  await expect(live.locator("figcaption strong")).toContainText(`Fixture author ${position}`);
+  await expect(section(page).getByRole("status")).toHaveCount(0);
   await expect(section(page).locator("blockquote")).toContainText(`Fixture quote ${position}.`);
   await expect(section(page).locator("figcaption strong")).toContainText(`Fixture author ${position}`);
   await expect(section(page).locator("figure")).toHaveCount(1);
@@ -44,12 +53,17 @@ for (const width of [1440, 375]) {
       await expect(section(page).locator("figcaption")).toHaveText("Fixture author 1");
       await expect(section(page).getByRole("button")).toHaveCount(0);
       await expect(section(page).getByRole("status")).toHaveCount(0);
+      await expect(section(page).locator("[aria-live]")).toHaveCount(0);
+      await expect(section(page).getByText(/^Review \d+ of \d+$/)).toHaveCount(0);
       await expectNoOverflow(page);
     });
 
     test("manual navigation respects boundaries and preserves focus", async ({ page }) => {
       await openFixture(page, "multiple");
       await expectPosition(page, 1, 3);
+      const navigation = section(page).getByRole("group", { name: "Review navigation", exact: true });
+      await expect(navigation.getByRole("button")).toHaveCount(2);
+      await expect(navigation.locator("[aria-live], [role=status]")).toHaveCount(0);
       await expect(previous(page)).toHaveAttribute("aria-disabled", "true");
       await page.keyboard.press("Tab");
       await expect(previous(page)).toBeFocused();
@@ -102,8 +116,14 @@ for (const width of [1440, 375]) {
         return nodes.every((node) => node.scrollWidth <= node.clientWidth && node.scrollHeight <= node.clientHeight);
       })).toBe(true);
       for (const control of [previous(page), next(page)]) {
+        expect(await control.evaluate((element) => [
+          getComputedStyle(element).boxSizing,
+          getComputedStyle(element, "::before").boxSizing,
+          getComputedStyle(element, "::after").boxSizing,
+        ])).toEqual(["border-box", "border-box", "border-box"]);
         const box = await control.boundingBox();
         expect(box!.height).toBeGreaterThanOrEqual(44);
+        expect(box!.width).toBeGreaterThanOrEqual(44);
         expect(box!.x).toBeGreaterThanOrEqual(0);
         expect(box!.x + box!.width).toBeLessThanOrEqual(width);
       }

@@ -44,26 +44,33 @@ export function LandingReviewSection({
         <div className={marketing.sectionHeader}>
           <h2 id={headingId} className={marketing.sectionTitle}>Customer reviews</h2>
         </div>
-        <figure id={quoteId} className={`${marketing.featureCard} ${styles.quote}`}>
-          <blockquote className={styles.blockquote}>
-            <p className={marketing.sectionCopy}>{review.quote}</p>
-          </blockquote>
-          <figcaption className={marketing.cardText}>
-            <strong>{review.authorName}</strong>
-            {review.authorRole && <div>{review.authorRole}</div>}
-            {review.company && <div>{review.company}</div>}
-          </figcaption>
-        </figure>
+        {/* One atomic region announces content and position together, without moving focus. */}
+        <div id={quoteId} aria-live={hasMultiple ? "polite" : undefined}
+          aria-atomic={hasMultiple ? true : undefined}>
+          <figure className={`${marketing.featureCard} ${styles.quote}`}>
+            <blockquote className={styles.blockquote}>
+              <p className={marketing.sectionCopy}>{review.quote}</p>
+            </blockquote>
+            <figcaption className={marketing.cardText}>
+              <strong>{review.authorName}</strong>
+              {review.authorRole && <div>{review.authorRole}</div>}
+              {review.company && <div>{review.company}</div>}
+            </figcaption>
+          </figure>
+          {hasMultiple && (
+            <p className={styles.position}>
+              Review {currentIndex + 1} of {reviews.length}
+            </p>
+          )}
+        </div>
         {hasMultiple && (
-          <div className={styles.controls} onKeyDown={handleControlKeyDown}>
+          <div className={styles.controls} role="group" aria-label="Review navigation"
+            onKeyDown={handleControlKeyDown}>
             {/* aria-disabled keeps focus stable when a control reaches its boundary. */}
             <button type="button" className={styles.control} aria-controls={quoteId}
               aria-disabled={atStart} onClick={() => { if (!atStart) move(-1); }}>
               Previous review
             </button>
-            <p className={styles.position} role="status" aria-live="polite" aria-atomic="true">
-              Review {currentIndex + 1} of {reviews.length}
-            </p>
             <button type="button" className={styles.control} aria-controls={quoteId}
               aria-disabled={atEnd} onClick={() => { if (!atEnd) move(1); }}>
               Next review

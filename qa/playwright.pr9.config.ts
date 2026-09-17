@@ -1,8 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 import dotenv from "dotenv";
 import path from "path";
+import { randomUUID } from "node:crypto";
 
 dotenv.config({ path: path.join(__dirname, ".env") });
+// The teardown may stop only the fixture process belonging to this run.
+process.env.PR9_FIXTURE_RUN_ID ??= randomUUID();
 
 export default defineConfig({
   testDir: path.join(__dirname, "tests"),
@@ -12,6 +15,7 @@ export default defineConfig({
   workers: 1,
   timeout: 60_000,
   expect: { timeout: 10_000 },
+  globalTeardown: path.join(__dirname, "helpers/pr9-review-fixture-server.mjs"),
   use: {
     baseURL: process.env.BASE_URL || "http://127.0.0.1:3000",
     headless: true,
