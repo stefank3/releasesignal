@@ -1,0 +1,62 @@
+.quote {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.blockquote {
+  margin: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.control {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid #4b5563;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.control[aria-disabled="true"] {
+  background: #f3f4f6;
+  color: #4b5563;
+  cursor: default;
+}
+
+.control:focus-visible {
+  outline: 3px solid #1f6feb;
+  outline-offset: 3px;
+}
+
+.position {
+  margin: 12px 0 0;
+  color: #4b5563;
+}
+
+@media (max-width: 620px) {
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .position {
+    text-align: center;
+  }
+}
