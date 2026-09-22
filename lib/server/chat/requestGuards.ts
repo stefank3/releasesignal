@@ -41,7 +41,6 @@ import { isWeakInput } from "@/lib/chat/inputQuality";
 import {
   buildAccountAccessRequiredResponse,
   buildAccountProvisioningErrorResponse,
-  buildForbiddenResponse,
   buildInputTooLargeResponse,
   buildInvalidJsonBodyResponse,
   buildMissingMessageResponse,
@@ -94,15 +93,6 @@ type ParseResult =
       executionMode: ExecutionMode;
       weakInput: boolean;
       explicitRegenerationRequest: boolean;
-    };
-
-type ReviewAccessResult =
-  | {
-      ok: false;
-      response: Response;
-    }
-  | {
-      ok: true;
     };
 
 type BillingPrecheckResult =
@@ -312,45 +302,6 @@ const executionMode: ExecutionMode = wantReview ? "review" : "coach";
     executionMode,
     weakInput,
     explicitRegenerationRequest,
-  };
-}
-
-export async function requireReviewAccess(args: {
-  executionMode: ExecutionMode;
-  requestId: string;
-  auth0Sub: string;
-  clientMode: ClientMode;
-  startTime: number;
-  recordChatMetric: MetricRecorder;
-}): Promise<ReviewAccessResult> {
-  if (args.executionMode !== "review") {
-    return { ok: true };
-  }
-
-  const isAdmin = await isAdminFromAccessToken();
-  if (isAdmin) return { ok: true };
-
-  log("warn", {
-    event: "forbidden_review_access",
-    requestId: args.requestId,
-    auth0Sub: args.auth0Sub,
-    mode: args.clientMode,
-    durationMs: Date.now() - args.startTime,
-  });
-
-  await args.recordChatMetric({
-    nowMs: Date.now(),
-    mode: args.clientMode,
-    status: 403,
-    latencyMs: Date.now() - args.startTime,
-  });
-
-  return {
-    ok: false,
-    response: buildForbiddenResponse({
-      requestId: args.requestId,
-      clientMode: args.clientMode,
-    }),
   };
 }
 

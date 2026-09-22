@@ -23,7 +23,8 @@ cp .env.example .env
 
 ### First run — authenticate
 
-The first time any test runs, Playwright logs in through Auth0 and saves the session.
+The default config's first run logs in through Auth0 and saves the session.
+The isolated PR6, PR8/PR9, PR60, and PR10 configs do not use this global setup.
 If automated login is blocked, complete login manually in the headed browser.
 The session is saved to helpers/auth.json.
 Do not commit helpers/auth.json.
@@ -98,7 +99,7 @@ Opt-in live validations:
 
 - `PR60_ENABLE_AUTH0_ROUTE_SMOKE=true`: allows the login route smoke to open the Auth0 authorization flow.
 - `PR60_ENABLE_CREDIT_SPEND=true`: allows the normal trial-user chat test to spend one credit.
-- `PR60_ENABLE_ADMIN_CHAT_CHECK=true`: allows the admin chat test to call the AI route and verify no credit debit.
+- `PR60_ENABLE_ADMIN_CHAT_CHECK=true`: allows the admin chat test to call the AI route and verify a credit debit without trial conversion.
 
 Do not use personal, customer, or production admin accounts for PR #60. Use
 dedicated beta test accounts and controlled seeded workspaces only. The PR #60
@@ -119,8 +120,7 @@ manual gate.
 Level 1 - always required before merge/deploy:
 
 ```bash
-npx tsc --noEmit
-npm run build
+npx tsc --noEmit --incremental false
 git diff --check
 cd qa
 npx playwright test --list
@@ -134,7 +134,10 @@ cd qa
 npm run pr60:gate
 ```
 
-Before live PR60 accounts exist, 8 discovered PR60 tests with clear setup skips
+Do not run the root `npm run build` for QA: it invokes `prisma migrate deploy`.
+Deployment/build evidence is a separate gate; any direct Next build needs a side-effect review first.
+
+Before live PR60 accounts exist, 11 discovered PR60 tests with clear setup skips
 is acceptable. Do not claim full live coverage from all-skipped output.
 
 Level 3 - PR60 live beta gate:
@@ -188,3 +191,152 @@ For production validation, keep fixture sessions empty unless a controlled, non-
 - Avoid tests that submit prompts, trigger AI-backed `/api/chat` actions, generate tests, review tests, improve plans, request next batches, or submit execution evidence.
 - Keep readiness checks to render-only assertions. Let export, reload, and artifact-specific checks skip unless stable fixture session IDs are intentionally configured.
 - Do not add real production URLs, credentials, tokens, Auth0 secrets, or customer data to QA files, PRs, issues, or logs.
+
+### PR10 Gate A harness (disabled until separate live authorization)
+
+Harness scope: five QA files; the complete PR10 scope also includes the Review-access fix
+in `app/api/chat/route.ts` and `lib/server/chat/requestGuards.ts`. No new dependencies, wallet edits, exhaustion loop,
+automatic account creation, cleanup SQL, or production execution. Missing prerequisites
+FAIL; they do not silently skip. A serial failure prevents later dependent tests from
+running: those unrun tests are not evidence. No retries. Do not rerun a partially
+completed journey with the same fresh candidate. Preserve failure evidence first.
+
+Offline commands from the repository root (installed tools only):
+
+```powershell
+node qa/node_modules/@playwright/test/cli.js test --config qa/playwright.pr10.config.ts --list
+node qa/node_modules/@playwright/test/cli.js test --config qa/playwright.pr10.config.ts --grep '@offline'
+node node_modules/typescript/bin/tsc --noEmit --incremental false
+node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --esModuleInterop --target es2020 --module commonjs --moduleResolution node qa/helpers/pr10Gate.ts qa/tests/pr10-beta-account-e2e.spec.ts qa/playwright.pr10.config.ts
+node node_modules/eslint/bin/eslint.js qa/helpers/pr10Gate.ts qa/tests/pr10-beta-account-e2e.spec.ts qa/playwright.pr10.config.ts
+git diff --check
+```
+
+The root TypeScript config excludes QA; the separate command checks the actual harness.
+Discovery and `@offline` require no application server, identity, DB, or browser launch.
+
+#### Controlled inventory (future setup, not authorization to create it)
+
+Use six distinct, disposable identities and a separate non-production database.
+Confirm the deployment and `PR10_DATABASE_URL` refer to that same database. The URL
+allowlist is an operator assertion, not proof that a deployment uses non-production data.
+The DB credential should have SELECT-only privileges; helper queries also use read-only
+transactions. Never use customer/personal accounts. Keep all identity files external,
+private, and uncommitted. No generic `helpers/auth.json` fallback.
+
+| Role | Required starting state | Mutation during authorized run |
+| --- | --- | --- |
+| fresh | Dedicated Auth0 identity, no signup intent, membership, or previous grant | One trial provisioning via /api/me |
+| owner | Existing normal trial, >=10 credits, isolated account | Five workflow calls, one ordinary replay, evidence upload, logout/login |
+| zero | Existing normal trial, actual DB balance 0, own persisted suite session | Rejected AI probe and deterministic evidence upload; no wallet adjustment |
+| second | Existing normal trial, different organization | Read-only isolation/admin denial checks |
+| unentitled | Auth0 identity, no membership or signup intent | Expected rejected /api/me and /api/chat calls |
+| admin | Existing application admin, no trial or signup intent | Account and admin boundary reads |
+
+Prepare the fresh state BEFORE Start Trial, after separate authorization:
+
+1. Use an existing dedicated Auth0-only identity; do not run the PR6 signup-intent creator.
+2. Open a new headed Playwright context at the approved origin. Block `/chat`, `/api/me`,
+   and `/api/chat` browser requests using the PR6 capture convention before navigating.
+3. Navigate to `/auth/login?returnTo=/auth/profile` and sign in as that identity.
+   Confirm `/auth/profile` returns its expected sub. Do not click Start Trial during setup.
+4. Save `context.storageState({ path: '<absolute private fresh.json path>' })` outside
+   the repository; close that context. It must contain no `rs_beta_signup` cookie.
+5. Reference that state in the inventory. The harness independently queries membership,
+   entitlements, subject-linked grant history, sessions, and messages before Start Trial;
+   an operator assertion or timestamp is never accepted as proof of unprovisioned state.
+PR60 states can supply owner/second/admin if prerequisites match. Never import PR6
+creators: they execute live work on import. The zero session must be among its sidebar's
+first 25 sessions; absence fails rather than silently selecting a different workspace.
+
+Create a private inventory referencing existing external storage-state files:
+
+```json
+{
+  "origin": "https://your-approved-preview.example",
+  "createdAt": "<ISO timestamp of fresh capture>",
+  "accounts": {
+    "fresh": { "subject": "<Auth0 sub>", "state": "C:/private-pr10/fresh.json" },
+    "owner": { "subject": "<Auth0 sub>", "state": "C:/private-pr10/owner.json" },
+    "zero": { "subject": "<Auth0 sub>", "state": "C:/private-pr10/zero.json", "sessionId": "<owned suite session>" },
+    "second": { "subject": "<Auth0 sub>", "state": "C:/private-pr10/second.json" },
+    "unentitled": { "subject": "<Auth0 sub>", "state": "C:/private-pr10/unentitled.json" },
+    "admin": { "subject": "<Auth0 sub>", "state": "C:/private-pr10/admin.json" }
+  }
+}
+```
+
+Inventory age must be <=12 minutes. All six states must begin without a signup intent.
+The harness checks /auth/profile identity and DB prerequisites for every role before
+starting the journey. Missing or stale authentication is a setup failure, not a skip.
+Prepare the zero account through a separately approved process; this harness never
+drains credits. Synthetic execution CSV marks controlled test cases passed to exercise
+ingestion; it is not evidence that the described password-reset product was tested.
+
+#### Future authorized live run
+
+Start the real application separately. Prefer a reviewed, migration-free production
+runtime or an accessible preview; no server is started by this config. Record exact
+BASE_URL, feature head, runtime/bundler, DB target verification, and account approval
+in private evidence. A Vercel login wall blocks validation; deployment success alone
+does not prove browser behavior. Do not bypass access controls.
+
+Set every PR10 opt-in in `.env.example`, an approved credit budget, and `HEADLESS=false`.
+Run once with no retries:
+
+```powershell
+node qa/node_modules/@playwright/test/cli.js test --config qa/playwright.pr10.config.ts
+```
+
+Stay at the browser for the first and last tests. Complete Auth0/MFA as the expected
+fresh identity during Start Trial and as the owner during final Sign In (120 seconds each).
+Start Trial may show Auth0's signup screen: choose login for the existing dedicated
+identity; do not create another identity. The harness observes the real callback,
+blocks automatic provisioning requests, rechecks identity and the unprovisioned DB
+snapshot, then calls `/api/me`. It checks exact record IDs/cardinality, DB/API balance
+and organization, and UTC epoch trial timestamps with 1 ms precision tolerance. It does not claim
+Auth0 identity creation coverage. No password is supplied by the harness.
+
+`PR10_CREDIT_BUDGET` accepts integers 1-100. `PR10_INTERNAL_<ROLE>_STATE` variables
+are assigned internally from the inventory; operators must never configure them.
+All six live/mutation opt-ins and the URL, DB, inventory, budget, and headed-mode inputs
+are listed in `.env.example`; no PR10 input falls back to generic auth state.
+
+Restoration selects the real sidebar session and opens persisted artifact documents.
+The unique owner marker must exist in the requirement and render for A before checking
+its absence for B after the browser history load and network settlement. Responsive checks use actionability-only trials for billable buttons
+(no click dispatched), plus a real free JSON export at both widths. Screenshot review
+remains manual. The immediate zero-credit snapshot proves observed persisted state
+after rejection, not the absence of every theoretical transient database state.
+
+The owner journey permits at most six chat attempts (five workflow calls plus replay).
+The credit budget stops subsequent operations and checks observed spending; it is NOT
+a server-enforced hard cap on an in-flight model request. Costs are token-dependent.
+Replay must return `replay: true` and leave wallet/ledger unchanged. Explicit workflow
+actions receive fresh IDs; their intentional replay bypass is not tested as idempotent.
+Zero/auth-only denial probes are separately opted in and expected not to debit.
+Zero checks cover ordinary chat and Review; Auth0-only rejection explicitly requests Review.
+The offline Review regression checks route guards and the real account policy with an
+in-memory subscription. It does not prove AI execution, Auth0, or database integration.
+
+#### Complete evidence packet
+
+- PR10: six live tests plus four offline tests. Inspect saved 1440/375 owner and
+  zero-state screenshots; layout assertions alone are not a visual review.
+- Run unchanged PR8/PR9 through `qa/playwright.pr9.config.ts` separately: 16 tests;
+  seven need the real application, eight use the isolated webpack fixture, one is pure
+  filtering. Fixture/production bundler differences remain a limitation.
+- Reuse PR6 specialized concurrency/replay/existing-Start-Trial/chat-race configs with
+  their private fresh fixtures and opt-ins. Do not run provisioning specs wholesale:
+  missing-fixture skips and the deferred Redis-outage test are not proof.
+- Reuse PR60's 11 checks for its existing boundaries; require configured role states
+  and spending opt-ins, and report all skips. PR10 does not silently run these suites.
+- The development empty-manifest failure remains unresolved. Record production-runtime
+  evidence separately; do not claim the development issue was fixed.
+- Record each result as live, offline, mocked, skipped, or manual. Authenticated traces
+  and video are disabled. Screenshots/results stay in ignored per-run output; review
+  them for private data before sharing. Contexts close even after failure; the externally
+  managed application server remains the operator's responsibility.
+- Production validation is a separate post-merge, separately authorized step. This
+  harness deliberately rejects the known production domain. No Gate A completion or
+  merge readiness may be inferred from discovery/offline passes alone.

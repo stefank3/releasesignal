@@ -49,7 +49,6 @@ import {
   enforceRateLimit,
   parseAndValidateChatRequest,
   requireAuthenticatedUser,
-  requireReviewAccess,
 } from "@/lib/server/chat/requestGuards";
 
 import { executeChatCompletion } from "@/lib/server/chat/openaiService";
@@ -456,24 +455,6 @@ export async function POST(req: Request) {
       executionMode === "coach" &&
       !wantCases &&
       isGuidedClarificationAnswer(message);
-
-    /*
-    ---------------------------------------------------------
-    RBAC
-    ---------------------------------------------------------
-    */
-    const accessResult = await requireReviewAccess({
-      executionMode,
-      requestId,
-      auth0Sub,
-      clientMode,
-      startTime,
-      recordChatMetric,
-    });
-
-    if (!accessResult.ok) {
-      return accessResult.response;
-    }
 
     /*
     ---------------------------------------------------------
