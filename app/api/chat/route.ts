@@ -1,5 +1,8 @@
 // app/api/chat/route.ts
 import { randomUUID } from "crypto";
+import { NextResponse } from "next/server";
+import { responseHeaders } from "@/lib/chat/http";
+import { checkCompletedRequestId } from "@/lib/server/chat/requestIdGuard";
 
 import { log } from "@/lib/logger";
 
@@ -529,6 +532,29 @@ export async function POST(req: Request) {
     artifactUpdatedAtIso = sessionState.artifactUpdatedAtIso;
 
     const sessionLifecycle = sessionState.sessionLifecycle;
+
+    // Reject completed cross-session reuse before replay, parsing/repair, model
+    // execution or artifact work. Session loading may already have written;
+    // this read-only check does not reserve IDs against concurrent requests.
+    const requestIdCheck = await checkCompletedRequestId({
+      auth0Sub,
+      sessionId,
+      requestId,
+      organizationId: orgId,
+      walletId: orgState.wallet.id,
+    });
+    if (!requestIdCheck.ok) {
+      await recordChatMetric({
+        nowMs: Date.now(),
+        mode: modeForMetric,
+        status: 409,
+        latencyMs: Date.now() - startTime,
+      });
+      return NextResponse.json(
+        { ok: false, error: "REQUEST_ID_CONFLICT" },
+        { status: 409, headers: responseHeaders(requestId, rateMeta ?? undefined) }
+      );
+    }
 
     log("info", {
       event: "chat_start",
